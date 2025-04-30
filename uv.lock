@@ -14,10 +14,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "python-dotenv" },
-]
-
-[package.dev-dependencies]
-dev = [
     { name = "ruff" },
 ]
 
@@ -26,11 +22,9 @@ requires-dist = [
     { name = "attrs", specifier = ">=25.3.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "python-dotenv", marker = "extra == 'dev'", specifier = ">=0.9.9" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.11.7" },
 ]
 provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "ruff", specifier = ">=0.11.7" }]
 
 [[package]]
 name = "anyio"

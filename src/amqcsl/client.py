@@ -25,18 +25,20 @@ class DBClient:
 
     username: str | None = None
     password: str | None = None
-    session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
+    session_path: Path = field(
+        default=Path(DEFAULT_SESSION_PATH), converter=Path
+    )
     _client: httpx.Client | None = field(default=None, init=False, repr=False)
     _session_cookie: str = field(init=False, repr=False)
 
     def __attrs_post_init__(self):
         if self.session_path.is_dir():
             raise FileNotFoundError('session_path must not be a directory')
-
+        logger.debug('session_path', extra={'session_path': str(self.session_path)})
         logger.info('Retrieving session cookie')
         try:
             with open(self.session_path, 'r') as file:
-                self._session_cookie = file.read()
+                self._session_cookie = file.read().strip()
         except FileNotFoundError:
             self._session_cookie = ''
 
@@ -65,7 +67,9 @@ class DBClient:
             logger.exception(f'Bad request during auth: {e}')
             raise
         except httpx.HTTPStatusError as e:
-            logger.exception(f'Bad response during auth: {e.response.status_code}')
+            logger.exception(
+                f'Bad response during auth: {e.response.status_code}'
+            )
             raise
         except LoginError as e:
             logger.exception(f'Error during login: {e}')
@@ -76,7 +80,9 @@ class DBClient:
 
         logger.info('Auth successful')
         if 'ADMIN' not in res.json()['roles']:
-            raise LoginError(f'User {res.json()["name"]} does not have admin privileges')
+            raise LoginError(
+                f'User {res.json()["name"]} does not have admin privileges'
+            )
 
     def login(self, client: httpx.Client):
         if not all((self.username, self.password)):
@@ -91,14 +97,15 @@ class DBClient:
             raise LoginError('Invalid login credentials')
         logger.info(f'Writing session_id to {self.session_path}')
         session_id = res.cookies['session-id']
-        logger.debug(f'{session_id = }')
+        logger.debug('session_id', extra={'session-id': session_id})
         with open(self.session_path, 'w') as file:
             file.write(session_id)
 
-
     def __enter__(self):
         logger.info('Creating client')
-        self._client = httpx.Client(base_url=DB_URL, cookies={'session-id': self._session_cookie})
+        self._client = httpx.Client(
+            base_url=DB_URL, cookies={'session-id': self._session_cookie}
+        )
         try:
             logger.info('Verifying permissions')
             self.verify_perms()
