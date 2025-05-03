@@ -376,13 +376,13 @@ class CSLSongArtistCredit:
 class CSLTrack(CSLTrackSample):
     original_name: str
     original_simple_artist: str
-    original_album: str
+    original_album: str | None
     album: str
     track_number: int
     track_total: int
     disc_number: int
     disc_total: int
-    year: int
+    year: int | None
     song: CSLSongSample | None
     artist_credits: list[CSLTrackArtistCredit]
     groups: list[CSLGroup]
@@ -418,13 +418,13 @@ class CSLTrack(CSLTrackSample):
                 'name': str(name) | (None as name),
                 'originalName': str(original_name),
                 'originalSimpleArtist': str(original_simple_artist),
-                'originalAlbum': str(original_album),
+                'originalAlbum': str(original_album) | (None as original_album),
                 'album': str(album),
                 'trackNumber': int(track_number),
                 'trackTotal': int(track_total),
                 'discNumber': int(disc_number),
                 'discTotal': int(disc_total),
-                'year': int(year),
+                'year': int(year) | (None as year),
                 'song': song,
                 'artistCredits': [*artist_credits],
                 'groups': [*groups],

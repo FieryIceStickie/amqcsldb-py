@@ -1,12 +1,12 @@
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 import httpx
 from attrs import define, field
 
-from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, ListCreateError, LoginError, QueryError
+from amqcsl.exceptions import ClientDoesNotExistError, ListCreateError, LoginError, QueryError
 from amqcsl.objects import (
     EMPTY_ID,
     CSLArtist,
@@ -48,11 +48,38 @@ class DBClient:
     max_batch_size: int = 100
     max_query_size: int = 1500
 
+    _lists: dict[str, CSLList] | None = None
+    _groups: dict[str, CSLGroup] | None = None
+
     @property
     def client(self) -> httpx.Client:
         if self._client is None:
             raise ClientDoesNotExistError
         return self._client
+
+    @property
+    def lists(self) -> dict[str, CSLList]:
+        if self._lists is None:
+            logger.info('Fetching lists')
+            res = self.client.get('/api/lists')
+            res.raise_for_status()
+            self._lists = {}
+            for data in res.json():
+                csl_list = CSLList.from_json(data)
+                self._lists[csl_list.name] = csl_list
+        return self._lists
+
+    @property
+    def groups(self) -> dict[str, CSLGroup]:
+        if self._groups is None:
+            logger.info('Fetching groups')
+            res = self.client.get('/api/groups')
+            res.raise_for_status()
+            self._groups = {}
+            for data in res.json():
+                group = CSLGroup.from_json(data)
+                self._groups[group.name] = group
+        return self._groups
 
     # --- Initialization ---
 
@@ -244,14 +271,6 @@ class DBClient:
         for page in self._iter_pages('GET', '/api/artists', params, 'artists'):
             yield from map(CSLArtistSample.from_json, page)
 
-    def iter_lists(self) -> Iterator[CSLList]:
-        """Iterator over lists associated with account"""
-        logger.info('Fetching lists')
-        res = self.client.get('/api/lists')
-        res.raise_for_status()
-        for data in res.json():
-            yield CSLList.from_json(data)
-
     def _iter_pages(
         self,
         req_type: Literal['POST', 'GET'],
@@ -362,4 +381,105 @@ class DBClient:
         res = self.client.post('/api/list', json=body)
         if res.status_code == 400:
             raise ListCreateError(res.json()['errors']['generalErrors'][0])
+        res.raise_for_status()
+        self._lists = None
+        logger.info(f'List {name} created')
+
+    # --- Metadata writing ---
+    @overload
+    def add_track_metadata(
+        self,
+        track: CSLTrackSample,
+        m_type: Literal['artist'],
+        *,
+        is_artist: bool = False,
+        type: str,
+        value: str,
+        override: bool | None = None,
+    ) -> None: ...
+
+    @overload
+    def add_track_metadata(
+        self,
+        track: CSLTrackSample,
+        m_type: Literal['extra'],
+        *,
+        artist: CSLArtistSample,
+        credit: str | None = None,
+        type: str,
+        override: bool | None = None,
+    ) -> None: ...
+
+    def add_track_metadata(
+        self,
+        track: CSLTrackSample,
+        m_type: Literal['artist', 'extra'],
+        *,
+        is_artist: bool | None = None,
+        type: str | None = None,
+        value: str | None = None,
+        artist: CSLArtistSample | None = None,
+        credit: str | None = None,
+        override: bool | None = None,
+    ) -> None:
+        if m_type == 'artist':
+            if artist is None:
+                raise ValueError('Artist must be provided')
+            if type is None:
+                raise ValueError('Type must be provided')
+            self.add_track_artist_metadata(track, artist, credit, type, override)
+        elif m_type == 'extra':
+            if type is None:
+                raise ValueError('Type must be provided')
+            if value is None:
+                raise ValueError('Value must be provided')
+            self.add_track_extra_metadata(track, is_artist or False, type, value, override)
+        raise ValueError('m_type must be artist or extra')
+
+    def add_track_artist_metadata(
+        self,
+        track: CSLTrackSample,
+        artist: CSLArtistSample,
+        credit: str | None,
+        type: str,
+        override: bool | None = None,
+    ) -> None:
+        logger.info(f'Adding artist metadata "{type}: {artist.name}" to {track.name}')
+        body = {
+            'artistCredits': [
+                {
+                    'artistId': artist.id,
+                    'credit': credit,
+                    'type': type,
+                }
+            ],
+            'extraMetadatas': None,
+            'id': EMPTY_ID,
+            'override': override,
+        }
+        res = self.client.post(f'/api/track/{track.id}/metadata', json=body)
+        res.raise_for_status()
+
+    def add_track_extra_metadata(
+        self,
+        track: CSLTrackSample,
+        is_artist: bool,
+        type: str,
+        value: str,
+        override: bool | None = None,
+    ) -> None:
+        logger.info(f'Adding extra metadata "{type}: {value} to {track.name}')
+        body = {
+            'artistCredits': None,
+            'extraMetadatas': [
+                {
+                    'isArtist': is_artist,
+                    'type': type,
+                    'value': value,
+                }
+            ],
+            'id': EMPTY_ID,
+            'override': override,
+        }
+        res = self.client.post(f'/api/track/{track.id}/metadata', json=body)
         res.raise_for_status()
