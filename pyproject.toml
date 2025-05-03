@@ -21,6 +21,7 @@ quote-style = "single"
 [tool.pyright]
 typeCheckingMode = "strict"
 reportUnusedCallResult = false
+reportUnusedVariable = false
 
 [build-system]
 requires = ["hatchling"]

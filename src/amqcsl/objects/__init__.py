@@ -1,3 +1,4 @@
+from .obj_utils import EMPTY_ID
 from .objects import (
     CSLArtist,
     CSLArtistSample,
@@ -12,6 +13,8 @@ from .objects import (
     CSLTrack,
     CSLTrackArtistCredit,
     CSLTrackLink,
+    CSLTrackSample,
+    JSONType,
 )
 
 __all__ = [
@@ -28,4 +31,7 @@ __all__ = [
     'CSLTrack',
     'CSLTrackArtistCredit',
     'CSLTrackLink',
+    'CSLTrackSample',
+    'JSONType',
+    'EMPTY_ID',
 ]

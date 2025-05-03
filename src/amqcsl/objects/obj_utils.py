@@ -26,3 +26,5 @@ SONG_RELATION_TYPE = {
     2: 'VoiceActor',
     3: 'Person',
 }
+
+EMPTY_ID = '00000000-0000-0000-0000-000000000000'

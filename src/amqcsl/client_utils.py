@@ -18,3 +18,19 @@ class ArtistQueryParams(TypedDict):
     take: int
     orderBy: str
     filter: str
+
+
+class TrackQueryBody(TypedDict):
+    activeListId: str | None
+    filter: str
+    groupFilters: list[str]
+    orderBy: str
+    quickFilters: list[int]
+    searchTerm: str
+    skip: int
+    take: int
+
+
+class Query(TypedDict):
+    skip: int
+    take: int

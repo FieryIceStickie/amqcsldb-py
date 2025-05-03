@@ -1,15 +1,27 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from attrs import define, field
 
-from amqcsl.exceptions import LoginError, QueryError
-from amqcsl.objects import CSLList
-from amqcsl.objects.objects import CSLArtistSample, CSLSongSample
+from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, ListCreateError, LoginError, QueryError
+from amqcsl.objects import (
+    EMPTY_ID,
+    CSLArtist,
+    CSLArtistSample,
+    CSLGroup,
+    CSLList,
+    CSLMetadata,
+    CSLSong,
+    CSLSongSample,
+    CSLTrack,
+    CSLTrackSample,
+    JSONType,
+)
 
-from .client_utils import DB_URL, DEFAULT_SESSION_PATH, ArtistQueryParams, SongQueryParams
+from .client_utils import DB_URL, DEFAULT_SESSION_PATH, ArtistQueryParams, Query, SongQueryParams, TrackQueryBody
 
 logger = logging.getLogger('client')
 
@@ -35,6 +47,12 @@ class DBClient:
 
     max_batch_size: int = 100
     max_query_size: int = 1500
+
+    @property
+    def client(self) -> httpx.Client:
+        if self._client is None:
+            raise ClientDoesNotExistError
+        return self._client
 
     # --- Initialization ---
 
@@ -145,14 +163,63 @@ class DBClient:
 
     # --- Batch DB reading ---
 
-    def iter_tracks(self):
-        pass
+    def iter_tracks(
+        self,
+        search_term: str = '',
+        *,
+        groups: list[CSLGroup] | None = None,
+        active_list: CSLList | None = None,
+        missing_audio: bool = False,
+        missing_info: bool = False,
+        from_active_list: bool = True,
+        batch_size: int = 50,
+    ) -> Iterator[CSLTrack]:
+        """Iterate over tracks matching search parameters
 
-    def iter_songs(self, search_term: str, batch_size: int = 50) -> Iterator[CSLSongSample]:
+        Args:
+            search_term: Search term
+            groups: List of groups to restrict to, leave empty if no restriction
+            active_list: List to restrict search by
+            missing_audio: Restrict to songs without audio
+            missing_info: Restrict to songs missing info
+            from_active_list: Restrict to songs in active list
+            batch_size: How many tracks to query at once (page size)
+        """
+        if groups is None:
+            groups = []
+
+        logger.info(
+            f'Fetching songs matching search term "{search_term}"',
+            extra={
+                'groups': [(group.id, group.name) for group in groups],
+                'missing_audio': missing_audio,
+                'missing_info': missing_info,
+                'from_active_list': from_active_list,
+                'active_list': None if active_list is None else {'id': active_list.id, 'name': active_list.name},
+            },
+        )
+        body: TrackQueryBody = {
+            'activeListId': None if active_list is None else active_list.id,
+            'filter': '',
+            'groupFilters': [group.id for group in groups],
+            'orderBy': '',
+            'quickFilters': [
+                idx
+                for idx, val in enumerate(
+                    [missing_audio, missing_info, from_active_list],
+                    start=1,
+                )
+                if val
+            ],
+            'searchTerm': search_term,
+            'skip': 0,
+            'take': batch_size,
+        }
+        for page in self._iter_pages('POST', '/api/tracks', body, 'tracks'):
+            yield from map(CSLTrack.from_json, page)
+
+    def iter_songs(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLSongSample]:
         """Iterator over songs matching search_term"""
-        if (client := self._client) is None:
-            raise LoginError('Song query attempted without client')
-
         logger.info(f'Fetching songs matching search term "{search_term}"')
         params: SongQueryParams = {
             'searchTerm': search_term,
@@ -161,45 +228,11 @@ class DBClient:
             'orderBy': '',
             'filter': '',
         }
+        for page in self._iter_pages('GET', '/api/songs', params, 'songs'):
+            yield from map(CSLSongSample.from_json, page)
 
-        prev_count = None
-        num_read = 0
-        while True:
-            res = client.get('/api/songs', params=params)  # type: ignore [reportArgumentType]
-            res.raise_for_status()
-            match res.json():
-                case {
-                    'songs': [*songs],
-                    'count': int(count),
-                }:
-                    if prev_count is None:
-                        if count > self.max_query_size:
-                            raise QueryError(
-                                f'Query returns {count} results, which is larger than the max query size of {self.max_query_size}'
-                            )
-                    elif count != prev_count:
-                        logger.error(f'Count mutated from {prev_count} to {count}')
-                case _:
-                    logger.error('Unexpected query response from /api/songs', extra={'response': res.json()})
-                    raise QueryError('Unexpected query response')
-            yield from map(CSLSongSample.from_json, songs)
-            num_read += len(songs)
-            logger.info('Page exhausted')
-
-            if num_read >= count:
-                break
-            prev_count = count
-
-            logger.info('Querying next page')
-            params['skip'] += params['take']
-        logger.info('Finished querying songs')
-
-    def iter_artists(self, search_term: str, batch_size: int = 50) -> Iterator[CSLArtistSample]:
+    def iter_artists(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLArtistSample]:
         """Iterator over artists matching search_term"""
-        if (client := self._client) is None:
-            raise LoginError('List query attempted without client')
-
-        logger.info(f'Fetching artists matching search term "{search_term}"')
         params: ArtistQueryParams = {
             'searchTerm': search_term,
             'skip': 0,
@@ -207,17 +240,42 @@ class DBClient:
             'orderBy': '',
             'filter': '',
         }
+        logger.info(f'Fetching artists matching search term "{search_term}"')
+        for page in self._iter_pages('GET', '/api/artists', params, 'artists'):
+            yield from map(CSLArtistSample.from_json, page)
 
+    def iter_lists(self) -> Iterator[CSLList]:
+        """Iterator over lists associated with account"""
+        logger.info('Fetching lists')
+        res = self.client.get('/api/lists')
+        res.raise_for_status()
+        for data in res.json():
+            yield CSLList.from_json(data)
+
+    def _iter_pages(
+        self,
+        req_type: Literal['POST', 'GET'],
+        path: str,
+        query: Query,
+        key: str,
+    ) -> Iterator[list[JSONType]]:
+        if query['take'] <= 0:
+            raise QueryError('Batch size must be positive')
+        elif query['take'] > self.max_batch_size:
+            raise QueryError(f'Batch size {query["take"]} is larger than the max batch size of {self.max_batch_size}')
         prev_count = None
         num_read = 0
         while True:
-            res = client.get('/api/artists', params=params)  # type: ignore [reportArgumentType]
+            if req_type == 'POST':
+                res = self.client.post(path, json=query)
+            else:
+                res = self.client.get(path, params=query)  # type: ignore[reportArgumentType]
             res.raise_for_status()
             match res.json():
                 case {
-                    'artists': [*artists],
                     'count': int(count),
-                }:
+                    **data,
+                } if isinstance(data.get(key, None), list):
                     if prev_count is None:
                         if count > self.max_query_size:
                             raise QueryError(
@@ -226,38 +284,82 @@ class DBClient:
                     elif count != prev_count:
                         logger.error(f'Count mutated from {prev_count} to {count}')
                 case _:
-                    logger.error('Unexpected query response from /api/artist', extra={'response': res.json()})
+                    logger.error(f'Unexpected query response from {req_type} {path}', extra={'response': res.json()})
                     raise QueryError('Unexpected query response')
-            yield from map(CSLArtistSample.from_json, artists)
-            num_read += len(artists)
+            yield data[key]
+            num_read += len(data[key])
             logger.info('Page exhausted')
-
             if num_read >= count:
                 break
             prev_count = count
 
             logger.info('Querying next page')
-            params['skip'] += params['take']
-        logger.info('Finished querying artists')
-
-    def iter_lists(self) -> Iterator[CSLList]:
-        """Iterator over lists associated with account"""
-        if (client := self._client) is None:
-            raise LoginError('List query attempted without client')
-
-        logger.info('Fetching lists')
-        res = client.get('/api/lists')
-        res.raise_for_status()
-        for data in res.json():
-            yield CSLList.from_json(data)
+            query['skip'] += query['take']
+        logger.info(f'Finished querying {key}')
 
     # --- Detailed DB reading ---
 
-    def get_song(self):
-        pass
+    def get_song(self, song: CSLSongSample) -> CSLSong:
+        """Fetch detailed song info from db"""
+        if isinstance(song, CSLSong):
+            logger.warning(f'client.get_song called with already filled CSLSong {song.name}')
+            return song
+        res = self.client.get(f'/api/song/{song.id}')
+        res.raise_for_status()
+        return CSLSong.from_json(res.json())
 
-    def get_artist(self):
-        pass
+    def get_artist(self, artist: CSLArtistSample) -> CSLArtist:
+        """Fetch detailed artist info from db"""
+        if isinstance(artist, CSLArtist):
+            logger.warning(f'client.get_artist called with already filled CSLArtist {artist.name}')
+            return artist
+        res = self.client.get(f'/api/artist/{artist.id}')
+        res.raise_for_status()
+        return CSLArtist.from_json(res.json())
 
-    def get_metadata(self):
-        pass
+    def get_metadata(self, track: CSLTrackSample) -> CSLMetadata | None:
+        """Fetch metadata info from db"""
+        res = self.client.get(f'/api/track/{track.id}/metadata')
+        if res.status_code == 404 and res.json()['errors']['generalErrors'][0] == 'Song does not have metadata':
+            return None
+        res.raise_for_status()
+        return CSLMetadata.from_json(res.json())
+
+    # --- List operations ---
+
+    def add_to_list(self, csl_list: CSLList, *tracks: CSLTrackSample) -> None:
+        """Add tracks to a list"""
+        self.edit_list(csl_list, tracks, [])
+
+    def remove_from_list(self, csl_list: CSLList, *tracks: CSLTrackSample) -> None:
+        """Remove tracks from a list"""
+        self.edit_list(csl_list, [], tracks)
+
+    def edit_list(
+        self,
+        csl_list: CSLList,
+        add_tracks: Sequence[CSLTrackSample],
+        remove_tracks: Sequence[CSLTrackSample],
+    ) -> None:
+        """Edit a list"""
+        logger.info(f'Editing list {csl_list.name}')
+        body = {
+            'addSongIds': [track.id for track in add_tracks] if add_tracks else None,
+            'id': EMPTY_ID,
+            'name': None,
+            'removeSongIds': [track.id for track in remove_tracks] if remove_tracks else None,
+        }
+        res = self.client.put(f'/api/list/{csl_list.id}', json=body)
+        res.raise_for_status()
+
+    def create_list(self, name: str, *csl_lists: CSLList) -> None:
+        """Make a list"""
+        logger.info(f'Making list {name}')
+        body = {
+            'importListIds': [csl_list.id for csl_list in csl_lists],
+            'name': name,
+        }
+        res = self.client.post('/api/list', json=body)
+        if res.status_code == 400:
+            raise ListCreateError(res.json()['errors']['generalErrors'][0])
+        res.raise_for_status()
