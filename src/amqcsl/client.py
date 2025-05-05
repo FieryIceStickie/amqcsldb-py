@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Literal, overload
+from typing import Literal
 
 import httpx
 from attrs import define, field
@@ -371,7 +371,7 @@ class DBClient:
         res = self.client.put(f'/api/list/{csl_list.id}', json=body)
         res.raise_for_status()
 
-    def create_list(self, name: str, *csl_lists: CSLList) -> None:
+    def create_list(self, name: str, *csl_lists: CSLList) -> CSLList:
         """Make a list"""
         logger.info(f'Making list {name}')
         body = {
@@ -382,60 +382,11 @@ class DBClient:
         if res.status_code == 400:
             raise ListCreateError(res.json()['errors']['generalErrors'][0])
         res.raise_for_status()
-        self._lists = None
         logger.info(f'List {name} created')
+        self._lists = None
+        return self.lists[name]
 
     # --- Metadata writing ---
-    @overload
-    def add_track_metadata(
-        self,
-        track: CSLTrackSample,
-        m_type: Literal['artist'],
-        *,
-        is_artist: bool = False,
-        type: str,
-        value: str,
-        override: bool | None = None,
-    ) -> None: ...
-
-    @overload
-    def add_track_metadata(
-        self,
-        track: CSLTrackSample,
-        m_type: Literal['extra'],
-        *,
-        artist: CSLArtistSample,
-        credit: str | None = None,
-        type: str,
-        override: bool | None = None,
-    ) -> None: ...
-
-    def add_track_metadata(
-        self,
-        track: CSLTrackSample,
-        m_type: Literal['artist', 'extra'],
-        *,
-        is_artist: bool | None = None,
-        type: str | None = None,
-        value: str | None = None,
-        artist: CSLArtistSample | None = None,
-        credit: str | None = None,
-        override: bool | None = None,
-    ) -> None:
-        if m_type == 'artist':
-            if artist is None:
-                raise ValueError('Artist must be provided')
-            if type is None:
-                raise ValueError('Type must be provided')
-            self.add_track_artist_metadata(track, artist, credit, type, override)
-        elif m_type == 'extra':
-            if type is None:
-                raise ValueError('Type must be provided')
-            if value is None:
-                raise ValueError('Value must be provided')
-            self.add_track_extra_metadata(track, is_artist or False, type, value, override)
-        raise ValueError('m_type must be artist or extra')
-
     def add_track_artist_metadata(
         self,
         track: CSLTrackSample,
@@ -468,7 +419,7 @@ class DBClient:
         value: str,
         override: bool | None = None,
     ) -> None:
-        logger.info(f'Adding extra metadata "{type}: {value} to {track.name}')
+        logger.info(f'Adding extra metadata "{type}: {value}" to {track.name}')
         body = {
             'artistCredits': None,
             'extraMetadatas': [
@@ -482,4 +433,28 @@ class DBClient:
             'override': override,
         }
         res = self.client.post(f'/api/track/{track.id}/metadata', json=body)
+        res.raise_for_status()
+
+    # --- Group writing ---
+    def add_group(self, name: str) -> CSLGroup:
+        logger.info(f'Adding group {name}')
+        res = self.client.post('/api/group', json={'name': name})
+        res.raise_for_status()
+        return CSLGroup.from_json(res.json())
+
+    def edit_track_group(self, track: CSLTrack, new_groups: list[CSLGroup]) -> None:
+        logger.info(f'Setting groups of {track.name} to {", ".join([group.name for group in new_groups])}')
+        body = {
+            'artistCredits': None,
+            'batchSongIds': None,
+            'groupIds': [group.id for group in new_groups],
+            'id': EMPTY_ID,
+            'name': track.name,
+            'newSong': None,
+            'originalArtist': track.original_simple_artist,
+            'originalName': track.original_name,
+            'songId': None if track.song is None else track.song.id,
+            'type': track.type_id,
+        }
+        res = self.client.put(f'/api/track/{track.id}', json=body)
         res.raise_for_status()
