@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
 import httpx
 from attrs import define, field
@@ -155,7 +155,7 @@ class DBClient:
         with open(self.session_path, 'w') as file:
             file.write(session_id)
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         logger.info('Creating client')
         self._client = httpx.Client(base_url=DB_URL, cookies={'session-id': self._session_cookie})
         try:

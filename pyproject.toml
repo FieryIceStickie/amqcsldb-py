@@ -10,6 +10,8 @@ requires-python = ">=3.12"
 dependencies = [
     "attrs>=25.3.0",
     "httpx>=0.28.1",
+    "python-dotenv>=1.1.0",
+    "rich>=14.0.0",
 ]
 
 [tool.ruff]
@@ -22,6 +24,8 @@ quote-style = "single"
 typeCheckingMode = "strict"
 reportUnusedCallResult = false
 reportUnusedVariable = false
+reportUnreachable = false
+reportUnnecessaryComparison = false
 
 [build-system]
 requires = ["hatchling"]
@@ -30,7 +34,6 @@ build-backend = "hatchling.build"
 [project.optional-dependencies]
 dev = [
     "ruff>=0.11.7",
-    "python-dotenv>=0.9.9",
 ]
 
 [tool.hatch.build.targets.wheel]
