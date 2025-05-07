@@ -5,7 +5,7 @@ import logging
 from operator import attrgetter
 from typing import cast
 
-from attrs import define
+from attrs import frozen
 
 from amqcsl.exceptions import QueryError
 
@@ -22,7 +22,7 @@ logger = logging.getLogger('object')
 # --- List ---
 
 
-@define
+@frozen
 class CSLList:
     id: str
     name: str
@@ -49,7 +49,7 @@ class CSLList:
 # --- Group ---
 
 
-@define
+@frozen
 class CSLGroup:
     id: str
     name: str
@@ -73,7 +73,7 @@ class CSLGroup:
 # --- Metadata ---
 
 
-@define
+@frozen
 class CSLMetadata:
     override: bool
     artist_credits: list[CSLSongArtistCredit]
@@ -112,7 +112,7 @@ class CSLMetadata:
                 raise QueryError('Invalid json when parsing CSLMetadata')
 
 
-@define
+@frozen
 class CSLExtraMetadata:
     id: str
     type_id: int
@@ -146,7 +146,7 @@ class CSLExtraMetadata:
 # --- Artist ---
 
 
-@define
+@frozen
 class CSLArtistSample:
     id: str
     name: str
@@ -180,7 +180,7 @@ class CSLArtistSample:
                 raise QueryError('Invalid json when parsing CSLArtistSample')
 
 
-@define
+@frozen
 class CSLArtist(CSLArtistSample):
     forward_relations: list[CSLSongRelation]
     reverse_relations: list[CSLSongRelation]
@@ -221,7 +221,7 @@ class CSLArtist(CSLArtistSample):
                 raise QueryError('Invalid json when parsing CSLArtist')
 
 
-@define
+@frozen
 class CSLSongRelation:
     id: str
     type_id: int
@@ -250,13 +250,13 @@ class CSLSongRelation:
                 raise QueryError('Invalid json when parsing CSLSongRelation')
 
 
-@define
+@frozen
 class CSLTrackSample:
     id: str
     name: str | None
 
 
-@define
+@frozen
 class CSLTrackLink(CSLTrackSample):
     artists: list[CSLTrackArtistCredit]
 
@@ -282,7 +282,7 @@ class CSLTrackLink(CSLTrackSample):
 # --- Song ---
 
 
-@define
+@frozen
 class CSLSongSample:
     id: str
     name: str
@@ -313,7 +313,7 @@ class CSLSongSample:
                 raise QueryError('Invalid json when parsing CSLSongSample')
 
 
-@define
+@frozen
 class CSLSong(CSLSongSample):
     artist_credits: list[CSLSongArtistCredit]
     extra_metas: list[CSLExtraMetadata]
@@ -344,7 +344,7 @@ class CSLSong(CSLSongSample):
                 raise QueryError('Invalid json when parsing CSLSong')
 
 
-@define
+@frozen
 class CSLSongArtistCredit:
     id: str
     type: str
@@ -372,7 +372,7 @@ class CSLSongArtistCredit:
 # --- Track ---
 
 
-@define
+@frozen
 class CSLTrack(CSLTrackSample):
     original_name: str
     original_simple_artist: str
@@ -468,7 +468,7 @@ class CSLTrack(CSLTrackSample):
                 raise QueryError('Invalid json when parsing CSLTrack')
 
 
-@define
+@frozen
 class CSLTrackArtistCredit:
     artist: CSLArtistSample
     name: str
