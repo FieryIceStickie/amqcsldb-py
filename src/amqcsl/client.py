@@ -1,27 +1,39 @@
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 import httpx
 from attrs import define, field
 
-from amqcsl.exceptions import ClientDoesNotExistError, ListCreateError, LoginError, QueryError
-from amqcsl.objects import (
+from amqcsl.objects.objects import ArtistCredit, ExtraMetadata
+
+from .client_utils import (
+    DB_URL,
+    DEFAULT_SESSION_PATH,
+    ArtistQueryParams,
+    MetadataPostBody,
+    Query,
+    SongQueryParams,
+    TrackQueryBody,
+)
+from .exceptions import ClientDoesNotExistError, ListCreateError, LoginError, QueryError
+from .objects import (
     EMPTY_ID,
     CSLArtist,
     CSLArtistSample,
+    CSLExtraMetadata,
     CSLGroup,
     CSLList,
     CSLMetadata,
     CSLSong,
+    CSLSongArtistCredit,
     CSLSongSample,
     CSLTrack,
     CSLTrackSample,
     JSONType,
+    Metadata,
 )
-
-from .client_utils import DB_URL, DEFAULT_SESSION_PATH, ArtistQueryParams, Query, SongQueryParams, TrackQueryBody
 
 logger = logging.getLogger('client')
 
@@ -50,6 +62,8 @@ class DBClient:
 
     _lists: dict[str, CSLList] | None = None
     _groups: dict[str, CSLGroup] | None = None
+
+    queue: list[tuple[dict[str, Any], httpx.Request]] = field(factory=list)
 
     @property
     def client(self) -> httpx.Client:
@@ -80,6 +94,23 @@ class DBClient:
                 group = CSLGroup.from_json(data)
                 self._groups[group.name] = group
         return self._groups
+
+    # --- Queue Methods ---
+
+    def enqueue(self, req: httpx.Request, **extra_info: Any):
+        self.queue.append((extra_info, req))
+
+    def commit(self, *, stop_if_err: bool = True):
+        logger.info(f'Commiting {len(self.queue)} changes')
+        client = self.client
+        for _, req in self.queue:
+            res = client.send(req)
+            try:
+                res.raise_for_status()
+            except httpx.HTTPError:
+                logger.exception(f'Request {req.method} {req.url} caused an error')
+                if stop_if_err:
+                    raise
 
     # --- Initialization ---
 
@@ -434,6 +465,48 @@ class DBClient:
         }
         res = self.client.post(f'/api/track/{track.id}/metadata', json=body)
         res.raise_for_status()
+
+    def remove_track_metadata(
+        self, track: CSLTrackSample, meta: CSLSongArtistCredit | CSLExtraMetadata, queue: bool = False
+    ):
+        logger.info(
+            f'Removing metadata {f"{meta.type} {meta.artist.name}" if isinstance(meta, CSLSongArtistCredit) else f"{meta.key} {meta.value}"} from {track.name}'
+        )
+        req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
+        if queue:
+            self.enqueue(req, track=track, meta=meta)
+        else:
+            res = self.client.send(req)
+            res.raise_for_status()
+
+    def add_track_metadata(self, track: CSLTrackSample, *metas: Metadata, override: bool | None = None, existing_meta: CSLMetadata | None = None):
+        logger.info(f'Queuing metadata edit on {track.name}')
+
+        current_metas: set[Metadata] = {
+            *map(ArtistCredit.simplify, existing_meta.artist_credits),
+            *map(ExtraMetadata.simplify, existing_meta.extra_metas),
+        } if existing_meta is not None else set()
+
+        body: MetadataPostBody = {
+            'artistCredits': [],
+            'extraMetadatas': [],
+            'id': EMPTY_ID,
+            'override': override,
+        }
+        for meta in metas:
+            match meta:
+                case ArtistCredit():
+                    if meta not in current_metas:
+                        body['artistCredits'].append(meta.to_json())
+                        current_metas.add(meta)
+                case ExtraMetadata():
+                    if meta not in current_metas:
+                        body['extraMetadatas'].append(meta.to_json())
+                        current_metas.add(meta)
+                case _:
+                    raise ValueError('metas must be ArtistCredit or ExtraMetadata')
+        req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
+        self.enqueue(req, track=track.name, body=body)
 
     # --- Group writing ---
     def add_group(self, name: str) -> CSLGroup:

@@ -1,6 +1,8 @@
 from typing import Any, TypedDict
 from rich.pretty import pprint
 
+from amqcsl.objects.objects import JSONType
+
 from .exceptions import QuitError
 
 DB_URL = 'https://amqbot.082640.xyz'
@@ -38,12 +40,17 @@ class Query(TypedDict):
     skip: int
     take: int
 
-def prompt(obj: Any, *, pretty: bool = True) -> bool:
-    if pretty:
-        pprint(obj)
-    else:
-        print(obj)
-    while inp := input('Accept Y/N?'):
+class MetadataPostBody(TypedDict):
+    artistCredits: list[JSONType]
+    extraMetadatas: list[JSONType]
+    id: str
+    override: bool | None
+
+def prompt(*objs: Any, pretty: bool = True, **kwargs: Any) -> bool:
+    print_func = pprint if pretty else print
+    for obj in objs:
+        print_func(obj, **kwargs)
+    while inp := input('Accept Y/N? '):
         match inp.lower().strip():
             case 'y' | 'yes':
                 return True

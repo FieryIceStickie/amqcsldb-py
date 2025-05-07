@@ -494,3 +494,44 @@ class CSLTrackArtistCredit:
             case _:
                 logger.info('Invalid json when parsing CSLTrackArtistCredit', extra={'json': data})
                 raise QueryError('Invalid json when parsing CSLTrackArtistCredit')
+
+
+# --- Edits ---
+
+type Metadata = ArtistCredit | ExtraMetadata
+
+
+@frozen
+class ArtistCredit:
+    artist: CSLArtistSample
+    type: str
+    credit: str | None = None
+
+    def to_json(self) -> JSONType:
+        return {
+            'artistId': self.artist.id,
+            'credit': self.credit,
+            'type': self.type,
+        }
+
+    @classmethod
+    def simplify(cls, cred: CSLSongArtistCredit):
+        return cls(artist=cred.artist, type=cred.type, credit=None)
+
+
+@frozen
+class ExtraMetadata:
+    is_artist: bool
+    type: str
+    value: str
+
+    def to_json(self) -> JSONType:
+        return {
+            'isArtist': self.is_artist,
+            'type': self.type,
+            'value': self.value,
+        }
+
+    @classmethod
+    def simplify(cls, meta: CSLExtraMetadata):
+        return cls(is_artist=meta.type == 'Artist', type=meta.key, value=meta.value)
