@@ -5,17 +5,17 @@ import logging
 from operator import attrgetter
 from typing import cast
 
-from attrs import frozen
+from attrs import define, frozen
 
 from amqcsl.exceptions import QueryError
 
-from ._json_types import JSONType, MetadataPostArtistCredit, MetadataPostExtraMetadata
+from ._json_types import JSONTrackPutArtistCredit, JSONType, MetadataPostArtistCredit, MetadataPostExtraMetadata
 from ._obj_consts import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE
 
 __all__ = ['CSLList']
 
 
-logger = logging.getLogger('object')
+logger = logging.getLogger('amqcsl.object')
 
 
 # --- List ---
@@ -534,3 +534,25 @@ class ExtraMetadata:
     @classmethod
     def simplify(cls, meta: CSLExtraMetadata):
         return cls(is_artist=meta.type == 'Artist', type=meta.key, value=meta.value)
+
+
+@define
+class TrackPutArtistCredit:
+    artist: CSLArtistSample
+    joinPhrase: str
+    name: str = ''
+
+    def __attrs_post_init__(self):
+        self.name = self.name or self.artist.name
+
+    def to_json(self, position: int) -> JSONTrackPutArtistCredit:
+        return {
+            'artistId': self.artist.id,
+            'joinPhrase': self.joinPhrase,
+            'name': self.name,
+            'position': position,
+        }
+
+    @classmethod
+    def simplify(cls, cred: CSLTrackArtistCredit):
+        return cls(cred.artist, cred.join_phrase, cred.name)

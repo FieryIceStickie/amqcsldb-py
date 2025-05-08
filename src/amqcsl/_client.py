@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any, Literal, Self
+from typing import Literal, Self
 
 import httpx
 from attrs import define, field
@@ -9,12 +9,16 @@ from attrs import define, field
 from ._client_consts import (
     DB_URL,
     DEFAULT_SESSION_PATH,
+    MetadataDelete,
+    MetadataPost,
+    QueueObj,
+    TrackEdit,
 )
 from .exceptions import ClientDoesNotExistError, ListCreateError, LoginError, QueryError
 from .objects import (
     EMPTY_ID,
+    REVERSE_TRACK_TYPE,
     ArtistCredit,
-    QueryParamsArtist,
     CSLArtist,
     CSLArtistSample,
     CSLExtraMetadata,
@@ -27,15 +31,20 @@ from .objects import (
     CSLTrack,
     CSLTrackSample,
     ExtraMetadata,
-    JSONType,
     Metadata,
-    Query,
-    QueryParamsSong,
-    QueryBodyTrack,
+    TrackPutArtistCredit,
+)
+from .objects._json_types import (
+    JSONType,
     MetadataPostBody,
+    Query,
+    QueryBodyTrack,
+    QueryParamsArtist,
+    QueryParamsSong,
+    TrackPutBody,
 )
 
-logger = logging.getLogger('client')
+logger = logging.getLogger('amqcsl.client')
 
 
 @define
@@ -63,7 +72,7 @@ class DBClient:
     _lists: dict[str, CSLList] | None = None
     _groups: dict[str, CSLGroup] | None = None
 
-    queue: list[tuple[dict[str, Any], httpx.Request]] = field(factory=list)
+    queue: list[QueueObj] = field(factory=list)
 
     @property
     def client(self) -> httpx.Client:
@@ -97,18 +106,18 @@ class DBClient:
 
     # --- Queue Methods ---
 
-    def enqueue(self, req: httpx.Request, **extra_info: Any):
-        self.queue.append((extra_info, req))
+    def enqueue(self, obj: QueueObj):
+        self.queue.append(obj)
 
     def commit(self, *, stop_if_err: bool = True):
         logger.info(f'Commiting {len(self.queue)} changes')
         client = self.client
-        for _, req in self.queue:
-            res = client.send(req)
+        for obj in self.queue:
+            res = client.send(obj.req)
             try:
                 res.raise_for_status()
             except httpx.HTTPError:
-                logger.exception(f'Request {req.method} {req.url} caused an error')
+                logger.exception(f'Request {obj.req.method} {obj.req.url} caused an error')
                 if stop_if_err:
                     raise
 
@@ -426,7 +435,7 @@ class DBClient:
         )
         req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
         if queue:
-            self.enqueue(req, track=track, meta=meta)
+            self.enqueue(MetadataDelete(req, track, meta))
         else:
             res = self.client.send(req)
             res.raise_for_status()
@@ -441,14 +450,15 @@ class DBClient:
     ):
         logger.info(f'Queuing metadata edit on {track.name}')
 
-        current_metas: set[Metadata] = (
-            {
+        current_metas: set[Metadata]
+        if existing_meta is None:
+            current_metas = set()
+        else:
+            current_metas = {
                 *map(ArtistCredit.simplify, existing_meta.artist_credits),
                 *map(ExtraMetadata.simplify, existing_meta.extra_metas),
             }
-            if existing_meta is not None
-            else set()
-        )
+        id_to_name: dict[str, str] = {}
 
         body: MetadataPostBody = {
             'artistCredits': [],
@@ -462,6 +472,7 @@ class DBClient:
                     if meta not in current_metas:
                         body['artistCredits'].append(meta.to_json())
                         current_metas.add(meta)
+                        id_to_name[meta.artist.id] = meta.artist.name
                 case ExtraMetadata():
                     if meta not in current_metas:
                         body['extraMetadatas'].append(meta.to_json())
@@ -470,7 +481,7 @@ class DBClient:
                     raise ValueError('metas must be ArtistCredit or ExtraMetadata')
         req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
         if queue:
-            self.enqueue(req, track=track.name, meta=body)
+            self.enqueue(MetadataPost(req, track, body, id_to_name))
         else:
             res = self.client.send(req)
             res.raise_for_status()
@@ -498,3 +509,39 @@ class DBClient:
         }
         res = self.client.put(f'/api/track/{track.id}', json=body)
         res.raise_for_status()
+
+    # --- Track writing ---
+    def edit_track(
+        self,
+        track: CSLTrack,
+        *,
+        artist_credits: Sequence[TrackPutArtistCredit] | None = None,
+        groups: Sequence[CSLGroup] | None = None,
+        name: str | None = None,
+        original_artist: str | None = None,
+        original_name: str | None = None,
+        song: CSLSong | None = None,
+        type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = None,
+        queue: bool = False,
+    ):
+        if type is not None and type not in REVERSE_TRACK_TYPE:
+            raise ValueError('Track type must be one of the following: {', '.join(REVERSE_TRACK_TYPE)}')
+        logger.info(f'Editing track {track.name}')
+        body: TrackPutBody = {
+            'artistCredits': None if artist_credits is None else [v.to_json(i) for i, v in enumerate(artist_credits)],
+            'batchSongIds': None,
+            'groupIds': None if groups is None else [group.id for group in groups],
+            'id': EMPTY_ID,
+            'name': track.name if name is None else name,
+            'newSong': None,
+            'originalArtist': track.original_simple_artist if original_artist is None else original_artist,
+            'originalName': track.original_name if original_name is None else original_name,
+            'songId': (None if track.song is None else track.song.id) if song is None else song.id,
+            'type': track.type_id if type is None else REVERSE_TRACK_TYPE[type],
+        }
+        req = self.client.build_request('PUT', f'/api/track/{track.id}', json=body)
+        if queue:
+            self.enqueue(TrackEdit(req, track, body))
+        else:
+            res = self.client.send(req)
+            res.raise_for_status()

@@ -133,7 +133,7 @@ class Query(TypedDict):
     take: int
 
 
-class SongQueryParams(TypedDict):
+class QueryParamsSong(TypedDict):
     searchTerm: str
     skip: int
     take: int
@@ -141,7 +141,7 @@ class SongQueryParams(TypedDict):
     filter: str
 
 
-class ArtistQueryParams(TypedDict):
+class QueryParamsArtist(TypedDict):
     searchTerm: str
     skip: int
     take: int
@@ -149,7 +149,7 @@ class ArtistQueryParams(TypedDict):
     filter: str
 
 
-class TrackQueryBody(TypedDict):
+class QueryBodyTrack(TypedDict):
     activeListId: str | None
     filter: str
     groupFilters: list[str]
@@ -177,3 +177,22 @@ class MetadataPostExtraMetadata(TypedDict):
     isArtist: bool
     type: str
     value: str
+
+class TrackPutBody(TypedDict):
+    artistCredits: list[JSONTrackPutArtistCredit] | None
+    batchSongIds: list[str] | None
+    groupIds: list[str] | None
+    id: str
+    name: str | None
+    newSong: JSONSongSample | None
+    originalArtist: str | None
+    originalName: str | None
+    songId: str | None
+    type: int | None
+
+
+class JSONTrackPutArtistCredit(TypedDict):
+    artistId: str
+    joinPhrase: str
+    name: str
+    position: int
