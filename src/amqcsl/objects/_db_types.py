@@ -9,12 +9,11 @@ from attrs import frozen
 
 from amqcsl.exceptions import QueryError
 
-from .obj_utils import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE
+from ._json_types import JSONType, MetadataPostArtistCredit, MetadataPostExtraMetadata
+from ._obj_consts import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE
 
 __all__ = ['CSLList']
 
-
-type JSONType = str | int | float | bool | None | dict[str, JSONType] | list[JSONType]
 
 logger = logging.getLogger('object')
 
@@ -507,7 +506,7 @@ class ArtistCredit:
     type: str
     credit: str | None = None
 
-    def to_json(self) -> JSONType:
+    def to_json(self) -> MetadataPostArtistCredit:
         return {
             'artistId': self.artist.id,
             'credit': self.credit,
@@ -525,7 +524,7 @@ class ExtraMetadata:
     type: str
     value: str
 
-    def to_json(self) -> JSONType:
+    def to_json(self) -> MetadataPostExtraMetadata:
         return {
             'isArtist': self.is_artist,
             'type': self.type,

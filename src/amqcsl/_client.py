@@ -6,20 +6,15 @@ from typing import Any, Literal, Self
 import httpx
 from attrs import define, field
 
-from amqcsl.objects.objects import ArtistCredit, ExtraMetadata
-
-from .client_utils import (
+from ._client_consts import (
     DB_URL,
     DEFAULT_SESSION_PATH,
-    ArtistQueryParams,
-    MetadataPostBody,
-    Query,
-    SongQueryParams,
-    TrackQueryBody,
 )
 from .exceptions import ClientDoesNotExistError, ListCreateError, LoginError, QueryError
 from .objects import (
     EMPTY_ID,
+    ArtistCredit,
+    QueryParamsArtist,
     CSLArtist,
     CSLArtistSample,
     CSLExtraMetadata,
@@ -31,8 +26,13 @@ from .objects import (
     CSLSongSample,
     CSLTrack,
     CSLTrackSample,
+    ExtraMetadata,
     JSONType,
     Metadata,
+    Query,
+    QueryParamsSong,
+    QueryBodyTrack,
+    MetadataPostBody,
 )
 
 logger = logging.getLogger('client')
@@ -256,7 +256,7 @@ class DBClient:
                 'active_list': None if active_list is None else {'id': active_list.id, 'name': active_list.name},
             },
         )
-        body: TrackQueryBody = {
+        body: QueryBodyTrack = {
             'activeListId': None if active_list is None else active_list.id,
             'filter': '',
             'groupFilters': [group.id for group in groups],
@@ -279,7 +279,7 @@ class DBClient:
     def iter_songs(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLSongSample]:
         """Iterator over songs matching search_term"""
         logger.info(f'Fetching songs matching search term "{search_term}"')
-        params: SongQueryParams = {
+        params: QueryParamsSong = {
             'searchTerm': search_term,
             'skip': 0,
             'take': batch_size,
@@ -291,7 +291,7 @@ class DBClient:
 
     def iter_artists(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLArtistSample]:
         """Iterator over artists matching search_term"""
-        params: ArtistQueryParams = {
+        params: QueryParamsArtist = {
             'searchTerm': search_term,
             'skip': 0,
             'take': batch_size,
@@ -418,54 +418,6 @@ class DBClient:
         return self.lists[name]
 
     # --- Metadata writing ---
-    def add_track_artist_metadata(
-        self,
-        track: CSLTrackSample,
-        artist: CSLArtistSample,
-        credit: str | None,
-        type: str,
-        override: bool | None = None,
-    ) -> None:
-        logger.info(f'Adding artist metadata "{type}: {artist.name}" to {track.name}')
-        body = {
-            'artistCredits': [
-                {
-                    'artistId': artist.id,
-                    'credit': credit,
-                    'type': type,
-                }
-            ],
-            'extraMetadatas': None,
-            'id': EMPTY_ID,
-            'override': override,
-        }
-        res = self.client.post(f'/api/track/{track.id}/metadata', json=body)
-        res.raise_for_status()
-
-    def add_track_extra_metadata(
-        self,
-        track: CSLTrackSample,
-        is_artist: bool,
-        type: str,
-        value: str,
-        override: bool | None = None,
-    ) -> None:
-        logger.info(f'Adding extra metadata "{type}: {value}" to {track.name}')
-        body = {
-            'artistCredits': None,
-            'extraMetadatas': [
-                {
-                    'isArtist': is_artist,
-                    'type': type,
-                    'value': value,
-                }
-            ],
-            'id': EMPTY_ID,
-            'override': override,
-        }
-        res = self.client.post(f'/api/track/{track.id}/metadata', json=body)
-        res.raise_for_status()
-
     def remove_track_metadata(
         self, track: CSLTrackSample, meta: CSLSongArtistCredit | CSLExtraMetadata, queue: bool = False
     ):
@@ -479,13 +431,24 @@ class DBClient:
             res = self.client.send(req)
             res.raise_for_status()
 
-    def add_track_metadata(self, track: CSLTrackSample, *metas: Metadata, override: bool | None = None, existing_meta: CSLMetadata | None = None):
+    def add_track_metadata(
+        self,
+        track: CSLTrackSample,
+        *metas: Metadata,
+        override: bool | None = None,
+        existing_meta: CSLMetadata | None = None,
+        queue: bool = False,
+    ):
         logger.info(f'Queuing metadata edit on {track.name}')
 
-        current_metas: set[Metadata] = {
-            *map(ArtistCredit.simplify, existing_meta.artist_credits),
-            *map(ExtraMetadata.simplify, existing_meta.extra_metas),
-        } if existing_meta is not None else set()
+        current_metas: set[Metadata] = (
+            {
+                *map(ArtistCredit.simplify, existing_meta.artist_credits),
+                *map(ExtraMetadata.simplify, existing_meta.extra_metas),
+            }
+            if existing_meta is not None
+            else set()
+        )
 
         body: MetadataPostBody = {
             'artistCredits': [],
@@ -506,7 +469,11 @@ class DBClient:
                 case _:
                     raise ValueError('metas must be ArtistCredit or ExtraMetadata')
         req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
-        self.enqueue(req, track=track.name, body=body)
+        if queue:
+            self.enqueue(req, track=track.name, meta=body)
+        else:
+            res = self.client.send(req)
+            res.raise_for_status()
 
     # --- Group writing ---
     def add_group(self, name: str) -> CSLGroup:

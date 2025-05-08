@@ -1,3 +1,4 @@
-from .client import DBClient
+from ._client import DBClient
+from ._client_consts import prompt
 
-__all__ = ['DBClient']
+__all__ = ['DBClient', 'prompt']

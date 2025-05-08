@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
-from amqcsl.client_utils import prompt
-from amqcsl.objects.objects import CSLArtistSample, CSLMetadata, CSLTrack, ExtraMetadata
+from amqcsl import prompt
+from amqcsl.objects import CSLArtistSample, CSLMetadata, CSLTrack, ExtraMetadata
 
 _ = load_dotenv()
 
@@ -132,7 +132,7 @@ def queue_metadata(
         if new_metas is None:
             return cred.artist
         metas += new_metas
-    client.add_track_metadata(track, *metas, existing_meta=meta)
+    client.add_track_metadata(track, *metas, existing_meta=meta, queue=True)
     return None
 
 

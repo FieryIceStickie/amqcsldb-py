@@ -6,6 +6,7 @@ from log import setup_logging
 from operator import itemgetter
 
 import amqcsl
+from amqcsl.objects import ExtraMetadata
 
 _ = load_dotenv()
 
@@ -27,7 +28,7 @@ def main(logger: logging.Logger):
                 logger.info(f'Track {track.name} already has Game metadata')
                 continue
             logger.info(f'Adding metadata to {track.name}')
-            client.add_track_extra_metadata(track, False, 'Game', 'Terraria')
+            client.add_track_metadata(track, ExtraMetadata(False, 'Game', 'Terraria'))
 
 if __name__ == '__main__':
     logger = logging.getLogger('example.terraria')
