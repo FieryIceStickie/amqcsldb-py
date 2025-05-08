@@ -1,102 +1,64 @@
 import logging
 import os
-from itertools import chain
 
 from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
 from amqcsl import prompt
-from amqcsl.objects import CSLArtistSample, CSLMetadata, CSLTrack, ExtraMetadata
+from amqcsl.objects import ExtraMetadata
+from amqcsl.utils import conv_artist_dict, queue_metadata
 
 _ = load_dotenv()
 
 
-def conv_artist_dict[T](
-    client: amqcsl.DBClient,
-    artist_to_meta: dict[tuple[str, str | None], T],
-    search_phrases: list[str],
-) -> dict[CSLArtistSample, T]:
-    return {
-        artist: v
-        for artist in chain.from_iterable(map(client.iter_artists, search_phrases))
-        if (v := artist_to_meta.get((artist.name, artist.disambiguation))) is not None
-    }
+kanon = ExtraMetadata(True, 'Character', 'Kanon Shibuya')
+keke = ExtraMetadata(True, 'Character', 'Keke Tang')
+sumire = ExtraMetadata(True, 'Character', 'Sumire Heanna')
+chisato = ExtraMetadata(True, 'Character', 'Chisato Arashi')
+ren = ExtraMetadata(True, 'Character', 'Ren Hazuki')
+kinako = ExtraMetadata(True, 'Character', 'Kinako Sakurakouji')
+natsumi = ExtraMetadata(True, 'Character', 'Natsumi Onitsuka')
+shiki = ExtraMetadata(True, 'Character', 'Shiki Wakana')
+mei = ExtraMetadata(True, 'Character', 'Mei Yoneme')
+margarete = ExtraMetadata(True, 'Character', 'Margarete Wien')
+tomari = ExtraMetadata(True, 'Character', 'Tomari Onitsuka')
+yuuna = ExtraMetadata(True, 'Character', 'Yuuna Hijirisawa')
+mao = ExtraMetadata(True, 'Character', 'Mao Hiiragi')
 
+# fmt: off
+artist_dict: dict[tuple[str, str | None], list[ExtraMetadata]] = {
+    ('Liella!', 'Love Live! Superstar!! (11 members)'): [kanon, keke, sumire, chisato, ren, kinako, natsumi, shiki, mei, margarete, tomari],
+    ('Liella!', 'Love Live! Superstar!! (9 members)'): [kanon, keke, sumire, chisato, ren, kinako, natsumi, shiki, mei],
+    ('Liella!', 'Love Live! Superstar!! (8 members)'): [keke, sumire, chisato, ren, kinako, natsumi, shiki, mei],
+    ('Liella!', 'Love Live! Superstar!! (6 members)'): [kanon, keke, sumire, chisato, ren, kinako],
+    ('Liella!', 'Love Live! Superstar!! (5 members)'): [kanon, keke, sumire, chisato, ren],
+    ('Sayuri Date', None): [kanon],
+    ('Liyuu', None): [keke],
+    ('Nako Misaki', None): [chisato],
+    ('Naomi Payton', None): [sumire],
+    ('Nagisa Aoyama', None): [ren],
+    ('Nozomi Suzuhara', None): [kinako],
+    ('Aya Emori', None): [natsumi],
+    ('Wakana Ookuma', None): [shiki],
+    ('Akane Yabushima', None): [mei],
+    ('Yuina', None): [margarete],
+    ('Sakura Sakakura', None): [tomari],
+    ('CatChu!', 'Love Live!'): [kanon, sumire, mei],
+    ('KALEIDOSCORE', 'Love Live!'): [keke, ren, margarete],
+    ('5yncri5e!', 'Love Live!'): [chisato, kinako, natsumi, shiki, tomari],
+    ('Sunny Passion', 'Love Live! Superstar!!'): [yuuna, mao],
+}
+# fmt: on
 
 def main(logger: logging.Logger):
-    kanon = ExtraMetadata(True, 'Character', 'Kanon Shibuya')
-    keke = ExtraMetadata(True, 'Character', 'Keke Tang')
-    sumire = ExtraMetadata(True, 'Character', 'Sumire Heanna')
-    chisato = ExtraMetadata(True, 'Character', 'Chisato Arashi')
-    ren = ExtraMetadata(True, 'Character', 'Ren Hazuki')
-    kinako = ExtraMetadata(True, 'Character', 'Kinako Sakurakouji')
-    natsumi = ExtraMetadata(True, 'Character', 'Natsumi Onitsuka')
-    shiki = ExtraMetadata(True, 'Character', 'Shiki Wakana')
-    mei = ExtraMetadata(True, 'Character', 'Mei Yoneme')
-    margarete = ExtraMetadata(True, 'Character', 'Margarete Wien')
-    tomari = ExtraMetadata(True, 'Character', 'Tomari Onitsuka')
-    yuuna = ExtraMetadata(True, 'Character', 'Yuuna Hijirisawa')
-    mao = ExtraMetadata(True, 'Character', 'Mao Hiiragi')
     with amqcsl.DBClient(
         username=os.getenv('USERNAME'),
         password=os.getenv('PASSWORD'),
     ) as client:
         artist_to_meta = conv_artist_dict(
             client,
-            {
-                ('Liella!', 'Love Live! Superstar!! (11 members)'): [
-                    kanon,
-                    keke,
-                    sumire,
-                    chisato,
-                    ren,
-                    kinako,
-                    natsumi,
-                    shiki,
-                    mei,
-                    margarete,
-                    tomari,
-                ],
-                ('Liella!', 'Love Live! Superstar!! (9 members)'): [
-                    kanon,
-                    keke,
-                    sumire,
-                    chisato,
-                    ren,
-                    kinako,
-                    natsumi,
-                    shiki,
-                    mei,
-                ],
-                ('Liella!', 'Love Live! Superstar!! (8 members)'): [
-                    keke,
-                    sumire,
-                    chisato,
-                    ren,
-                    kinako,
-                    natsumi,
-                    shiki,
-                    mei,
-                ],
-                ('Liella!', 'Love Live! Superstar!! (6 members)'): [kanon, keke, sumire, chisato, ren, kinako],
-                ('Liella!', 'Love Live! Superstar!! (5 members)'): [kanon, keke, sumire, chisato, ren],
-                ('Sayuri Date', None): [kanon],
-                ('Liyuu', None): [keke],
-                ('Nako Misaki', None): [chisato],
-                ('Naomi Payton', None): [sumire],
-                ('Nagisa Aoyama', None): [ren],
-                ('Nozomi Suzuhara', None): [kinako],
-                ('Aya Emori', None): [natsumi],
-                ('Wakana Ookuma', None): [shiki],
-                ('Akane Yabushima', None): [mei],
-                ('Yuina', None): [margarete],
-                ('Sakura Sakakura', None): [tomari],
-                ('CatChu!', 'Love Live!'): [kanon, sumire, mei],
-                ('KALEIDOSCORE', 'Love Live!'): [keke, ren, margarete],
-                ('5yncri5e!', 'Love Live!'): [chisato, kinako, natsumi, shiki, tomari],
-                ('Sunny Passion', 'Love Live! Superstar!!'): [yuuna, mao],
-            },
+            artist_dict,
             ['Liella!', '5yncri5e!', 'CatChu!', 'KALEIDOSCORE', 'Sunny Passion'],
         )
         superstar_group = client.groups['Love Live! Superstar!!']
@@ -118,22 +80,6 @@ def main(logger: logging.Logger):
 
         if prompt(client.queue):
             client.commit()
-
-
-def queue_metadata(
-    client: amqcsl.DBClient,
-    track: CSLTrack,
-    artist_to_meta: dict[CSLArtistSample, list[ExtraMetadata]],
-    meta: CSLMetadata | None,
-) -> CSLArtistSample | None:
-    metas: list[ExtraMetadata] = []
-    for cred in track.artist_credits:
-        new_metas = artist_to_meta.get(cred.artist)
-        if new_metas is None:
-            return cred.artist
-        metas += new_metas
-    client.add_track_metadata(track, *metas, existing_meta=meta, queue=True)
-    return None
 
 
 if __name__ == '__main__':
