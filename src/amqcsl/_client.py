@@ -412,7 +412,18 @@ class DBClient:
         res.raise_for_status()
 
     def create_list(self, name: str, *csl_lists: CSLList) -> CSLList:
-        """Make a list"""
+        """Make a list
+
+        Args:
+            name: name of the list
+            *csl_lists: Lists to pull tracks from
+
+        Returns:
+            Newly created list
+
+        Raises:
+            ListCreateError: Error if the request gives an error, probably because the list already exists
+        """
         logger.info(f'Making list {name}')
         body = {
             'importListIds': [csl_list.id for csl_list in csl_lists],

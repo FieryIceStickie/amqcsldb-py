@@ -1,0 +1,36 @@
+import logging
+import os
+
+from dotenv import load_dotenv
+from log import setup_logging
+
+import amqcsl
+from amqcsl.utils import ArtistDict, CharacterDict, make_artist_to_meta, prompt
+
+_ = load_dotenv()
+
+characters: CharacterDict = {}
+
+artists: ArtistDict = {}
+
+
+def main(logger: logging.Logger):
+    with amqcsl.DBClient(
+        username=os.getenv('USERNAME'),
+        password=os.getenv('PASSWORD'),
+    ) as client:
+        artist_to_meta = make_artist_to_meta(
+            client,
+            characters,
+            artists,
+            [],
+        )
+
+        if prompt(client.queue):
+            client.commit()
+
+
+if __name__ == '__main__':
+    logger = logging.getLogger('')
+    setup_logging()
+    main(logger)

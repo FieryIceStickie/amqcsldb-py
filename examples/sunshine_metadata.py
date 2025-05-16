@@ -1,12 +1,14 @@
 import logging
 import os
+from collections.abc import Sequence
+from typing import Mapping
 
 from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
 from amqcsl.objects import ExtraMetadata
-from amqcsl.utils import PreMetaDict, conv_artist_dict, prompt, queue_metadata
+from amqcsl.utils import ArtistKey, conv_artist_dict, prompt, queue_character_metadata
 
 _ = load_dotenv()
 
@@ -58,7 +60,7 @@ y_kanan = ExtraMetadata(True, 'Character', 'Kanan')
 lailaps = ExtraMetadata(True, 'Character', 'Lailaps')
 
 # fmt: off
-normal_artists: PreMetaDict = {
+normal_artists: Mapping[ArtistKey, Sequence[ExtraMetadata]] = {
     'Anju Inami': [chika],
     'Shuka Saitou': [you],
     'Rikako Aida': [riko],
@@ -75,7 +77,7 @@ normal_artists: PreMetaDict = {
     ('CYaRon!', 'Love Live!'): [chika, you, ruby],
     ('AZALEA', 'Love Live!'): [hanamaru, kanan, dia],
 }
-yohane_artists: PreMetaDict = {
+yohane_artists: Mapping[ArtistKey, Sequence[ExtraMetadata]] = {
     'Anju Inami': [y_chika],
     'Shuka Saitou': [y_you],
     'Rikako Aida': [y_riko],
@@ -99,8 +101,6 @@ def main(logger: logging.Logger):
     ) as client:
         sunshine_to_meta = conv_artist_dict(client, normal_artists, ['Aqours', 'Guilty Kiss', 'CYaRon!', 'AZALEA'])
         yohane_to_meta = conv_artist_dict(client, yohane_artists, ['Aqours', 'Youko Hikasa'])
-        normal_names = {meta.value for metas in sunshine_to_meta.values() for meta in metas}
-        yohane_names = {meta.value for metas in yohane_to_meta.values() for meta in metas}
 
         sunshine_group = client.groups['Love Live! Sunshine!!']
         for track in client.iter_tracks(groups=[sunshine_group], batch_size=100):
@@ -124,18 +124,12 @@ def main(logger: logging.Logger):
 
             meta = client.get_metadata(track)
             artist_to_meta = yohane_to_meta if is_yohane else sunshine_to_meta
-            other = normal_names if is_yohane else yohane_names
-            if (artist := queue_metadata(client, track, artist_to_meta, meta)) is not None:
+            if (artist := queue_character_metadata(client, track, artist_to_meta, meta)) is not None:
                 if artist.name in {'AiScReam', 'YYY'}:
                     continue
                 logger.info(f'Unidentified artist {artist.name} {artist.disambiguation}')
-                prompt(track)
+                prompt(track, msg=f'Unidentified artist {artist.name} {artist.disambiguation}, continue?')
                 continue
-            if meta:
-                for m in meta.extra_metas:
-                    if m.key == 'Character' and (m.value in other or m.type != 'Artist'):
-                        logger.info(f'Removing metadata {m.key} {m.value} from {track.name}')
-                        client.remove_track_metadata(track, m, queue=True)
 
         if prompt(client.queue):
             client.commit()
