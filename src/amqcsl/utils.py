@@ -2,11 +2,21 @@ import logging
 from collections.abc import Mapping, Sequence
 from itertools import chain
 from operator import attrgetter
+from typing import Any
 
-from amqcsl.objects._db_types import CSLTrackArtistCredit, TrackPutArtistCredit
+from rich.pretty import pprint
+
+from amqcsl.exceptions import AMQCSLError, QuitError
+from amqcsl.objects import (
+    CSLArtistSample,
+    CSLMetadata,
+    CSLTrack,
+    CSLTrackArtistCredit,
+    ExtraMetadata,
+    TrackPutArtistCredit,
+)
 
 from ._client import DBClient
-from .objects import CSLArtistSample, CSLMetadata, CSLTrack, ExtraMetadata
 
 logger = logging.getLogger('amqcsl.utils')
 
@@ -43,3 +53,20 @@ def queue_metadata(
 
 def conv_artist_credits(creds: Sequence[CSLTrackArtistCredit]) -> list[TrackPutArtistCredit]:
     return [TrackPutArtistCredit.simplify(cred) for cred in sorted(creds, key=attrgetter('position'))]
+
+
+def prompt(*objs: Any, pretty: bool = True, **kwargs: Any) -> bool:
+    print_func = pprint if pretty else print
+    for obj in objs:
+        print_func(obj, **kwargs)
+    while inp := input('Accept Y/N? '):
+        match inp.lower().strip():
+            case 'y' | 'yes':
+                return True
+            case 'n' | 'no':
+                return False
+            case 'q' | 'quit':
+                raise QuitError
+            case _:
+                continue
+    return True
