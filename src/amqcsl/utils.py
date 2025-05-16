@@ -67,7 +67,7 @@ def prompt(*objs: Any, pretty: bool = True, **kwargs: Any) -> bool:
     print_func = pprint if pretty else print
     for obj in objs:
         print_func(obj, **kwargs)
-    while inp := input('Accept Y/N? '):
+    while inp := input('Accept Y/N? (Q to quit)'):
         match inp.lower().strip():
             case 'y' | 'yes':
                 return True
