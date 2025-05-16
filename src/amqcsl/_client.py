@@ -470,15 +470,20 @@ class DBClient:
             match meta:
                 case ArtistCredit():
                     if meta not in current_metas:
+                        logger.debug(f'Adding artist credit {meta.type} {meta.artist.name}')
                         body['artistCredits'].append(meta.to_json())
                         current_metas.add(meta)
                         id_to_name[meta.artist.id] = meta.artist.name
                 case ExtraMetadata():
                     if meta not in current_metas:
+                        logger.debug(f'Adding extra metadata {meta.type}: {meta.value}')
                         body['extraMetadatas'].append(meta.to_json())
                         current_metas.add(meta)
                 case _:
                     raise ValueError('metas must be ArtistCredit or ExtraMetadata')
+        if not body['artistCredits'] and not body['extraMetadatas'] and body['id'] == EMPTY_ID and body['override'] is None:
+            logger.info('No changes necessary, skipping request')
+            return
         req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
         if queue:
             self.enqueue(MetadataPost(req, track, body, id_to_name))
@@ -492,23 +497,6 @@ class DBClient:
         res = self.client.post('/api/group', json={'name': name})
         res.raise_for_status()
         return CSLGroup.from_json(res.json())
-
-    def edit_track_group(self, track: CSLTrack, new_groups: list[CSLGroup]) -> None:
-        logger.info(f'Setting groups of {track.name} to {", ".join([group.name for group in new_groups])}')
-        body = {
-            'artistCredits': None,
-            'batchSongIds': None,
-            'groupIds': [group.id for group in new_groups],
-            'id': EMPTY_ID,
-            'name': track.name,
-            'newSong': None,
-            'originalArtist': track.original_simple_artist,
-            'originalName': track.original_name,
-            'songId': None if track.song is None else track.song.id,
-            'type': track.type_id,
-        }
-        res = self.client.put(f'/api/track/{track.id}', json=body)
-        res.raise_for_status()
 
     # --- Track writing ---
     def edit_track(

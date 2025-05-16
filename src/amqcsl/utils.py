@@ -20,19 +20,28 @@ from ._client import DBClient
 
 logger = logging.getLogger('amqcsl.utils')
 
-type MetaDict = dict[CSLArtistSample, ExtraMetadata]
+type PreMetaDict = Mapping[tuple[str, str | None] | str, Sequence[ExtraMetadata]]
+type MetaDict = Mapping[CSLArtistSample, Sequence[ExtraMetadata]]
 
 
 def conv_artist_dict[T](
     client: DBClient,
-    artist_to_meta: Mapping[tuple[str, str | None], T],
+    artist_to_meta: Mapping[tuple[str, str | None] | str, T],
     search_phrases: Sequence[str],
 ) -> dict[CSLArtistSample, T]:
-    return {
+    normalized = {
+        (key, None) if isinstance(key, str) else key: v
+        for key, v in artist_to_meta.items()
+    }
+    rtn = {
         artist: v
         for artist in chain.from_iterable(map(client.iter_artists, search_phrases))
-        if (v := artist_to_meta.get((artist.name, artist.disambiguation))) is not None
+        if (v := normalized.get((artist.name, artist.disambiguation))) is not None
     }
+    lost = normalized.keys() - {(artist.name, artist.disambiguation) for artist in rtn}
+    if lost:
+        raise AMQCSLError(f'Could not find artists {", ".join([name for name, _ in lost])}')
+    return rtn
 
 
 def queue_metadata(
@@ -48,7 +57,6 @@ def queue_metadata(
             return cred.artist
         metas += new_metas
     client.add_track_metadata(track, *metas, existing_meta=meta, queue=True)
-    return None
 
 
 def conv_artist_credits(creds: Sequence[CSLTrackArtistCredit]) -> list[TrackPutArtistCredit]:

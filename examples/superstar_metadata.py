@@ -5,9 +5,8 @@ from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
-from amqcsl import prompt
 from amqcsl.objects import ExtraMetadata
-from amqcsl.utils import conv_artist_dict, queue_metadata
+from amqcsl.utils import PreMetaDict, conv_artist_dict, prompt, queue_metadata
 
 _ = load_dotenv()
 
@@ -27,29 +26,30 @@ yuuna = ExtraMetadata(True, 'Character', 'Yuuna Hijirisawa')
 mao = ExtraMetadata(True, 'Character', 'Mao Hiiragi')
 
 # fmt: off
-artist_dict: dict[tuple[str, str | None], list[ExtraMetadata]] = {
+artist_dict: PreMetaDict = {
     ('Liella!', 'Love Live! Superstar!! (11 members)'): [kanon, keke, sumire, chisato, ren, kinako, natsumi, shiki, mei, margarete, tomari],
     ('Liella!', 'Love Live! Superstar!! (9 members)'): [kanon, keke, sumire, chisato, ren, kinako, natsumi, shiki, mei],
     ('Liella!', 'Love Live! Superstar!! (8 members)'): [keke, sumire, chisato, ren, kinako, natsumi, shiki, mei],
     ('Liella!', 'Love Live! Superstar!! (6 members)'): [kanon, keke, sumire, chisato, ren, kinako],
     ('Liella!', 'Love Live! Superstar!! (5 members)'): [kanon, keke, sumire, chisato, ren],
-    ('Sayuri Date', None): [kanon],
-    ('Liyuu', None): [keke],
-    ('Nako Misaki', None): [chisato],
-    ('Naomi Payton', None): [sumire],
-    ('Nagisa Aoyama', None): [ren],
-    ('Nozomi Suzuhara', None): [kinako],
-    ('Aya Emori', None): [natsumi],
-    ('Wakana Ookuma', None): [shiki],
-    ('Akane Yabushima', None): [mei],
-    ('Yuina', None): [margarete],
-    ('Sakura Sakakura', None): [tomari],
+    'Sayuri Date': [kanon],
+    'Liyuu': [keke],
+    'Nako Misaki': [chisato],
+    'Naomi Payton': [sumire],
+    'Nagisa Aoyama': [ren],
+    'Nozomi Suzuhara': [kinako],
+    'Aya Emori': [natsumi],
+    'Wakana Ookuma': [shiki],
+    'Akane Yabushima': [mei],
+    'Yuina': [margarete],
+    'Sakura Sakakura': [tomari],
     ('CatChu!', 'Love Live!'): [kanon, sumire, mei],
     ('KALEIDOSCORE', 'Love Live!'): [keke, ren, margarete],
     ('5yncri5e!', 'Love Live!'): [chisato, kinako, natsumi, shiki, tomari],
     ('Sunny Passion', 'Love Live! Superstar!!'): [yuuna, mao],
 }
 # fmt: on
+
 
 def main(logger: logging.Logger):
     with amqcsl.DBClient(

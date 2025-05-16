@@ -22,7 +22,7 @@ def main(logger: logging.Logger):
                 logger.info(f'Skipping {track.name} by {track.original_simple_artist}')
                 continue
             logger.info(f'Updating {track.name}')
-            client.edit_track_group(track, [terraria_group, video_games_group])
+            client.edit_track(track, groups=[terraria_group, video_games_group])
             meta = client.get_metadata(track)
             if meta is not None and 'Game' in meta.fields:
                 logger.info(f'Track {track.name} already has Game metadata')
