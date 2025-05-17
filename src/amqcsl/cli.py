@@ -66,6 +66,8 @@ def make(
     ] = Templates.simple,
 ):
     template_file = files('amqcsl') / f'templates/scripts/{template.value}.txt'
+    if (Path.cwd() / dest).exists():
+        raise FileExistsError(Path.cwd() / dest)
     with as_file(template_file) as file:
         shutil.copy(file, dest)
 
