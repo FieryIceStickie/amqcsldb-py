@@ -231,9 +231,9 @@ class DBClient:
             if isinstance(exc_val, httpx.HTTPStatusError):
                 try:
                     error_data = exc_val.response.json()
-                    logger.error('Json given with error, check logs', extra={'data': error_data})
+                    logger.error('JSON given with error, check logs', extra={'data': error_data})
                 except Exception:
-                    logger.error('No json given with error')
+                    logger.error('No JSON given with error')
             logger.error('Exception encountered, closing client')
 
         if self._client:
@@ -678,12 +678,12 @@ class DBClient:
             'batchSongIds': None,
             'groupIds': None if groups is None else [group.id for group in groups],
             'id': EMPTY_ID,
-            'name': track.name if name is None else name,
+            'name': name,
             'newSong': None,
-            'originalArtist': track.original_simple_artist if original_artist is None else original_artist,
-            'originalName': track.original_name if original_name is None else original_name,
-            'songId': (None if track.song is None else track.song.id) if song is None else song.id,
-            'type': track.type_id if type is None else REVERSE_TRACK_TYPE[type],
+            'originalArtist': original_artist,
+            'originalName': original_name,
+            'songId': None if song is None else song.id,
+            'type': None if type is None else REVERSE_TRACK_TYPE[type],
         }
         req = self.client.build_request('PUT', f'/api/track/{track.id}', json=body)
         if queue:
