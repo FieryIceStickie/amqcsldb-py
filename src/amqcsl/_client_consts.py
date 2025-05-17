@@ -6,7 +6,7 @@ from attrs import frozen
 
 from amqcsl.objects._db_types import CSLTrack
 
-from .objects import CSLExtraMetadata, CSLSongArtistCredit, CSLTrackSample
+from .objects import CSLExtraMetadata, CSLSongArtistCredit
 from .objects._json_types import MetadataPostBody, TrackPutBody
 
 DB_URL = 'https://amqbot.082640.xyz'
@@ -20,7 +20,7 @@ class QueueObj:
 
 @frozen
 class MetadataPost(QueueObj):
-    track: CSLTrackSample
+    track: CSLTrack
     body: MetadataPostBody
     id_to_name: Mapping[str, str]
 
@@ -35,7 +35,7 @@ class MetadataPost(QueueObj):
 
 @frozen
 class MetadataDelete(QueueObj):
-    track: CSLTrackSample
+    track: CSLTrack
     meta: CSLSongArtistCredit | CSLExtraMetadata
 
     def __rich_repr__(self) -> Iterator[Any]:

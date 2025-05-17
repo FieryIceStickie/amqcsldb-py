@@ -14,7 +14,7 @@ from ._client_consts import (
     QueueObj,
     TrackEdit,
 )
-from .exceptions import ClientDoesNotExistError, ListCreateError, LoginError, QueryError
+from .exceptions import AMQCSLError, ClientDoesNotExistError, ListCreateError, LoginError, QueryError
 from .objects import (
     EMPTY_ID,
     REVERSE_TRACK_TYPE,
@@ -29,7 +29,6 @@ from .objects import (
     CSLSongArtistCredit,
     CSLSongSample,
     CSLTrack,
-    CSLTrackSample,
     ExtraMetadata,
     Metadata,
     TrackPutArtistCredit,
@@ -58,6 +57,7 @@ class DBClient:
         session_path: Filepath to look for/store session cookie in, defaults to amq_session.txt
         max_batch_size: Maximum batch size when querying db
         max_query_size: Maximum number of queries when iterating
+        queue: Request queue
     """
 
     username: str | None = None
@@ -110,6 +110,11 @@ class DBClient:
         self.queue.append(obj)
 
     def commit(self, *, stop_if_err: bool = True):
+        """Commit changes in the queue
+
+        Args:
+            stop_if_err: Stop sending requests if one of them errors
+        """
         logger.info(f'Commiting {len(self.queue)} changes')
         client = self.client
         for obj in self.queue:
@@ -135,6 +140,7 @@ class DBClient:
 
     def _verify_perms(self):
         """Verify that the user login info is correct and user has admin
+
         Raises:
             LoginError: If login fails for any expected reason
             RuntimeError: If login fails for an unexpected reason
@@ -179,7 +185,14 @@ class DBClient:
             raise LoginError(f'User {res.json()["name"]} does not have admin privileges')
 
     def _login(self, client: httpx.Client):
-        """Attempt login, saves session_id to file if successful"""
+        """Attempt login, saves session_id to file if successful
+
+        Args:
+            client: HTTPx client
+
+        Raises:
+            LoginError: If the username and password are invalid
+        """
         if not all((self.username, self.password)):
             raise LoginError('Username and password must not be empty')
         body = {
@@ -216,9 +229,13 @@ class DBClient:
             self._client.close()
 
     def logout(self):
-        """Logout the client"""
+        """Logout the client
+
+        Raises:
+            AMQCSLError: httpx client doesn't exist yet
+        """
         if (client := self._client) is None:
-            raise LoginError('Logout attempted without client')
+            raise AMQCSLError('Logout attempted without client')
 
         logger.info('Logging out the client')
         res = client.post('/api/logout')
@@ -251,6 +268,9 @@ class DBClient:
             missing_info: Restrict to songs missing info
             from_active_list: Restrict to songs in active list
             batch_size: How many tracks to query at once (page size)
+
+        Yields:
+            CSLTrack
         """
         if groups is None:
             groups = []
@@ -286,7 +306,15 @@ class DBClient:
             yield from map(CSLTrack.from_json, page)
 
     def iter_songs(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLSongSample]:
-        """Iterator over songs matching search_term"""
+        """Iterate over songs matching search_term
+
+        Args:
+            search_term: Term to search for
+            batch_size: Number of songs per page
+
+        Yields:
+            CSLSongSample
+        """
         logger.info(f'Fetching songs matching search term "{search_term}"')
         params: QueryParamsSong = {
             'searchTerm': search_term,
@@ -299,7 +327,15 @@ class DBClient:
             yield from map(CSLSongSample.from_json, page)
 
     def iter_artists(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLArtistSample]:
-        """Iterator over artists matching search_term"""
+        """Iterator over artists matching search_term
+
+        Args:
+            search_term: Term to search for
+            batch_size: Number of artists per page
+
+        Yields:
+            CSLArtistSample
+        """
         params: QueryParamsArtist = {
             'searchTerm': search_term,
             'skip': 0,
@@ -318,6 +354,20 @@ class DBClient:
         query: Query,
         key: str,
     ) -> Iterator[list[JSONType]]:
+        """Internal helper for iterating over pages
+
+        Args:
+            req_type: Type of the request
+            path: Request path
+            query: Query/Body for the request
+            key: Name of the thing being searched for (song/artist/track)
+
+        Yields:
+            JSON objects from the pages
+
+        Raises:
+            QueryError: Batch size is invalid
+        """
         if query['take'] <= 0:
             raise QueryError('Batch size must be positive')
         elif query['take'] > self.max_batch_size:
@@ -359,7 +409,14 @@ class DBClient:
     # --- Detailed DB reading ---
 
     def get_song(self, song: CSLSongSample) -> CSLSong:
-        """Fetch detailed song info from db"""
+        """Fetch detailed song info from db
+
+        Args:
+            song: CSLSongSample, probably from iter_songs
+
+        Returns:
+            CSLSong
+        """
         if isinstance(song, CSLSong):
             logger.warning(f'client.get_song called with already filled CSLSong {song.name}')
             return song
@@ -368,7 +425,14 @@ class DBClient:
         return CSLSong.from_json(res.json())
 
     def get_artist(self, artist: CSLArtistSample) -> CSLArtist:
-        """Fetch detailed artist info from db"""
+        """Fetch detailed artist info from db
+
+        Args:
+            artist: CSLArtistSample, probably from iter_artists
+
+        Returns:
+            CSLArtist
+        """
         if isinstance(artist, CSLArtist):
             logger.warning(f'client.get_artist called with already filled CSLArtist {artist.name}')
             return artist
@@ -376,8 +440,15 @@ class DBClient:
         res.raise_for_status()
         return CSLArtist.from_json(res.json())
 
-    def get_metadata(self, track: CSLTrackSample) -> CSLMetadata | None:
-        """Fetch metadata info from db"""
+    def get_metadata(self, track: CSLTrack) -> CSLMetadata | None:
+        """Fetch metadata info from db
+
+        Args:
+            track: CSLTrack to get metadata from
+
+        Returns:
+            CSLMetadata, or None if it doesn't have any metadata
+        """
         res = self.client.get(f'/api/track/{track.id}/metadata')
         if res.status_code == 404 and res.json()['errors']['generalErrors'][0] == 'Song does not have metadata':
             return None
@@ -386,19 +457,19 @@ class DBClient:
 
     # --- List operations ---
 
-    def add_to_list(self, csl_list: CSLList, *tracks: CSLTrackSample) -> None:
+    def add_to_list(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
         """Add tracks to a list"""
         self.edit_list(csl_list, tracks, [])
 
-    def remove_from_list(self, csl_list: CSLList, *tracks: CSLTrackSample) -> None:
+    def remove_from_list(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
         """Remove tracks from a list"""
         self.edit_list(csl_list, [], tracks)
 
     def edit_list(
         self,
         csl_list: CSLList,
-        add_tracks: Sequence[CSLTrackSample],
-        remove_tracks: Sequence[CSLTrackSample],
+        add_tracks: Sequence[CSLTrack],
+        remove_tracks: Sequence[CSLTrack],
     ) -> None:
         """Edit a list"""
         logger.info(f'Editing list {csl_list.name}')
@@ -424,6 +495,7 @@ class DBClient:
         Raises:
             ListCreateError: Error if the request gives an error, probably because the list already exists
         """
+        """Make a list"""
         logger.info(f'Making list {name}')
         body = {
             'importListIds': [csl_list.id for csl_list in csl_lists],
@@ -439,7 +511,10 @@ class DBClient:
 
     # --- Metadata writing ---
     def remove_track_metadata(
-        self, track: CSLTrackSample, meta: CSLSongArtistCredit | CSLExtraMetadata, queue: bool = False
+        self,
+        track: CSLTrack,
+        meta: CSLSongArtistCredit | CSLExtraMetadata,
+        queue: bool = False,
     ):
         logger.info(
             f'Removing metadata {f"{meta.type} {meta.artist.name}" if isinstance(meta, CSLSongArtistCredit) else f"{meta.key} {meta.value}"} from {track.name}'
@@ -453,7 +528,7 @@ class DBClient:
 
     def add_track_metadata(
         self,
-        track: CSLTrackSample,
+        track: CSLTrack,
         *metas: Metadata,
         override: bool | None = None,
         existing_meta: CSLMetadata | None = None,
@@ -492,7 +567,12 @@ class DBClient:
                         current_metas.add(meta)
                 case _:
                     raise ValueError('metas must be ArtistCredit or ExtraMetadata')
-        if not body['artistCredits'] and not body['extraMetadatas'] and body['id'] == EMPTY_ID and body['override'] is None:
+        if (
+            not body['artistCredits']
+            and not body['extraMetadatas']
+            and body['id'] == EMPTY_ID
+            and body['override'] is None
+        ):
             logger.info('No changes necessary, skipping request')
             return
         req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)

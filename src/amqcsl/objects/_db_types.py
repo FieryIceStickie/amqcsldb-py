@@ -250,13 +250,9 @@ class CSLSongRelation:
 
 
 @frozen
-class CSLTrackSample:
+class CSLTrackLink:
     id: str
     name: str | None
-
-
-@frozen
-class CSLTrackLink(CSLTrackSample):
     artists: list[CSLTrackArtistCredit]
 
     @classmethod
@@ -372,7 +368,9 @@ class CSLSongArtistCredit:
 
 
 @frozen
-class CSLTrack(CSLTrackSample):
+class CSLTrack:
+    id: str
+    name: str | None
     original_name: str
     original_simple_artist: str
     original_album: str | None
