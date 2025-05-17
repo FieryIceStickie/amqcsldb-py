@@ -1,5 +1,6 @@
 import os
 import shutil
+from enum import Enum
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Annotated
@@ -20,9 +21,11 @@ def init(
         ),
     ],
 ):
-    """
-    Initialize an empty directory with logs, an env file, and gitignore
+    """Initialize an empty directory with logs, an env file, and gitignore
     Note: will override existing files if they exist
+
+    Args:
+        dest: Path to script directory, defaults to cwd
     """
     dest.mkdir(parents=True, exist_ok=True)
     template_dir = files('amqcsl') / 'templates'
@@ -42,6 +45,30 @@ def init(
         for name in (session_path, '.env', 'logs'):
             print(name, file=file)
     os.mkdir(dest / 'logs')
+
+
+class Templates(str, Enum):
+    simple = 'simple'
+    character = 'character'
+
+
+@app.command()
+def make(
+    dest: Annotated[str, typer.Argument(help='Name of the file')],
+    template: Annotated[
+        Templates,
+        typer.Option(
+            '--template',
+            '-t',
+            help='Template to choose from',
+            case_sensitive=False,
+        ),
+    ] = Templates.simple,
+):
+    template_file = files('amqcsl') / f'templates/scripts/{template.value}.txt'
+    with as_file(template_file) as file:
+        shutil.copy(file, dest)
+
 
 @app.callback()
 def callback():
