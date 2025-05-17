@@ -22,11 +22,12 @@ def init(
 ):
     """
     Initialize an empty directory with logs, an env file, and gitignore
+    Note: will override existing files if they exist
     """
     template_dir = files('amqcsl') / 'templates'
     with as_file(template_dir) as dir:
-        shutil.copytree(dir / 'log', dest / 'log')
-    with open(dest / '.env', 'x') as file:
+        shutil.copytree(dir / 'log', dest / 'log', dirs_exist_ok=True)
+    with open(dest / '.env', 'w') as file:
         username = input('Enter AMQ bot username (for .env file): ')
         print(f'USERNAME={username}', file=file)
         password = input('Enter AMQ bot password (for .env file): ')
@@ -36,7 +37,7 @@ def init(
             or 'amq_session.txt'
         )
         print(f'SESSION_PATH={session_path}', file=file)
-    with open(dest / '.gitignore', 'x') as file:
+    with open(dest / '.gitignore', 'w') as file:
         for name in (session_path, '.env', 'logs'):
             print(name, file=file)
     os.mkdir(dest / 'logs')
