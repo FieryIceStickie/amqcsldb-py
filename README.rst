@@ -11,6 +11,7 @@ Usage
 
 The library offers a small CLI to help with setting up a script directory. Run
 .. code-block:: zsh
+
     amqcsl init scripts
 It will prompt you for your amqbot username and password, which will be put into the `.env` file. You can edit
 it manually if you enter it wrong.
@@ -19,17 +20,20 @@ Do note that this will overwrite stuff that already exists.
 
 After that, move into the scripts directory with
 .. code-block:: zsh
+
     cd scripts
 and then run
 .. code-block:: zsh
+
     amqcsl make my_script.py
 to make a script scaffold. You can add a flag like
 .. code-block:: zsh
+
     amqcsl make superstar_metadata.py -t character
 to change the type of scaffold to use.
 Currently there are two types:
-- Simple: The default scaffold
-- Character: A scaffold for adding character metadata
+* Simple: The default scaffold
+* Character: A scaffold for adding character metadata
 
 For actual script writing, I haven't had time to make proper docs yet, so see the ``examples`` directory on the github.
 ``hk_metadata`` and ``terraria_metadata`` are fairly simple examples, and if you're looking to add character metadata then
