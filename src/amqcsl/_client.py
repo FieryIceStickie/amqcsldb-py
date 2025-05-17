@@ -523,7 +523,7 @@ class DBClient:
         return self.lists[name]
 
     # --- General Editing ---
-    def add_track_metadata(
+    def track_metadata_add(
         self,
         track: CSLTrack,
         *metas: Metadata,
@@ -591,7 +591,7 @@ class DBClient:
             res = self.client.send(req)
             res.raise_for_status()
 
-    def remove_track_metadata(
+    def track_metadata_remove(
         self,
         track: CSLTrack,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
@@ -614,7 +614,7 @@ class DBClient:
             res = self.client.send(req)
             res.raise_for_status()
 
-    def add_group(self, name: str) -> CSLGroup:
+    def group_add(self, name: str) -> CSLGroup:
         """Add a group
 
         Args:
@@ -628,7 +628,7 @@ class DBClient:
         res.raise_for_status()
         return CSLGroup.from_json(res.json())
 
-    def edit_track(
+    def track_edit(
         self,
         track: CSLTrack,
         *,

@@ -105,7 +105,7 @@ def queue_character_metadata(
             return cred.artist
         metas.update(new_metas)
     logger.info(f'Adding {len(metas)} new metadata to {track.name}')
-    client.add_track_metadata(track, *metas, existing_meta=meta, queue=True)
+    client.track_metadata_add(track, *metas, existing_meta=meta, queue=True)
 
     if meta is None:
         return
@@ -113,7 +113,7 @@ def queue_character_metadata(
     curr = {ExtraMetadata.simplify(m): m for m in meta.extra_metas if m.key == 'Character'}
     for m in curr.keys() - metas:
         logger.info(f'Removing metadata {m.type} {m.value} from {track.name}')
-        client.remove_track_metadata(track, curr[m], queue=True)
+        client.track_metadata_remove(track, curr[m], queue=True)
 
 
 def prompt(*objs: Any, msg: str = 'Accept?', pretty: bool = True, **kwargs: Any) -> bool:

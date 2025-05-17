@@ -63,9 +63,9 @@ class TrackEdit(QueueObj):
             yield 'artist_credits_after', body['artistCredits']
         if body['groupIds'] is not None:
             yield 'groups', body['groupIds']
-        yield 'new_name', body['name'], None
+        yield 'new_name', body['name'], self.track.name
         yield 'new_song', body['newSong'], None
-        yield 'new_original_artist', body['newSong'], None
-        yield 'new_original_artist', body['originalArtist'], None
-        yield 'new_song_id', body['songId'], None
-        yield 'new_type', body['type'], None
+        yield 'new_original_artist', body['originalArtist'], self.track.original_simple_artist
+        yield 'new_original_name', body['originalName'], self.track.original_name
+        yield 'new_song_id', body['songId'], self.track.song and self.track.song.id
+        yield 'new_type', body['type'], self.track.type_id
