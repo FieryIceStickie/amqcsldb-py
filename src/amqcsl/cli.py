@@ -24,6 +24,7 @@ def init(
     Initialize an empty directory with logs, an env file, and gitignore
     Note: will override existing files if they exist
     """
+    dest.mkdir(parents=True, exist_ok=True)
     template_dir = files('amqcsl') / 'templates'
     with as_file(template_dir) as dir:
         shutil.copytree(dir / 'log', dest / 'log', dirs_exist_ok=True)
