@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from types import TracebackType
 from typing import Literal, Self
 
 import httpx
@@ -218,11 +219,23 @@ class DBClient:
         else:
             return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):  # type: ignore[reportMissingParameterType]
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ):
         if exc_type is None:
             logger.info('Closing client')
         else:
-            logger.info('Exception encountered, closing client')
+            if isinstance(exc_val, httpx.HTTPStatusError):
+                try:
+                    error_data = exc_val.response.json()
+                    logger.error('Json given with error, check logs', extra={'data': error_data})
+                except Exception:
+                    logger.error('No json given with error')
+            logger.error('Exception encountered, closing client')
+
         if self._client:
             self._client.close()
 

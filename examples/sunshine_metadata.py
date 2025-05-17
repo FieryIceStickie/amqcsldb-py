@@ -114,13 +114,13 @@ def main(logger: logging.Logger):
             if 'Fourth Solo Concert Album' in track.album and 'Solo Ver.' not in track.name:
                 (cred,) = track.artist_credits
                 (character,) = sunshine_to_meta[cred.artist]
-                client.edit_track(track, name=f'{track.name} ({character.value} Solo Ver.)', queue=True)
+                client.track_edit(track, name=f'{track.name} ({character.value} Solo Ver.)', queue=True)
             elif 'Solo Ver.' in track.name:
                 (cred,) = track.artist_credits
                 (character,) = sunshine_to_meta[cred.artist]
                 first, last = character.value.split(' ')
                 if f'{last} {first}' in track.name:
-                    client.edit_track(track, name=track.name.replace(f'{last} {first}', f'{first} {last}'), queue=True)
+                    client.track_edit(track, name=track.name.replace(f'{last} {first}', f'{first} {last}'), queue=True)
 
             meta = client.get_metadata(track)
             artist_to_meta = yohane_to_meta if is_yohane else sunshine_to_meta
