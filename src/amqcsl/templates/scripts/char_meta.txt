@@ -31,6 +31,6 @@ def main(logger: logging.Logger):
 
 
 if __name__ == '__main__':
-    logger = logging.getLogger('')
+    logger = logging.getLogger(%LOGGER_NAME)
     setup_logging()
     main(logger)
