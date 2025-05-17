@@ -495,6 +495,7 @@ class CSLTrackArtistCredit:
 
 # --- Edits ---
 
+# This is for making requests to edit existing metadata
 type Metadata = ArtistCredit | ExtraMetadata
 
 

@@ -30,16 +30,14 @@ from .objects import (
     CSLSongSample,
     CSLTrack,
     ExtraMetadata,
-    Metadata,
-    TrackPutArtistCredit,
-)
-from .objects._json_types import (
     JSONType,
+    Metadata,
     MetadataPostBody,
     Query,
     QueryBodyTrack,
     QueryParamsArtist,
     QueryParamsSong,
+    TrackPutArtistCredit,
     TrackPutBody,
 )
 
@@ -457,21 +455,37 @@ class DBClient:
 
     # --- List operations ---
 
-    def add_to_list(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
-        """Add tracks to a list"""
-        self.edit_list(csl_list, tracks, [])
+    def list_add(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
+        """Add tracks to a list
 
-    def remove_from_list(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
-        """Remove tracks from a list"""
-        self.edit_list(csl_list, [], tracks)
+        Args:
+            csl_list: List to add to
+            *tracks: Tracks to add
+        """
+        self.list_edit(csl_list, tracks, [])
 
-    def edit_list(
+    def list_remove(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
+        """Remove tracks from a list
+
+        Args:
+            csl_list: List to remove from
+            *tracks: Tracks to remove
+        """
+        self.list_edit(csl_list, [], tracks)
+
+    def list_edit(
         self,
         csl_list: CSLList,
         add_tracks: Sequence[CSLTrack],
         remove_tracks: Sequence[CSLTrack],
     ) -> None:
-        """Edit a list"""
+        """Edit a list
+
+        Args:
+            csl_list: List to edit
+            add_tracks: Tracks to add
+            remove_tracks: Tracks to remove
+        """
         logger.info(f'Editing list {csl_list.name}')
         body = {
             'addSongIds': [track.id for track in add_tracks] if add_tracks else None,
@@ -482,7 +496,7 @@ class DBClient:
         res = self.client.put(f'/api/list/{csl_list.id}', json=body)
         res.raise_for_status()
 
-    def create_list(self, name: str, *csl_lists: CSLList) -> CSLList:
+    def list_create(self, name: str, *csl_lists: CSLList) -> CSLList:
         """Make a list
 
         Args:
@@ -495,7 +509,6 @@ class DBClient:
         Raises:
             ListCreateError: Error if the request gives an error, probably because the list already exists
         """
-        """Make a list"""
         logger.info(f'Making list {name}')
         body = {
             'importListIds': [csl_list.id for csl_list in csl_lists],
@@ -509,23 +522,7 @@ class DBClient:
         self._lists = None
         return self.lists[name]
 
-    # --- Metadata writing ---
-    def remove_track_metadata(
-        self,
-        track: CSLTrack,
-        meta: CSLSongArtistCredit | CSLExtraMetadata,
-        queue: bool = False,
-    ):
-        logger.info(
-            f'Removing metadata {f"{meta.type} {meta.artist.name}" if isinstance(meta, CSLSongArtistCredit) else f"{meta.key} {meta.value}"} from {track.name}'
-        )
-        req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
-        if queue:
-            self.enqueue(MetadataDelete(req, track, meta))
-        else:
-            res = self.client.send(req)
-            res.raise_for_status()
-
+    # --- General Editing ---
     def add_track_metadata(
         self,
         track: CSLTrack,
@@ -534,6 +531,18 @@ class DBClient:
         existing_meta: CSLMetadata | None = None,
         queue: bool = False,
     ):
+        """Add metadata to a track
+
+        Args:
+            track: CSLTrack
+            *metas: Metadata to add
+            override: Change metadata to override or append
+            existing_meta: Existing metadata on the track, pass in to avoid duplicating metadata
+            queue: Whether to queue the request, defaults to False
+
+        Raises:
+            ValueError: If non-metadata is passed into *metas
+        """
         logger.info(f'Queuing metadata edit on {track.name}')
 
         current_metas: set[Metadata]
@@ -582,14 +591,43 @@ class DBClient:
             res = self.client.send(req)
             res.raise_for_status()
 
-    # --- Group writing ---
+    def remove_track_metadata(
+        self,
+        track: CSLTrack,
+        meta: CSLSongArtistCredit | CSLExtraMetadata,
+        queue: bool = False,
+    ):
+        """Remove metadata from a track
+
+        Args:
+            track: CSLTrack
+            meta: Metadata to remove
+            queue: Whether to queue the request, defaults to False
+        """
+        logger.info(
+            f'Removing metadata {f"{meta.type} {meta.artist.name}" if isinstance(meta, CSLSongArtistCredit) else f"{meta.key} {meta.value}"} from {track.name}'
+        )
+        req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
+        if queue:
+            self.enqueue(MetadataDelete(req, track, meta))
+        else:
+            res = self.client.send(req)
+            res.raise_for_status()
+
     def add_group(self, name: str) -> CSLGroup:
+        """Add a group
+
+        Args:
+            name: Name of the group
+
+        Returns:
+            Newly created group
+        """
         logger.info(f'Adding group {name}')
         res = self.client.post('/api/group', json={'name': name})
         res.raise_for_status()
         return CSLGroup.from_json(res.json())
 
-    # --- Track writing ---
     def edit_track(
         self,
         track: CSLTrack,
@@ -603,6 +641,22 @@ class DBClient:
         type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = None,
         queue: bool = False,
     ):
+        """Edit a track
+
+        Args:
+            track: CSLTrack
+            artist_credits: List of new artist credits
+            groups: List of new groups
+            name: New track name
+            original_artist: New track original artist
+            original_name: New track original name
+            song: New song
+            type: New track type
+            queue: Whether to queue the request, defaults to False
+
+        Raises:
+            ValueError: New track type is not a valid track type
+        """
         if type is not None and type not in REVERSE_TRACK_TYPE:
             raise ValueError('Track type must be one of the following: {', '.join(REVERSE_TRACK_TYPE)}')
         logger.info(f'Editing track {track.name}')

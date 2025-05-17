@@ -117,6 +117,20 @@ def queue_character_metadata(
 
 
 def prompt(*objs: Any, msg: str = 'Accept?', pretty: bool = True, **kwargs: Any) -> bool:
+    """Prompt the user for a Yes or No answer, or to quit the script
+
+    Args:
+        *objs: Objects to print
+        **kwargs: Kwargs to pass to the print function
+        msg: Message to prompt user with, defaults to 'Accept?'
+        pretty: Whether to pretty print with rich.pretty.pprint
+
+    Returns:
+        User's choice
+
+    Raises:
+        QuitError: If the user chooses to quit
+    """
     print_func = pprint if pretty else print
     for obj in objs:
         print_func(obj, **kwargs)

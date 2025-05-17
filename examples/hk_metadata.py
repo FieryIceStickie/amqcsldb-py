@@ -2,10 +2,10 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from amqcsl.objects import ExtraMetadata
 from log import setup_logging
 
 import amqcsl
+from amqcsl.objects import ExtraMetadata
 
 _ = load_dotenv()
 

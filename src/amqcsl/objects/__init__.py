@@ -17,6 +17,15 @@ from ._db_types import (
     Metadata,
     TrackPutArtistCredit,
 )
+from ._json_types import (
+    JSONType,
+    MetadataPostBody,
+    Query,
+    QueryBodyTrack,
+    QueryParamsArtist,
+    QueryParamsSong,
+    TrackPutBody,
+)
 from ._obj_consts import (
     ARTIST_TYPE,
     EMPTY_ID,
@@ -56,4 +65,11 @@ __all__ = [
     'REVERSE_TRACK_TYPE',
     'SONG_RELATION_TYPE',
     'TRACK_TYPE',
+    'JSONType',
+    'MetadataPostBody',
+    'Query',
+    'QueryBodyTrack',
+    'QueryParamsArtist',
+    'QueryParamsSong',
+    'TrackPutBody',
 ]

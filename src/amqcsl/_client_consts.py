@@ -6,8 +6,7 @@ from attrs import frozen
 
 from amqcsl.objects._db_types import CSLTrack
 
-from .objects import CSLExtraMetadata, CSLSongArtistCredit
-from .objects._json_types import MetadataPostBody, TrackPutBody
+from .objects import CSLExtraMetadata, CSLSongArtistCredit, MetadataPostBody, TrackPutBody
 
 DB_URL = 'https://amqbot.082640.xyz'
 DEFAULT_SESSION_PATH = 'amq_session.txt'
@@ -30,7 +29,7 @@ class MetadataPost(QueueObj):
         for cred in self.body['artistCredits']:
             yield f'{self.req.method} {cred["type"]} {self.id_to_name[cred["artistId"]]}'
         for meta in self.body['extraMetadatas']:
-            yield f'{self.req.method} {'Artist' if meta['isArtist'] else 'Song'} meta {meta["type"]} {meta["value"]}'
+            yield f'{self.req.method} {"Artist" if meta["isArtist"] else "Song"} meta {meta["type"]} {meta["value"]}'
 
 
 @frozen

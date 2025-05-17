@@ -1,9 +1,9 @@
 import logging
 import os
+from operator import itemgetter
 
 from dotenv import load_dotenv
 from log import setup_logging
-from operator import itemgetter
 
 import amqcsl
 from amqcsl.objects import ExtraMetadata
@@ -29,6 +29,7 @@ def main(logger: logging.Logger):
                 continue
             logger.info(f'Adding metadata to {track.name}')
             client.add_track_metadata(track, ExtraMetadata(False, 'Game', 'Terraria'))
+
 
 if __name__ == '__main__':
     logger = logging.getLogger('example.terraria')
