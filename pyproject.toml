@@ -2,7 +2,7 @@
 name = "amqcsldb-py"
 version = "1.0.0"
 description = "Add your description here"
-readme = "README.md"
+readme = "README.rst"
 authors = [
     { name = "stickie", email = "71910589+FieryIceStickie@users.noreply.github.com" }
 ]
