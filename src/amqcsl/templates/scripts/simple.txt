@@ -1,10 +1,9 @@
 import logging
 import os
 
+import amqcsl
 from dotenv import load_dotenv
 from log import setup_logging
-
-import amqcsl
 
 _ = load_dotenv()
 

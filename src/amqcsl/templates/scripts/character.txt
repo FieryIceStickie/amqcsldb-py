@@ -1,11 +1,10 @@
 import logging
 import os
 
-from dotenv import load_dotenv
-from log import setup_logging
-
 import amqcsl
 from amqcsl.utils import ArtistDict, CharacterDict, make_artist_to_meta, prompt
+from dotenv import load_dotenv
+from log import setup_logging
 
 _ = load_dotenv()
 
