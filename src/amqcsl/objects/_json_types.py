@@ -76,7 +76,7 @@ class JSONTrackLink(TypedDict):
 class JSONSongSample(TypedDict):
     id: str
     name: str
-    disambiguation: str
+    disambiguation: str | None
     createdAt: str
 
 
@@ -177,6 +177,7 @@ class MetadataPostExtraMetadata(TypedDict):
     isArtist: bool
     type: str
     value: str
+
 
 class TrackPutBody(TypedDict):
     artistCredits: list[JSONTrackPutArtistCredit] | None

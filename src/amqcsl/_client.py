@@ -617,9 +617,7 @@ class DBClient:
             meta: Metadata to remove
             queue: Whether to queue the request, defaults to False
         """
-        logger.info(
-            f'Removing metadata {f"{meta.type} {meta.artist.name}" if isinstance(meta, CSLSongArtistCredit) else f"{meta.key} {meta.value}"} from {track.name}'
-        )
+        logger.info(f'Removing metadata {meta} from {track.name}')
         req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
         if queue:
             self.enqueue(MetadataDelete(req, track, meta))

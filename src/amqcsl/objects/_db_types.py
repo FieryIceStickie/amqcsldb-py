@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from operator import attrgetter
-from typing import cast
+from typing import cast, override
 
 from attrs import define, frozen
 
@@ -140,6 +140,10 @@ class CSLExtraMetadata:
             case _:
                 logger.info('Invalid json when parsing CSLExtraMetadata', extra={'json': data})
                 raise QueryError('Invalid json when parsing CSLExtraMetadata')
+
+    @override
+    def __str__(self) -> str:
+        return f'{self.type} {self.key} {self.value}'
 
 
 # --- Artist ---
@@ -281,7 +285,7 @@ class CSLTrackLink:
 class CSLSongSample:
     id: str
     name: str
-    disambiguation: str
+    disambiguation: str | None
     str_created_at: str
 
     @property
@@ -294,7 +298,7 @@ class CSLSongSample:
             case {
                 'id': str(id),
                 'name': str(name),
-                'disambiguation': str(disambiguation),
+                'disambiguation': str(disambiguation) | (None as disambiguation),
                 'createdAt': str(str_created_at),
             }:
                 return cls(
@@ -362,6 +366,10 @@ class CSLSongArtistCredit:
             case _:
                 logger.info('Invalid json when parsing CSLSongArtistCredit', extra={'json': data})
                 raise QueryError('Invalid json when parsing CSLSongArtistCredit')
+
+    @override
+    def __str__(self) -> str:
+        return f'{self.type} {self.artist}'
 
 
 # --- Track ---
