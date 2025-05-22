@@ -23,26 +23,52 @@ type ArtistDict = Mapping[ArtistKey, str]
 type ArtistToMeta = Mapping[CSLArtistSample, Sequence[ExtraMetadata]]
 
 
+def compact_make_artist_to_meta(
+    client: DBClient,
+    artists: ArtistDict,
+    search_phrases: Sequence[str] = (),
+    sep: str = ', ',
+) -> ArtistToMeta:
+    """Make the artist to metadata dict with a compact artist dict
+
+    Args:
+        client: DBClient
+        artists: ArtistDict, values should be character names separated by sep
+        search_phrases: List of search phrases to be passed to iter_artists
+        sep: Separator for artist values
+
+    Returns:
+        ArtistToMeta
+    """
+    pre_meta_dict = {
+        k: [ExtraMetadata(True, 'Character', c) for c in v.split(sep)]
+        for k, v in artists.items()
+    }
+    return conv_artist_dict(client, pre_meta_dict, search_phrases)
+
+
 def make_artist_to_meta(
     client: DBClient,
     characters: CharacterDict,
     artists: ArtistDict,
-    search_phrases: Sequence[str],
+    search_phrases: Sequence[str] = (),
+    sep: str = ' ',
 ) -> ArtistToMeta:
     """Make the artist to metadata dict
 
     Args:
         client: DBClient
         characters: CharacterDict
-        artists: ArtistDict
+        artists: ArtistDict, values should be keys of characters separated by sep
         search_phrases: List of search phrases to be passed to iter_artists
+        sep: Separator for artist values 
 
     Returns:
         ArtistToMeta
     """
     metas = {k: ExtraMetadata(True, 'Character', v) for k, v in characters.items()}
     pre_meta_dict = {
-        k: [metas[c] for c in v.split(' ')]
+        k: [metas[c] for c in v.split(sep)]
         for k, v in artists.items()
     }
     return conv_artist_dict(client, pre_meta_dict, search_phrases)
@@ -51,7 +77,7 @@ def make_artist_to_meta(
 def conv_artist_dict[T](
     client: DBClient,
     artists: Mapping[ArtistKey, T],
-    search_phrases: Sequence[str],
+    search_phrases: Sequence[str] = (),
 ) -> Mapping[CSLArtistSample, T]:
     """Converts a dict {(name, disam) | name: T} into {artist: T} 
 
@@ -72,8 +98,19 @@ def conv_artist_dict[T](
         if (v := normalized.get((artist.name, artist.disambiguation))) is not None
     }
     lost = normalized.keys() - {(artist.name, artist.disambiguation) for artist in rtn}
-    if lost:
-        raise KeyError(f'Could not find artists {", ".join(map(str, lost))}')
+    for name, disam in lost:
+        found = [artist for artist in client.iter_artists(name) if artist.name == name]
+        if not found:
+            raise KeyError(f'Could not find artist {name} ({disam})')
+        if disam is None and len(found) == 1:
+            rtn[found.pop()] = normalized[name, disam]
+            continue
+        found = [artist for artist in found if artist.disambiguation == disam]
+        if not found:
+            raise KeyError(f'Could not find artist {name} ({disam})')
+        elif len(found) != 1:
+            raise KeyError(f'More than one {name} with disambiguation {disam}')
+        rtn[found.pop()] = normalized[name, disam]
     return rtn
 
 
@@ -112,7 +149,6 @@ def queue_character_metadata(
     # Remove existing character metadata
     curr = {ExtraMetadata.simplify(m): m for m in meta.extra_metas if m.key == 'Character'}
     for m in curr.keys() - metas:
-        logger.info(f'Removing metadata {m.type} {m.value} from {track.name}')
         client.track_metadata_remove(track, curr[m], queue=True)
 
 
@@ -134,7 +170,7 @@ def prompt(*objs: Any, msg: str = 'Accept?', pretty: bool = True, **kwargs: Any)
     print_func = pprint if pretty else print
     for obj in objs:
         print_func(obj, **kwargs)
-    while inp := input(f'{msg} Y(es) N(o) Q(uit)'):
+    while inp := input(f'{msg} Y(es) N(o) Q(uit): '):
         match inp.lower().strip():
             case 'y' | 'yes':
                 return True
