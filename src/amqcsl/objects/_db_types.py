@@ -5,7 +5,7 @@ import logging
 from operator import attrgetter
 from typing import cast, override
 
-from attrs import define, frozen
+from attrs import frozen
 
 from amqcsl.exceptions import QueryError
 
@@ -543,14 +543,14 @@ class ExtraMetadata:
         return cls(is_artist=meta.type == 'Artist', type=meta.key, value=meta.value)
 
 
-@define
+@frozen
 class TrackPutArtistCredit:
     artist: CSLArtistSample
     joinPhrase: str
     name: str = ''
 
     def __attrs_post_init__(self):
-        self.name = self.name or self.artist.name
+        self.__setattr__('name', self.name or self.artist.name)
 
     def to_json(self, position: int) -> JSONTrackPutArtistCredit:
         return {

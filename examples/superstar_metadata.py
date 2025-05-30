@@ -43,10 +43,10 @@ artists: ArtistDict = {
     'Akane Yabushima': 'mei',
     'Yuina': 'margarete',
     'Sakura Sakakura': 'tomari',
-    ('CatChu!', 'Love Live!'): 'kanon sumire mei',
-    ('KALEIDOSCORE', 'Love Live!'): 'keke ren margarete',
-    ('5yncri5e!', 'Love Live!'): 'chisato kinako natsumi shiki tomari',
-    ('Sunny Passion', 'Love Live! Superstar!!'): 'yuuna mao',
+    'CatChu!': 'kanon sumire mei',
+    'KALEIDOSCORE': 'keke ren margarete',
+    '5yncri5e!': 'chisato kinako natsumi shiki tomari',
+    'Sunny Passion': 'yuuna mao',
 }
 # fmt: on
 
@@ -60,7 +60,7 @@ def main(logger: logging.Logger):
             client,
             characters,
             artists,
-            ['Liella!', '5yncri5e!', 'CatChu!', 'KALEIDOSCORE', 'Sunny Passion'],
+            ['Liella!'],
         )
         superstar_group = client.groups['Love Live! Superstar!!']
         for track in client.iter_tracks(groups=[superstar_group], batch_size=100):

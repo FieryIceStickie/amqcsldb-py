@@ -1,14 +1,16 @@
+# TODO: update this to use newer things
 import logging
 import os
 from collections.abc import Sequence
 from typing import Mapping
 
 from dotenv import load_dotenv
-from log import setup_logging
 
 import amqcsl
 from amqcsl.objects import ExtraMetadata
 from amqcsl.utils import ArtistKey, conv_artist_dict, prompt, queue_character_metadata
+
+from .log import setup_logging
 
 _ = load_dotenv()
 
