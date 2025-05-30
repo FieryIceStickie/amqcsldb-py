@@ -181,6 +181,7 @@ class DBClient:
 
         logger.info('Auth successful')
         if 'ADMIN' not in res.json()['roles']:
+            self.logout()
             raise LoginError(f'User {res.json()["name"]} does not have admin privileges')
 
     def _login(self, client: httpx.Client):

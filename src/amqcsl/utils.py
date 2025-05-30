@@ -190,7 +190,7 @@ def match_artist(artist_name: ArtistName, artists: set[CSLArtistSample]) -> CSLA
             return artist
         case matching_artists:
             for artist in matching_artists:
-                logger.error(artists)
+                logger.error(artist)
             raise AMQCSLError(f'{len(matching_artists)} artists found for {artist_name}')
 
 

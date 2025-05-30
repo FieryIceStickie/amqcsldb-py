@@ -33,14 +33,14 @@ def init(
         shutil.copytree(dir / 'log', dest / 'log', dirs_exist_ok=True)
     with open(dest / '.env', 'w') as file:
         username = input('Enter AMQ bot username (for .env file): ')
-        print(f'USERNAME={username}', file=file)
+        print(f'USERNAME="{username}"', file=file)
         password = input('Enter AMQ bot password (for .env file): ')
-        print(f'PASSWORD={password}', file=file)
+        print(f'PASSWORD="{password}"', file=file)
         session_path = (
             input('Enter path to file for storing session id (for .env file, defaults to amq_session.txt): ')
             or 'amq_session.txt'
         )
-        print(f'SESSION_PATH={session_path}', file=file)
+        print(f'SESSION_PATH="{session_path}"', file=file)
     with open(dest / '.gitignore', 'w') as file:
         for name in (session_path, '.env', 'logs'):
             print(name, file=file)
@@ -65,9 +65,9 @@ def make(
         ),
     ] = Templates.simple,
 ):
-    template_file = files('amqcsl') / f'templates/scripts/{template.value}.txt'
     if (Path.cwd() / dest).exists():
         raise FileExistsError(Path.cwd() / dest)
+    template_file = files('amqcsl') / f'templates/scripts/{template.value}.txt'
     with as_file(template_file) as file:
         shutil.copy(file, dest)
 
