@@ -44,7 +44,7 @@ def init(
     with open(dest / '.gitignore', 'w') as file:
         for name in (session_path, '.env', 'logs'):
             print(name, file=file)
-    os.mkdir(dest / 'logs')
+    os.makedirs(dest / 'logs', exist_ok=True)
 
 
 class Templates(str, Enum):
