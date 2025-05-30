@@ -22,6 +22,7 @@ from ._client import DBClient
 logger = logging.getLogger('amqcsl.utils')
 
 
+@frozen(hash=True)
 class Wildcard:
     @override
     def __eq__(self, other: object) -> bool:
