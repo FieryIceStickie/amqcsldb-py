@@ -97,8 +97,8 @@ yohane_artists: Mapping[ArtistKey, Sequence[ExtraMetadata]] = {
 
 def main(logger: logging.Logger):
     with amqcsl.DBClient(
-        username=os.getenv('USERNAME'),
-        password=os.getenv('PASSWORD'),
+        username=os.getenv('AMQ_USERNAME'),
+        password=os.getenv('AMQ_PASSWORD'),
         max_query_size=4000,
     ) as client:
         sunshine_to_meta = conv_artist_dict(client, normal_artists, ['Aqours', 'Guilty Kiss', 'CYaRon!', 'AZALEA'])

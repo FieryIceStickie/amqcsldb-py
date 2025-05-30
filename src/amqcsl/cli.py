@@ -33,9 +33,9 @@ def init(
         shutil.copytree(dir / 'log', dest / 'log', dirs_exist_ok=True)
     with open(dest / '.env', 'w') as file:
         username = input('Enter AMQ bot username (for .env file): ')
-        print(f'USERNAME="{username}"', file=file)
+        print(f'AMQ_USERNAME="{username}"', file=file)
         password = input('Enter AMQ bot password (for .env file): ')
-        print(f'PASSWORD="{password}"', file=file)
+        print(f'AMQ_PASSWORD="{password}"', file=file)
         session_path = (
             input('Enter path to file for storing session id (for .env file, defaults to amq_session.txt): ')
             or 'amq_session.txt'

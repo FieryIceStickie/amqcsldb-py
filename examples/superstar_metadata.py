@@ -53,8 +53,8 @@ artists: ArtistDict = {
 
 def main(logger: logging.Logger):
     with amqcsl.DBClient(
-        username=os.getenv('USERNAME'),
-        password=os.getenv('PASSWORD'),
+        username=os.getenv('AMQ_USERNAME'),
+        password=os.getenv('AMQ_PASSWORD'),
     ) as client:
         artist_to_meta = make_artist_to_meta(
             client,
