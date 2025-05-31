@@ -173,7 +173,7 @@ class DBClient:
             logger.exception(f'Bad response during auth: {e.response.status_code}')
             raise
         except LoginError as e:
-            logger.exception(f'Error during login: {e}')
+            logger.exception(f'Error during login of user {self.username}: {e}')
             raise
         except Exception:
             logger.exception('Unexpected error during auth')
@@ -181,7 +181,6 @@ class DBClient:
 
         logger.info('Auth successful')
         if 'ADMIN' not in res.json()['roles']:
-            self.logout()
             raise LoginError(f'User {res.json()["name"]} does not have admin privileges')
 
     def _login(self, client: httpx.Client):
