@@ -6,7 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'AMQCSLDB'
+project = 'AMQCSLdb'
 copyright = '2025, FieryIceStickie'
 author = 'FieryIceStickie'
 release = '1.0.6'
