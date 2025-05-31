@@ -1,10 +1,10 @@
-name: Ruff
+name: CI
 
 on: [push, pull_request]
 
 jobs:
   build:
-    name: continuous-integration
+    name: lint and tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
