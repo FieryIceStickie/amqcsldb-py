@@ -4,9 +4,8 @@ from typing import Any
 import httpx
 from attrs import frozen
 
-from amqcsl.objects._db_types import CSLTrack
-
-from .objects import CSLExtraMetadata, CSLSongArtistCredit, MetadataPostBody, TrackPutBody
+from amqcsl.objects._db_types import CSLExtraMetadata, CSLSongArtistCredit, CSLTrack
+from amqcsl.objects._json_types import MetadataPostBody, TrackPutBody
 
 DB_URL = 'https://amqbot.082640.xyz'
 DEFAULT_SESSION_PATH = 'amq_session.txt'

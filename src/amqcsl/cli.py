@@ -1,6 +1,6 @@
 import os
 import shutil
-from enum import Enum
+from enum import StrEnum
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Annotated
@@ -37,7 +37,9 @@ def init(
         password = input('Enter AMQ bot password (for .env file): ')
         print(f'AMQ_PASSWORD="{password}"', file=file)
         session_path = (
-            input('Enter path to file for storing session id (for .env file, defaults to amq_session.txt): ')
+            input(
+                'Enter path to file for storing session id (for .env file, defaults to amq_session.txt, press Enter to skip): '
+            )
             or 'amq_session.txt'
         )
         print(f'SESSION_PATH="{session_path}"', file=file)
@@ -47,7 +49,7 @@ def init(
     os.makedirs(dest / 'logs', exist_ok=True)
 
 
-class Templates(str, Enum):
+class Templates(StrEnum):
     simple = 'simple'
     character = 'character'
 
@@ -67,7 +69,7 @@ def make(
 ):
     if (Path.cwd() / dest).exists():
         raise FileExistsError(Path.cwd() / dest)
-    template_file = files('amqcsl') / f'templates/scripts/{template.value}.txt'
+    template_file = files('amqcsl') / f'templates/scripts/{template}.py.txt'
     with as_file(template_file) as file:
         shutil.copy(file, dest)
 

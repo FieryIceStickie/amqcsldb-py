@@ -10,14 +10,14 @@ from attrs import frozen
 from rich.pretty import pprint
 
 from amqcsl.exceptions import AMQCSLError, QuitError
-from amqcsl.objects import (
+from amqcsl.objects._db_types import (
     CSLArtistSample,
     CSLMetadata,
     CSLTrack,
     ExtraMetadata,
 )
 
-from ._client import DBClient
+from amqcsl._client import DBClient
 
 logger = logging.getLogger('amqcsl.utils')
 
@@ -223,14 +223,14 @@ def queue_character_metadata(
             return cred.artist
         metas.update(new_metas)
     logger.info(f'Adding {len(metas)} new metadata to {track.name}')
-    client.track_metadata_add(track, *metas, existing_meta=meta, queue=True)
+    client.track_add_metadata(track, *metas, existing_meta=meta, queue=True)
 
     if meta is None:
         return
     # Remove existing character metadata
     curr = {ExtraMetadata.simplify(m): m for m in meta.extra_metas if m.key == 'Character'}
     for m in curr.keys() - metas:
-        client.track_metadata_remove(track, curr[m], queue=True)
+        client.track_remove_metadata(track, curr[m], queue=True)
 
 
 def prompt(*objs: Any, msg: str = 'Accept?', pretty: bool = True, **kwargs: Any) -> bool:

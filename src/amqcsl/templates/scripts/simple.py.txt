@@ -1,9 +1,10 @@
 import logging
 import os
 
-import amqcsl
 from dotenv import load_dotenv
 from log import setup_logging
+
+import amqcsl
 
 _ = load_dotenv()
 
@@ -13,7 +14,7 @@ def main(logger: logging.Logger):
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
     ) as client:
-        pass
+        logger.info('shiHib')
 
 
 if __name__ == '__main__':

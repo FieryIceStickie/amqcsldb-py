@@ -7,7 +7,7 @@ from typing import Literal, Self
 import httpx
 from attrs import define, field
 
-from ._client_consts import (
+from amqcsl._client_consts import (
     DB_URL,
     DEFAULT_SESSION_PATH,
     MetadataDelete,
@@ -15,10 +15,8 @@ from ._client_consts import (
     QueueObj,
     TrackEdit,
 )
-from .exceptions import AMQCSLError, ClientDoesNotExistError, ListCreateError, LoginError, QueryError
-from .objects import (
-    EMPTY_ID,
-    REVERSE_TRACK_TYPE,
+from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, ListCreateError, LoginError, QueryError
+from amqcsl.objects._db_types import (
     ArtistCredit,
     CSLArtist,
     CSLArtistSample,
@@ -31,16 +29,19 @@ from .objects import (
     CSLSongSample,
     CSLTrack,
     ExtraMetadata,
-    JSONType,
     Metadata,
+    TrackPutArtistCredit,
+)
+from amqcsl.objects._json_types import (
+    JSONType,
     MetadataPostBody,
     Query,
     QueryBodyTrack,
     QueryParamsArtist,
     QueryParamsSong,
-    TrackPutArtistCredit,
     TrackPutBody,
 )
+from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -49,38 +50,38 @@ logger = logging.getLogger('amqcsl.client')
 class DBClient:
     """Client for accessing the db.
     If session cookie is valid, username and password may be omitted.
-
-    Attributes:
-        username: DB username
-        password: DB password
-        session_path: Filepath to look for/store session cookie in, defaults to amq_session.txt
-        max_batch_size: Maximum batch size when querying db
-        max_query_size: Maximum number of queries when iterating
-        queue: Request queue
     """
 
+    #: DB username
     username: str | None = None
+    #: DB password
     password: str | None = None
+    #: Filepath to look for/store session cookie in, defaults to amq_session.txt
     session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
     _client: httpx.Client | None = field(default=None, init=False, repr=False)
     _session_cookie: str = field(init=False, repr=False)
 
+    #: Maximum batch size when querying db
     max_batch_size: int = 100
+    #: Maximum number of queries when iterating
     max_query_size: int = 1500
 
     _lists: dict[str, CSLList] | None = None
     _groups: dict[str, CSLGroup] | None = None
 
+    #: Request queue
     queue: list[QueueObj] = field(factory=list)
 
     @property
     def client(self) -> httpx.Client:
+        """Underlying httpx.Client"""
         if self._client is None:
             raise ClientDoesNotExistError
         return self._client
 
     @property
     def lists(self) -> dict[str, CSLList]:
+        """Dictionary of user's lists, indexed by name"""
         if self._lists is None:
             logger.info('Fetching lists')
             res = self.client.get('/api/lists')
@@ -93,6 +94,7 @@ class DBClient:
 
     @property
     def groups(self) -> dict[str, CSLGroup]:
+        """Dictionary of DB groups, indexed by name"""
         if self._groups is None:
             logger.info('Fetching groups')
             res = self.client.get('/api/groups')
@@ -105,7 +107,7 @@ class DBClient:
 
     # --- Queue Methods ---
 
-    def enqueue(self, obj: QueueObj):
+    def _enqueue(self, obj: QueueObj):
         self.queue.append(obj)
 
     def commit(self, *, stop_if_err: bool = True):
@@ -266,7 +268,6 @@ class DBClient:
         active_list: CSLList | None = None,
         missing_audio: bool = False,
         missing_info: bool = False,
-        from_active_list: bool = True,
         batch_size: int = 50,
     ) -> Iterator[CSLTrack]:
         """Iterate over tracks matching search parameters
@@ -277,7 +278,6 @@ class DBClient:
             active_list: List to restrict search by
             missing_audio: Restrict to songs without audio
             missing_info: Restrict to songs missing info
-            from_active_list: Restrict to songs in active list
             batch_size: How many tracks to query at once (page size)
 
         Yields:
@@ -292,7 +292,6 @@ class DBClient:
                 'groups': [(group.id, group.name) for group in groups],
                 'missing_audio': missing_audio,
                 'missing_info': missing_info,
-                'from_active_list': from_active_list,
                 'active_list': None if active_list is None else {'id': active_list.id, 'name': active_list.name},
             },
         )
@@ -304,7 +303,7 @@ class DBClient:
             'quickFilters': [
                 idx
                 for idx, val in enumerate(
-                    [missing_audio, missing_info, from_active_list],
+                    [missing_audio, missing_info, active_list],
                     start=1,
                 )
                 if val
@@ -509,7 +508,7 @@ class DBClient:
         res = self.client.put(f'/api/list/{csl_list.id}', json=body)
         res.raise_for_status()
 
-    def list_create(self, name: str, *csl_lists: CSLList) -> CSLList:
+    def create_list(self, name: str, *csl_lists: CSLList) -> CSLList:
         """Make a list
 
         Args:
@@ -536,7 +535,7 @@ class DBClient:
         return self.lists[name]
 
     # --- General Editing ---
-    def track_metadata_add(
+    def track_add_metadata(
         self,
         track: CSLTrack,
         *metas: Metadata,
@@ -554,7 +553,7 @@ class DBClient:
             queue: Whether to queue the request, defaults to False
 
         Raises:
-            ValueError: If non-metadata is passed into *metas
+            ValueError: If non-metadata is passed into metas
         """
         logger.info(f'Queuing metadata edit on {track.name}')
 
@@ -599,12 +598,12 @@ class DBClient:
             return
         req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
         if queue:
-            self.enqueue(MetadataPost(req, track, body, id_to_name))
+            self._enqueue(MetadataPost(req, track, body, id_to_name))
         else:
             res = self.client.send(req)
             res.raise_for_status()
 
-    def track_metadata_remove(
+    def track_remove_metadata(
         self,
         track: CSLTrack,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
@@ -620,13 +619,13 @@ class DBClient:
         logger.info(f'Removing metadata {meta} from {track.name}')
         req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
         if queue:
-            self.enqueue(MetadataDelete(req, track, meta))
+            self._enqueue(MetadataDelete(req, track, meta))
         else:
             res = self.client.send(req)
             res.raise_for_status()
 
-    def group_add(self, name: str) -> CSLGroup:
-        """Add a group
+    def create_group(self, name: str) -> CSLGroup:
+        """Create a group
 
         Args:
             name: Name of the group
@@ -685,7 +684,7 @@ class DBClient:
         }
         req = self.client.build_request('PUT', f'/api/track/{track.id}', json=body)
         if queue:
-            self.enqueue(TrackEdit(req, track, body))
+            self._enqueue(TrackEdit(req, track, body))
         else:
             res = self.client.send(req)
             res.raise_for_status()

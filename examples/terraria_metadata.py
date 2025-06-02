@@ -28,7 +28,7 @@ def main(logger: logging.Logger):
                 logger.info(f'Track {track.name} already has Game metadata')
                 continue
             logger.info(f'Adding metadata to {track.name}')
-            client.track_metadata_add(track, ExtraMetadata(False, 'Game', 'Terraria'))
+            client.track_add_metadata(track, ExtraMetadata(False, 'Game', 'Terraria'))
 
 
 if __name__ == '__main__':
