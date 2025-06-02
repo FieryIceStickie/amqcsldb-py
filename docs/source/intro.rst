@@ -1,11 +1,11 @@
 Introduction
 ============
 
-Welcome to the documentation for **AMQCSLdb.py**!
+Welcome to the documentation for **AMQCSLdb-py**!
 
 This guide will walk you through what the project does, why it exists, and how you can use it.
 
-What is AMQCSLdb.py?
+What is AMQCSLdb-py?
 --------------------
 
 AMQCSLdb (Anime Music Quiz Custom Song List database) is a Python API wrapper
