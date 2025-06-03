@@ -4,8 +4,7 @@ import os
 from dotenv import load_dotenv
 
 import amqcsl
-from amqcsl.objects import ExtraMetadata
-from amqcsl.utils import ArtistDict, CharacterDict, make_artist_to_meta, prompt, queue_character_metadata
+import amqcsl.workflows.character as cm
 
 from .log import setup_logging
 
@@ -35,30 +34,8 @@ yohane_songs = {
     'Be as one!!!',
     'Far far away',
 }
-chika = ExtraMetadata(True, 'Character', 'Chika Takami')
-you = ExtraMetadata(True, 'Character', 'You Watanabe')
-riko = ExtraMetadata(True, 'Character', 'Riko Sakurauchi')
-yoshiko = ExtraMetadata(True, 'Character', 'Yoshiko Tsushima')
-hanamaru = ExtraMetadata(True, 'Character', 'Hanamaru Kunikida')
-ruby = ExtraMetadata(True, 'Character', 'Ruby Kurosawa')
-dia = ExtraMetadata(True, 'Character', 'Dia Kurosawa')
-mari = ExtraMetadata(True, 'Character', 'Mari Ohara')
-kanan = ExtraMetadata(True, 'Character', 'Kanan Matsuura')
-sarah = ExtraMetadata(True, 'Character', 'Sarah Kazuno')
-leah = ExtraMetadata(True, 'Character', 'Leah Kazuno')
 
-y_chika = ExtraMetadata(True, 'Character', 'Chika')
-y_you = ExtraMetadata(True, 'Character', 'You')
-y_riko = ExtraMetadata(True, 'Character', 'Riko')
-y_yohane = ExtraMetadata(True, 'Character', 'Yohane')
-y_hanamaru = ExtraMetadata(True, 'Character', 'Hanamaru')
-y_ruby = ExtraMetadata(True, 'Character', 'Ruby')
-y_dia = ExtraMetadata(True, 'Character', 'Dia')
-y_mari = ExtraMetadata(True, 'Character', 'Mari')
-y_kanan = ExtraMetadata(True, 'Character', 'Kanan')
-lailaps = ExtraMetadata(True, 'Character', 'Lailaps')
-
-characters: CharacterDict = {
+characters: cm.CharacterDict = {
     'chika': 'Chika Takami',
     'you': 'You Watanabe',
     'riko': 'Riko Sakurauchi',
@@ -82,7 +59,7 @@ characters: CharacterDict = {
     'lailaps': 'Lailaps',
 }
 
-artists: list[ArtistDict] = [
+artists: list[cm.ArtistDict] = [
     {
         'Anju Inami': 'chika',
         'Shuka Saitou': 'you',
@@ -122,7 +99,9 @@ def main(logger: logging.Logger):
         password=os.getenv('AMQ_PASSWORD'),
         max_query_size=4000,
     ) as client:
-        artists_to_meta = [make_artist_to_meta(client, characters, artist_dict, ['Aqours']) for artist_dict in artists]
+        artists_to_meta = [
+            cm.make_artist_to_meta(client, characters, artist_dict, ['Aqours']) for artist_dict in artists
+        ]
         sunshine_group = client.groups['Love Live! Sunshine!!']
         for track in client.iter_tracks(groups=[sunshine_group], batch_size=100):
             if track.audio_id is None or track.song is None or track.name is None:
@@ -144,14 +123,13 @@ def main(logger: logging.Logger):
                     client.track_edit(track, name=track.name.replace(f'{last} {first}', f'{first} {last}'), queue=True)
 
             meta = client.get_metadata(track)
-            if (artist := queue_character_metadata(client, track, artists_to_meta[is_yohane], meta)) is not None:
+            if (artist := cm.queue_character_metadata(client, track, artists_to_meta[is_yohane], meta)) is not None:
                 if artist.name in {'AiScReam', 'YYY'}:
                     continue
-                logger.info(f'Unidentified artist {artist.name} {artist.disambiguation}')
-                prompt(track, msg=f'Unidentified artist {artist.name} {artist.disambiguation}, continue?')
+                cm.prompt(track, msg=f'Unidentified artist {artist.name}, continue?', continue_on_empty=True)
                 continue
 
-        if prompt(client.queue):
+        if cm.prompt(client.queue):
             client.commit()
 
 

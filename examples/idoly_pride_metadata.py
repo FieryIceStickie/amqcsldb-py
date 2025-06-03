@@ -5,11 +5,11 @@ from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
-from amqcsl.utils import ArtistDict, ArtistName, compact_make_artist_to_meta, prompt, queue_character_metadata
+import amqcsl.workflows.character as cm
 
 _ = load_dotenv()
 
-artists: ArtistDict = {
+artists: cm.ArtistDict = {
     'Mirai Tachibana': 'Kotono Nagase',
     'Kokona Natsume': 'Nagisa Ibuki',
     'Koharu Miyazawa': 'Saki Shiraishi',
@@ -28,7 +28,7 @@ artists: ArtistDict = {
     'Minako Kotobuki': 'Ai Komiyama',
     'Aki Toyosaki': 'Kokoro Akazaki',
     'Sayaka Kanda': 'Mana Nagase',
-    ArtistName('Lynn', original_name='Lynn'): 'fran',
+    cm.ArtistName('Lynn', original_name='Lynn'): 'fran',
     'Aimi Tanaka': 'kana',
     'Rie Murakawa': 'miho',
     'Sunny Peace': 'Sakura Kawasaki, Shizuku Hyoudou, Chisa Shiraishi, Rei Ichinose, Haruko Saeki',
@@ -50,7 +50,7 @@ def main(logger: logging.Logger):
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
     ) as client:
-        artist_to_meta = compact_make_artist_to_meta(
+        artist_to_meta = cm.compact_make_artist_to_meta(
             client,
             artists,
             ['Hoshimi Production'],
@@ -58,10 +58,10 @@ def main(logger: logging.Logger):
         ip_group = client.groups['IDOLY PRIDE']
         for track in client.iter_tracks(groups=[ip_group]):
             meta = client.get_metadata(track)
-            if (artist := queue_character_metadata(client, track, artist_to_meta, meta)) is not None:
-                prompt(track, msg=f'Unidentified artist {artist.name}, continue?')
+            if (artist := cm.queue_character_metadata(client, track, artist_to_meta, meta)) is not None:
+                cm.prompt(track, msg=f'Unidentified artist {artist.name}, continue?', continue_on_empty=True)
 
-        if prompt(client.queue):
+        if cm.prompt(client.queue):
             client.commit()
 
 

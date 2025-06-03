@@ -4,56 +4,74 @@ import logging
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from itertools import chain
-from typing import Any, Self, override
+from typing import Self, override
 
 from attrs import frozen
-from rich.pretty import pprint
 
-from amqcsl.exceptions import AMQCSLError, QuitError
+from amqcsl._client import DBClient
+from amqcsl.exceptions import AMQCSLError
 from amqcsl.objects._db_types import (
     CSLArtistSample,
     CSLMetadata,
     CSLTrack,
     ExtraMetadata,
 )
+from amqcsl.workflows._workflow_utils import prompt
 
-from amqcsl._client import DBClient
+__all__ = [
+    'ArtistName',
+    'ArtistKey',
+    'CharacterDict',
+    'ArtistDict',
+    'ArtistToMeta',
+    'compact_make_artist_to_meta',
+    'make_artist_to_meta',
+    'conv_artists',
+    'match_artist',
+    'queue_character_metadata',
+    'prompt',
+]
 
-logger = logging.getLogger('amqcsl.utils')
+logger = logging.getLogger('amqcsl.workflows.character_metadata')
 
 
-@frozen(hash=True)
-class Wildcard:
+class _Wildcard:
+    """Wildcard that matches any object, for internal use in ArtistName"""
+
+    instance: Self | None = None
+
+    def __new__(cls) -> Self:
+        if cls.instance is None:
+            return super().__new__(cls)
+        return cls.instance
+
     @override
     def __eq__(self, other: object) -> bool:
         return True
 
 
-wildcard = Wildcard()
-
-
 @frozen
 class ArtistName:
     name: str
-    original_name: str | Wildcard = wildcard
-    disambiguation: str | Wildcard = wildcard
+    original_name: str | None = None
+    disambiguation: str | None = None
 
     @classmethod
     def from_key(cls, artist_key: ArtistKey) -> Self:
         match artist_key:
             case str(name):
                 return cls(name)
-            case (str(name), str(disam)):
+            case (str(name), str(disam) | (None as disam)):
                 return cls(name, disambiguation=disam)
-            case (str(name), None):
-                return cls(name, disambiguation=wildcard)
             case ArtistName(name, orig_name, disam):
                 return cls(name, orig_name, disam)
             case _:
                 raise ValueError(f'Expected artist_key to be of type ArtistKey, received {artist_key!r}')
 
     def match(self, artist: CSLArtistSample) -> bool:
-        return (self.name, self.original_name, self.disambiguation) == (
+        orig_name = self.original_name if self.original_name is not None else _Wildcard()
+        disam = self.disambiguation if self.disambiguation is not None else _Wildcard()
+        return (self.name, orig_name, disam) == (
             artist.name,
             artist.original_name,
             artist.disambiguation,
@@ -63,8 +81,8 @@ class ArtistName:
     def __str__(self) -> str:
         return (
             f'{self.name}'
-            f'{f" ({self.original_name})" if self.original_name is not wildcard else ""}'
-            f'{f" ({self.disambiguation})" if self.disambiguation is not wildcard else ""}'
+            f'{f" <{self.original_name})" if self.original_name is not None else ""}'
+            f'{f" ({self.disambiguation})" if self.disambiguation is not None else ""}'
         )
 
 
@@ -231,34 +249,3 @@ def queue_character_metadata(
     curr = {ExtraMetadata.simplify(m): m for m in meta.extra_metas if m.key == 'Character'}
     for m in curr.keys() - metas:
         client.track_remove_metadata(track, curr[m], queue=True)
-
-
-def prompt(*objs: Any, msg: str = 'Accept?', pretty: bool = True, **kwargs: Any) -> bool:
-    """Prompt the user for a Yes or No answer, or to quit the script
-
-    Args:
-        *objs: Objects to print
-        **kwargs: Kwargs to pass to the print function
-        msg: Message to prompt user with, defaults to 'Accept?'
-        pretty: Whether to pretty print with rich.pretty.pprint
-
-    Returns:
-        User's choice as a boolean
-
-    Raises:
-        QuitError: If the user chooses to quit
-    """
-    print_func = pprint if pretty else print
-    for obj in objs:
-        print_func(obj, **kwargs)
-    while inp := input(f'{msg} Y(es) N(o) Q(uit): '):
-        match inp.lower().strip():
-            case 'y' | 'yes':
-                return True
-            case 'n' | 'no':
-                return False
-            case 'q' | 'quit':
-                raise QuitError
-            case _:
-                continue
-    return True
