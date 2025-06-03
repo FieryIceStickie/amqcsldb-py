@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import datetime as dt
 import logging
 from operator import attrgetter
@@ -17,15 +15,19 @@ __all__ = ['CSLList']
 
 logger = logging.getLogger('amqcsl.object')
 
-
-# --- List ---
+# --- DB Mirrors ---
 
 
 @frozen
-class CSLList:
+class CSLSongSample:
     id: str
     name: str
-    count: int
+    disambiguation: str | None
+    str_created_at: str
+
+    @property
+    def created_at(self) -> dt.datetime:
+        return dt.datetime.fromisoformat(self.str_created_at)
 
     @classmethod
     def from_json(cls, data: JSONType):
@@ -33,43 +35,18 @@ class CSLList:
             case {
                 'id': str(id),
                 'name': str(name),
-                'count': int(count),
+                'disambiguation': str(disambiguation) | (None as disambiguation),
+                'createdAt': str(str_created_at),
             }:
                 return cls(
                     id=id,
                     name=name,
-                    count=count,
+                    disambiguation=disambiguation,
+                    str_created_at=str_created_at,
                 )
             case _:
-                logger.info('Invalid json when parsing CSLList', extra={'json': data})
-                raise QueryError('Invalid json when parsing CSLList')
-
-
-# --- Group ---
-
-
-@frozen
-class CSLGroup:
-    id: str
-    name: str
-
-    @classmethod
-    def from_json(cls, data: JSONType):
-        match data:
-            case {
-                'id': str(id),
-                'name': str(name),
-            }:
-                return cls(
-                    id=id,
-                    name=name,
-                )
-            case _:
-                logger.info('Invalid json when parsing CSLGroup', extra={'json': data})
-                raise QueryError('Invalid json when parsing CSLGroup')
-
-
-# --- Metadata ---
+                logger.info('Invalid json when parsing CSLSongSample', extra={'json': data})
+                raise QueryError('Invalid json when parsing CSLSongSample')
 
 
 @frozen
@@ -104,35 +81,6 @@ class CSLArtistSample:
             case _:
                 logger.info('Invalid json when parsing CSLArtistSample', extra={'json': data})
                 raise QueryError('Invalid json when parsing CSLArtistSample')
-
-
-@frozen
-class CSLSongArtistCredit:
-    id: str
-    type: str
-    artist: CSLArtistSample
-
-    @classmethod
-    def from_json(cls, data: JSONType):
-        match data:
-            case {
-                'id': str(id),
-                'type': str(type_id),
-                'artist': artist,
-            }:
-                artist = CSLArtistSample.from_json(artist)
-                return cls(
-                    id=id,
-                    type=type_id,
-                    artist=artist,
-                )
-            case _:
-                logger.info('Invalid json when parsing CSLSongArtistCredit', extra={'json': data})
-                raise QueryError('Invalid json when parsing CSLSongArtistCredit')
-
-    @override
-    def __str__(self) -> str:
-        return f'{self.type} {self.artist}'
 
 
 @frozen
@@ -171,45 +119,32 @@ class CSLExtraMetadata:
 
 
 @frozen
-class CSLMetadata:
-    override: bool
-    artist_credits: list[CSLSongArtistCredit]
-    extra_metas: list[CSLExtraMetadata]
-    total_count: int
-    fields: list[str]
+class CSLSongArtistCredit:
+    id: str
+    type: str
+    artist: CSLArtistSample
 
     @classmethod
     def from_json(cls, data: JSONType):
         match data:
             case {
-                'override': bool(override),
-                'artistCredits': [*artist_credits],
-                'extraMetas': [*extra_metas],
-                'totalCount': int(total_count),
-                'fields': [*fields],
+                'id': str(id),
+                'type': str(type_id),
+                'artist': artist,
             }:
-                artist_credits = [*map(CSLSongArtistCredit.from_json, artist_credits)]
-                extra_metas = [*map(CSLExtraMetadata.from_json, extra_metas)]
-                if not all(isinstance(item, str) for item in fields):
-                    logger.info(
-                        'Invalid json when parsing CSLMetadata: Metadata fields has non-string value',
-                        extra={'json': data},
-                    )
-                    raise QueryError('Invalid json when parsing CSLMetadata: Metadata fields has non-string value')
-                fields = cast(list[str], fields)
+                artist = CSLArtistSample.from_json(artist)
                 return cls(
-                    override=override,
-                    artist_credits=artist_credits,
-                    extra_metas=extra_metas,
-                    total_count=total_count,
-                    fields=fields,
+                    id=id,
+                    type=type_id,
+                    artist=artist,
                 )
             case _:
-                logger.info('Invalid json when parsing CSLMetadata', extra={'json': data})
-                raise QueryError('Invalid json when parsing CSLMetadata')
+                logger.info('Invalid json when parsing CSLSongArtistCredit', extra={'json': data})
+                raise QueryError('Invalid json when parsing CSLSongArtistCredit')
 
-
-# --- Artist ---
+    @override
+    def __str__(self) -> str:
+        return f'{self.type} {self.artist}'
 
 
 @frozen
@@ -295,6 +230,51 @@ class CSLTrackLink:
 
 
 @frozen
+class CSLList:
+    id: str
+    name: str
+    count: int
+
+    @classmethod
+    def from_json(cls, data: JSONType):
+        match data:
+            case {
+                'id': str(id),
+                'name': str(name),
+                'count': int(count),
+            }:
+                return cls(
+                    id=id,
+                    name=name,
+                    count=count,
+                )
+            case _:
+                logger.info('Invalid json when parsing CSLList', extra={'json': data})
+                raise QueryError('Invalid json when parsing CSLList')
+
+
+@frozen
+class CSLGroup:
+    id: str
+    name: str
+
+    @classmethod
+    def from_json(cls, data: JSONType):
+        match data:
+            case {
+                'id': str(id),
+                'name': str(name),
+            }:
+                return cls(
+                    id=id,
+                    name=name,
+                )
+            case _:
+                logger.info('Invalid json when parsing CSLGroup', extra={'json': data})
+                raise QueryError('Invalid json when parsing CSLGroup')
+
+
+@frozen
 class CSLArtist(CSLArtistSample):
     forward_relations: list[CSLSongRelation]
     reverse_relations: list[CSLSongRelation]
@@ -335,40 +315,6 @@ class CSLArtist(CSLArtistSample):
                 raise QueryError('Invalid json when parsing CSLArtist')
 
 
-# --- Song ---
-
-
-@frozen
-class CSLSongSample:
-    id: str
-    name: str
-    disambiguation: str | None
-    str_created_at: str
-
-    @property
-    def created_at(self) -> dt.datetime:
-        return dt.datetime.fromisoformat(self.str_created_at)
-
-    @classmethod
-    def from_json(cls, data: JSONType):
-        match data:
-            case {
-                'id': str(id),
-                'name': str(name),
-                'disambiguation': str(disambiguation) | (None as disambiguation),
-                'createdAt': str(str_created_at),
-            }:
-                return cls(
-                    id=id,
-                    name=name,
-                    disambiguation=disambiguation,
-                    str_created_at=str_created_at,
-                )
-            case _:
-                logger.info('Invalid json when parsing CSLSongSample', extra={'json': data})
-                raise QueryError('Invalid json when parsing CSLSongSample')
-
-
 @frozen
 class CSLSong(CSLSongSample):
     artist_credits: list[CSLSongArtistCredit]
@@ -398,9 +344,6 @@ class CSLSong(CSLSongSample):
             case _:
                 logger.info('Invalid json when parsing CSLSong', extra={'json': data})
                 raise QueryError('Invalid json when parsing CSLSong')
-
-
-# --- Track ---
 
 
 @frozen
@@ -501,7 +444,47 @@ class CSLTrack:
                 raise QueryError('Invalid json when parsing CSLTrack')
 
 
+@frozen
+class CSLMetadata:
+    override: bool
+    artist_credits: list[CSLSongArtistCredit]
+    extra_metas: list[CSLExtraMetadata]
+    total_count: int
+    fields: list[str]
+
+    @classmethod
+    def from_json(cls, data: JSONType):
+        match data:
+            case {
+                'override': bool(override),
+                'artistCredits': [*artist_credits],
+                'extraMetas': [*extra_metas],
+                'totalCount': int(total_count),
+                'fields': [*fields],
+            }:
+                artist_credits = [*map(CSLSongArtistCredit.from_json, artist_credits)]
+                extra_metas = [*map(CSLExtraMetadata.from_json, extra_metas)]
+                if not all(isinstance(item, str) for item in fields):
+                    logger.info(
+                        'Invalid json when parsing CSLMetadata: Metadata fields has non-string value',
+                        extra={'json': data},
+                    )
+                    raise QueryError('Invalid json when parsing CSLMetadata: Metadata fields has non-string value')
+                fields = cast(list[str], fields)
+                return cls(
+                    override=override,
+                    artist_credits=artist_credits,
+                    extra_metas=extra_metas,
+                    total_count=total_count,
+                    fields=fields,
+                )
+            case _:
+                logger.info('Invalid json when parsing CSLMetadata', extra={'json': data})
+                raise QueryError('Invalid json when parsing CSLMetadata')
+
+
 # --- Edits ---
+# Classes for users to use to edit the DB
 
 # This is for making requests to edit existing metadata
 type Metadata = ArtistCredit | ExtraMetadata

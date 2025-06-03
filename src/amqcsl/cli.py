@@ -52,6 +52,7 @@ def init(
 class Templates(StrEnum):
     simple = 'simple'
     character = 'character'
+    character_compact = 'character_compact'
 
 
 @app.command()
@@ -67,6 +68,15 @@ def make(
         ),
     ] = Templates.simple,
 ):
+    """Create a script file from a template
+
+    Args:
+        dest: Path to the file
+        template: The template to use for the file, defaults to simple
+
+    Raises:
+        FileExistsError: File already exists
+    """
     if (Path.cwd() / dest).exists():
         raise FileExistsError(Path.cwd() / dest)
     template_file = files('amqcsl') / f'templates/scripts/{template}.py.txt'

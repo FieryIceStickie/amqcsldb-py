@@ -1,46 +1,16 @@
-from __future__ import annotations
-
 from typing import TypedDict
 
 type JSONType = str | int | float | bool | None | dict[str, JSONType] | list[JSONType]
 
 
-# --- List ---
+# --- DB Mirrors ---
 
 
-class JSONList(TypedDict):
+class JSONSongSample(TypedDict):
     id: str
     name: str
-    count: int
-
-
-# --- Group ---
-
-
-class JSONGroup(TypedDict):
-    id: str
-    name: str
-
-
-# --- Metadata ---
-
-
-class JSONMetadata(TypedDict):
-    override: bool
-    artistCredits: list[JSONSongArtistCredit]
-    extraMetas: list[JSONExtraMetadata]
-    totalCount: int
-    fields: list[str]
-
-
-class JSONExtraMetadata(TypedDict):
-    id: str
-    type: int
-    key: str
-    value: str
-
-
-# --- Artist ---
+    disambiguation: str | None
+    createdAt: str
 
 
 class JSONArtistSample(TypedDict):
@@ -51,38 +21,11 @@ class JSONArtistSample(TypedDict):
     type: int
 
 
-class JSONArtist(JSONArtistSample):
-    forwardRelations: list[JSONSongRelation]
-    reverseRelations: list[JSONSongRelation]
-    linkedAmqSongs: list[JSONTrackLink]
-    linkedTracks: list[JSONTrackLink]
-
-
-class JSONSongRelation(TypedDict):
+class JSONExtraMetadata(TypedDict):
     id: str
     type: int
-    artist: JSONArtistSample
-
-
-class JSONTrackLink(TypedDict):
-    id: str
-    name: str | None
-    artists: list[JSONTrackArtistCredit]
-
-
-# --- Song ---
-
-
-class JSONSongSample(TypedDict):
-    id: str
-    name: str
-    disambiguation: str | None
-    createdAt: str
-
-
-class JSONSong(JSONSongSample):
-    artistCredits: list[JSONSongArtistCredit]
-    extraMetas: list[JSONExtraMetadata]
+    key: str
+    value: str
 
 
 class JSONSongArtistCredit(TypedDict):
@@ -91,7 +34,46 @@ class JSONSongArtistCredit(TypedDict):
     artist: JSONArtistSample
 
 
-# --- Track ---
+class JSONSongRelation(TypedDict):
+    id: str
+    type: int
+    artist: JSONArtistSample
+
+
+class JSONTrackArtistCredit(TypedDict):
+    artist: JSONArtistSample
+    name: str
+    joinPhrase: str
+    position: int
+
+
+class JSONTrackLink(TypedDict):
+    id: str
+    name: str | None
+    artists: list[JSONTrackArtistCredit]
+
+
+class JSONList(TypedDict):
+    id: str
+    name: str
+    count: int
+
+
+class JSONGroup(TypedDict):
+    id: str
+    name: str
+
+
+class JSONArtist(JSONArtistSample):
+    forwardRelations: list[JSONSongRelation]
+    reverseRelations: list[JSONSongRelation]
+    linkedAmqSongs: list[JSONTrackLink]
+    linkedTracks: list[JSONTrackLink]
+
+
+class JSONSong(JSONSongSample):
+    artistCredits: list[JSONSongArtistCredit]
+    extraMetas: list[JSONExtraMetadata]
 
 
 class JSONTrack(TypedDict):
@@ -118,11 +100,12 @@ class JSONTrack(TypedDict):
     inList: bool
 
 
-class JSONTrackArtistCredit(TypedDict):
-    artist: JSONArtistSample
-    name: str
-    joinPhrase: str
-    position: int
+class JSONMetadata(TypedDict):
+    override: bool
+    artistCredits: list[JSONSongArtistCredit]
+    extraMetas: list[JSONExtraMetadata]
+    totalCount: int
+    fields: list[str]
 
 
 # --- Requests ---
@@ -160,13 +143,6 @@ class QueryBodyTrack(TypedDict):
     take: int
 
 
-class MetadataPostBody(TypedDict):
-    artistCredits: list[MetadataPostArtistCredit]
-    extraMetadatas: list[MetadataPostExtraMetadata]
-    id: str
-    override: bool | None
-
-
 class MetadataPostArtistCredit(TypedDict):
     artistId: str
     credit: str | None
@@ -177,6 +153,20 @@ class MetadataPostExtraMetadata(TypedDict):
     isArtist: bool
     type: str
     value: str
+
+
+class MetadataPostBody(TypedDict):
+    artistCredits: list[MetadataPostArtistCredit]
+    extraMetadatas: list[MetadataPostExtraMetadata]
+    id: str
+    override: bool | None
+
+
+class JSONTrackPutArtistCredit(TypedDict):
+    artistId: str
+    joinPhrase: str
+    name: str
+    position: int
 
 
 class TrackPutBody(TypedDict):
@@ -190,10 +180,3 @@ class TrackPutBody(TypedDict):
     originalName: str | None
     songId: str | None
     type: int | None
-
-
-class JSONTrackPutArtistCredit(TypedDict):
-    artistId: str
-    joinPhrase: str
-    name: str
-    position: int
