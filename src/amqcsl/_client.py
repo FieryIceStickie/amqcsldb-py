@@ -36,9 +36,9 @@ from amqcsl.objects._json_types import (
     JSONType,
     MetadataPostBody,
     Query,
-    QueryBodyTrack,
-    QueryParamsArtist,
-    QueryParamsSong,
+    QueryTrack,
+    QueryArtist,
+    QuerySong,
     TrackPutBody,
 )
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
@@ -295,7 +295,7 @@ class DBClient:
                 'active_list': None if active_list is None else {'id': active_list.id, 'name': active_list.name},
             },
         )
-        body: QueryBodyTrack = {
+        body: QueryTrack = {
             'activeListId': None if active_list is None else active_list.id,
             'filter': '',
             'groupFilters': [group.id for group in groups],
@@ -326,7 +326,7 @@ class DBClient:
             CSLSongSample
         """
         logger.info(f'Fetching songs matching search term "{search_term}"')
-        params: QueryParamsSong = {
+        params: QuerySong = {
             'searchTerm': search_term,
             'skip': 0,
             'take': batch_size,
@@ -346,7 +346,7 @@ class DBClient:
         Yields:
             CSLArtistSample
         """
-        params: QueryParamsArtist = {
+        params: QueryArtist = {
             'searchTerm': search_term,
             'skip': 0,
             'take': batch_size,
@@ -535,6 +535,21 @@ class DBClient:
         return self.lists[name]
 
     # --- General Editing ---
+
+    def add_group(self, name: str) -> CSLGroup:
+        """Create a group
+
+        Args:
+            name: Name of the group
+
+        Returns:
+            Newly created group
+        """
+        logger.info(f'Adding group {name}')
+        res = self.client.post('/api/group', json={'name': name})
+        res.raise_for_status()
+        return CSLGroup.from_json(res.json())
+
     def track_add_metadata(
         self,
         track: CSLTrack,
@@ -623,20 +638,6 @@ class DBClient:
         else:
             res = self.client.send(req)
             res.raise_for_status()
-
-    def create_group(self, name: str) -> CSLGroup:
-        """Create a group
-
-        Args:
-            name: Name of the group
-
-        Returns:
-            Newly created group
-        """
-        logger.info(f'Adding group {name}')
-        res = self.client.post('/api/group', json={'name': name})
-        res.raise_for_status()
-        return CSLGroup.from_json(res.json())
 
     def track_edit(
         self,
