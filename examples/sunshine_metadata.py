@@ -1,14 +1,11 @@
-# TODO: update this to use newer things
 import logging
 import os
-from collections.abc import Sequence
-from typing import Mapping
 
 from dotenv import load_dotenv
 
 import amqcsl
 from amqcsl.objects import ExtraMetadata
-from amqcsl.utils import ArtistKey, conv_artist_dict, prompt, queue_character_metadata
+from amqcsl.utils import ArtistDict, CharacterDict, make_artist_to_meta, prompt, queue_character_metadata
 
 from .log import setup_logging
 
@@ -61,38 +58,62 @@ y_mari = ExtraMetadata(True, 'Character', 'Mari')
 y_kanan = ExtraMetadata(True, 'Character', 'Kanan')
 lailaps = ExtraMetadata(True, 'Character', 'Lailaps')
 
-# fmt: off
-normal_artists: Mapping[ArtistKey, Sequence[ExtraMetadata]] = {
-    'Anju Inami': [chika],
-    'Shuka Saitou': [you],
-    'Rikako Aida': [riko],
-    'Aika Kobayashi': [yoshiko],
-    'Kanako Takatsuki': [hanamaru],
-    'Ai Furihata': [ruby],
-    'Aina Suzuki': [mari],
-    'Nanaka Suwa': [kanan],
-    'Arisa Komiya': [dia],
-    ('Saint Snow', 'Love Live! Sunshine!!'): [sarah, leah],
-    ('Saint Aqours Snow', 'Love Live! Sunshine!!'): [chika, you, riko, yoshiko, hanamaru, ruby, mari, kanan, dia, sarah, leah],
-    ('Aqours', 'Love Live! Sunshine!!'): [chika, you, riko, yoshiko, hanamaru, ruby, mari, kanan, dia],
-    ('Guilty Kiss', 'Love Live!'): [riko, yoshiko, mari],
-    ('CYaRon!', 'Love Live!'): [chika, you, ruby],
-    ('AZALEA', 'Love Live!'): [hanamaru, kanan, dia],
+characters: CharacterDict = {
+    'chika': 'Chika Takami',
+    'you': 'You Watanabe',
+    'riko': 'Riko Sakurauchi',
+    'yoshiko': 'Yoshiko Tsushima',
+    'hanamaru': 'Hanamaru Kunikida',
+    'ruby': 'Ruby Kurosawa',
+    'dia': 'Dia Kurosawa',
+    'mari': 'Mari Ohara',
+    'kanan': 'Kanan Matsuura',
+    'sarah': 'Sarah Kazuno',
+    'leah': 'Leah Kazuno',
+    'y_chika': 'Chika',
+    'y_you': 'You',
+    'y_riko': 'Riko',
+    'y_yohane': 'Yohane',
+    'y_hanamaru': 'Hanamaru',
+    'y_ruby': 'Ruby',
+    'y_dia': 'Dia',
+    'y_mari': 'Mari',
+    'y_kanan': 'Kanan',
+    'lailaps': 'Lailaps',
 }
-yohane_artists: Mapping[ArtistKey, Sequence[ExtraMetadata]] = {
-    'Anju Inami': [y_chika],
-    'Shuka Saitou': [y_you],
-    'Rikako Aida': [y_riko],
-    'Aika Kobayashi': [y_yohane],
-    'Kanako Takatsuki': [y_hanamaru],
-    'Ai Furihata': [y_ruby],
-    'Aina Suzuki': [y_mari],
-    'Nanaka Suwa': [y_kanan],
-    'Arisa Komiya': [y_dia],
-    'Youko Hikasa': [lailaps],
-    ('Aqours', 'Love Live! Sunshine!!'): [y_chika, y_you, y_riko, y_yohane, y_hanamaru, y_ruby, y_mari, y_kanan, y_dia],
-}
-# fmt: on
+
+artists: list[ArtistDict] = [
+    {
+        'Anju Inami': 'chika',
+        'Shuka Saitou': 'you',
+        'Rikako Aida': 'riko',
+        'Aika Kobayashi': 'yoshiko',
+        'Kanako Takatsuki': 'hanamaru',
+        'Ai Furihata': 'ruby',
+        'Aina Suzuki': 'mari',
+        'Nanaka Suwa': 'kanan',
+        'Arisa Komiya': 'dia',
+        'Saint Snow': 'sarah leah',
+        'Saint Aqours Snow': 'chika you riko yoshiko hanamaru ruby mari kanan dia sarah leah',
+        'Aqours': 'chika you riko yoshiko hanamaru ruby mari kanan dia',
+        'Guilty Kiss': 'riko yoshiko mari',
+        'CYaRon!': 'chika you ruby',
+        'AZALEA': 'hanamaru kanan dia',
+    },
+    {
+        'Anju Inami': 'y_chika',
+        'Shuka Saitou': 'y_you',
+        'Rikako Aida': 'y_riko',
+        'Aika Kobayashi': 'y_yohane',
+        'Kanako Takatsuki': 'y_hanamaru',
+        'Ai Furihata': 'y_ruby',
+        'Aina Suzuki': 'y_mari',
+        'Nanaka Suwa': 'y_kanan',
+        'Arisa Komiya': 'y_dia',
+        'Youko Hikasa': 'lailaps',
+        'Aqours': 'y_chika y_you y_riko y_yohane y_hanamaru y_ruby y_mari y_kanan y_dia',
+    },
+]
 
 
 def main(logger: logging.Logger):
@@ -101,9 +122,7 @@ def main(logger: logging.Logger):
         password=os.getenv('AMQ_PASSWORD'),
         max_query_size=4000,
     ) as client:
-        sunshine_to_meta = conv_artist_dict(client, normal_artists, ['Aqours', 'Guilty Kiss', 'CYaRon!', 'AZALEA'])
-        yohane_to_meta = conv_artist_dict(client, yohane_artists, ['Aqours', 'Youko Hikasa'])
-
+        artists_to_meta = [make_artist_to_meta(client, characters, artist_dict, ['Aqours']) for artist_dict in artists]
         sunshine_group = client.groups['Love Live! Sunshine!!']
         for track in client.iter_tracks(groups=[sunshine_group], batch_size=100):
             if track.audio_id is None or track.song is None or track.name is None:
@@ -115,18 +134,17 @@ def main(logger: logging.Logger):
             logger.info(f'Checking {track.name} which is {"" if is_yohane else "not "}a yohane song')
             if 'Fourth Solo Concert Album' in track.album and 'Solo Ver.' not in track.name:
                 (cred,) = track.artist_credits
-                (character,) = sunshine_to_meta[cred.artist]
+                (character,) = artists_to_meta[is_yohane][cred.artist]
                 client.track_edit(track, name=f'{track.name} ({character.value} Solo Ver.)', queue=True)
             elif 'Solo Ver.' in track.name:
                 (cred,) = track.artist_credits
-                (character,) = sunshine_to_meta[cred.artist]
+                (character,) = artists_to_meta[is_yohane][cred.artist]
                 first, last = character.value.split(' ')
                 if f'{last} {first}' in track.name:
                     client.track_edit(track, name=track.name.replace(f'{last} {first}', f'{first} {last}'), queue=True)
 
             meta = client.get_metadata(track)
-            artist_to_meta = yohane_to_meta if is_yohane else sunshine_to_meta
-            if (artist := queue_character_metadata(client, track, artist_to_meta, meta)) is not None:
+            if (artist := queue_character_metadata(client, track, artists_to_meta[is_yohane], meta)) is not None:
                 if artist.name in {'AiScReam', 'YYY'}:
                     continue
                 logger.info(f'Unidentified artist {artist.name} {artist.disambiguation}')
