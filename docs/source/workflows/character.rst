@@ -31,7 +31,7 @@ keys -> character names:
 
 .. code-block:: python
 
-    characters: CharacterDict = {
+    characters: cm.CharacterDict = {
         'kotono': 'Kotono Nagase',
         'nagisa': 'Nagisa Ibuki',
         'saki': 'Saki Shiraishi
@@ -46,9 +46,7 @@ For artists, fill it with artist name -> keys separated by spaces:
 
 .. code-block:: python
 
-   from amqcsl.utils import ArtistName
-
-    artists: ArtistDict = {
+    artists: cm.ArtistDict = {
         'Mirai Tachibana': 'kotono',
         ArtistName('Lynn', original_name='Lynn'): 'fran',
         'Tsuki no Tempest': 'kotono nagisa saki suzu mei',
@@ -59,7 +57,7 @@ The key can come in three formats:
 
 1. name
 2. (name, disambiguation)
-3. :py:class:`ArtistName <amqcsl.utils.ArtistName>` (name, original name, disambiguation)
+3. :py:class:`ArtistName <amqcsl.workflows.character.ArtistName>` (name, original name, disambiguation)
 
 It's fine to not provide the full information as long as the result is unique; for example,
 we just did ``Tsuki no Tempest`` even though it has an original name and disambiguation, but for
@@ -67,7 +65,7 @@ we just did ``Tsuki no Tempest`` even though it has an original name and disambi
 The function will error if there are duplicates, so it's fine to be lazy at first and add more info if necessary.
 
 If necessary, you can use a different separator for the keys, which you'll need to pass into
-:py:func:`make_artist_to_meta <amqcsl.utils.make_artist_to_meta>` as ``sep``.
+:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>` as ``sep``.
 
 A more compact way
 -------------------
@@ -78,7 +76,7 @@ fill it out with character names separated by a comma and a space:
 
 .. code-block:: python
 
-    artists: ArtistDict = {
+    artists: cm.ArtistDict = {
         'Mirai Tachibana': 'Kotono Nagase',
         'Kokona Natsume': 'Nagisa Ibuki',
         'Koharu Miyazawa': 'Saki Shiraishi',
@@ -105,7 +103,7 @@ fill it out with character names separated by a comma and a space:
     }
 
 You can customize the separator by passing ``sep`` into
-:py:func:`compact_make_artist_to_meta <amqcsl.utils.compact_make_artist_to_meta>`. If you're reusing
+:py:func:`compact_make_artist_to_meta <amqcsl.workflows.character.compact_make_artist_to_meta>`. If you're reusing
 character names a lot, the first method is preferable to minimize typos.
 
 Running the script
@@ -124,15 +122,15 @@ Final notes
 -----------
 
 By default,
-:py:func:`make_artist_to_meta <amqcsl.utils.make_artist_to_meta>` and 
-:py:func:`compact_make_artist_to_meta <amqcsl.utils.compact_make_artist_to_meta>`
+:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>` and 
+:py:func:`compact_make_artist_to_meta <amqcsl.workflows.character.compact_make_artist_to_meta>`
 will search for each artist name one by one and match them up. Often, you can make fewer requests by
 searching for a group like ``Hoshimi Production``, since the search result includes all the artists
 inside that group. You can pass in a list of search phrases to both functions like this:
 
 .. code-block:: python
 
-    artist_to_meta = compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
+    artist_to_meta = cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
 
 It's fine if the search phrase doesn't cover all artists, it'll go back to the default after exhausting
 the list of search phrases. This isn't necessary, but it'll just speed things up if you're working with

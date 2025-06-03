@@ -5,11 +5,11 @@ from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
-from amqcsl.utils import ArtistDict, compact_make_artist_to_meta, prompt, queue_character_metadata
+import amqcsl.workflows.character as cm
 
 _ = load_dotenv()
 
-artists: ArtistDict = {}
+artists: cm.ArtistDict = {}
 
 
 def main(logger: logging.Logger):
@@ -17,14 +17,14 @@ def main(logger: logging.Logger):
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
     ) as client:
-        artist_to_meta = compact_make_artist_to_meta(client, artists)
-        ip_group = client.groups['INSERT GROUP NAME HERE']
-        for track in client.iter_tracks(groups=[ip_group]):
+        artist_to_meta = cm.compact_make_artist_to_meta(client, artists)
+        my_group = client.groups['INSERT GROUP NAME HERE']
+        for track in client.iter_tracks(groups=[my_group]):
             meta = client.get_metadata(track)
-            if (artist := queue_character_metadata(client, track, artist_to_meta, meta)) is not None:
-                prompt(track, msg=f'Unidentified artist {artist.name}, continue?')
+            if (artist := cm.queue_character_metadata(client, track, artist_to_meta, meta)) is not None:
+                cm.prompt(track, msg=f'Unidentified artist {artist.name}, continue?', continue_on_empty=True)
 
-        if prompt(client.queue):
+        if cm.prompt(client.queue):
             client.commit()
 
 

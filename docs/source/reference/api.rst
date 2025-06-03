@@ -7,4 +7,4 @@ API Reference
    client
    objects
    errors
-   utils
+   workflows/index
