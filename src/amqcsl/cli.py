@@ -28,7 +28,7 @@ def init(
         dest: Path to script directory, defaults to cwd
     """
     dest.mkdir(parents=True, exist_ok=True)
-    template_dir = files('amqcsl') / 'templates'
+    template_dir = files('amqcsl') / '_templates'
     with as_file(template_dir) as dir:
         shutil.copytree(dir / 'log', dest / 'log', dirs_exist_ok=True)
     with open(dest / '.env', 'w') as file:
@@ -79,7 +79,7 @@ def make(
     """
     if (Path.cwd() / dest).exists():
         raise FileExistsError(Path.cwd() / dest)
-    template_file = files('amqcsl') / f'templates/scripts/{template}.py.txt'
+    template_file = files('amqcsl') / f'_templates/scripts/{template}.py.txt'
     with as_file(template_file) as file:
         shutil.copy(file, dest)
 

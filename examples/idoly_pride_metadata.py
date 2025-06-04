@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
-import amqcsl.workflows.character as cm
+from amqcsl.workflows import character as cm
 
 _ = load_dotenv()
 

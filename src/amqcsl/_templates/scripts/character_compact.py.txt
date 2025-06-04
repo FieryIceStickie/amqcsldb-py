@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from log import setup_logging
 
 import amqcsl
-import amqcsl.workflows.character as cm
+from amqcsl.workflows import character as cm
 
 _ = load_dotenv()
 
@@ -29,6 +29,6 @@ def main(logger: logging.Logger):
 
 
 if __name__ == '__main__':
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(__file__)
     setup_logging()
     main(logger)
