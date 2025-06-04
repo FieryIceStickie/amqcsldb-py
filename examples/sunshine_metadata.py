@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 
 import amqcsl
-import amqcsl.workflows.character as cm
+from amqcsl.workflows import character as cm
 
 from .log import setup_logging
 

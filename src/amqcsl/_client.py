@@ -36,9 +36,9 @@ from amqcsl.objects._json_types import (
     JSONType,
     MetadataPostBody,
     Query,
-    QueryTrack,
     QueryArtist,
     QuerySong,
+    QueryTrack,
     TrackPutBody,
 )
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
