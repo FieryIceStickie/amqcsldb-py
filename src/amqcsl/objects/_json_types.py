@@ -110,13 +110,15 @@ class JSONMetadata(TypedDict):
 
 # --- Requests ---
 
+# --- Queries ---
+
 
 class Query(TypedDict):
     skip: int
     take: int
 
 
-class QueryParamsSong(TypedDict):
+class QuerySong(TypedDict):
     searchTerm: str
     skip: int
     take: int
@@ -124,7 +126,7 @@ class QueryParamsSong(TypedDict):
     filter: str
 
 
-class QueryParamsArtist(TypedDict):
+class QueryArtist(TypedDict):
     searchTerm: str
     skip: int
     take: int
@@ -132,7 +134,7 @@ class QueryParamsArtist(TypedDict):
     filter: str
 
 
-class QueryBodyTrack(TypedDict):
+class QueryTrack(TypedDict):
     activeListId: str | None
     filter: str
     groupFilters: list[str]
@@ -141,6 +143,9 @@ class QueryBodyTrack(TypedDict):
     searchTerm: str
     skip: int
     take: int
+
+
+# --- Metadata ---
 
 
 class MetadataPostArtistCredit(TypedDict):
@@ -162,11 +167,19 @@ class MetadataPostBody(TypedDict):
     override: bool | None
 
 
+# --- Track ---
+
+
 class JSONTrackPutArtistCredit(TypedDict):
     artistId: str
     joinPhrase: str
     name: str
     position: int
+
+
+class TrackNewSong(TypedDict):
+    name: str
+    disambiguation: str | None
 
 
 class TrackPutBody(TypedDict):
@@ -175,8 +188,29 @@ class TrackPutBody(TypedDict):
     groupIds: list[str] | None
     id: str
     name: str | None
-    newSong: JSONSongSample | None
+    newSong: TrackNewSong | None
     originalArtist: str | None
     originalName: str | None
     songId: str | None
     type: int | None
+
+
+# --- Album ---
+
+
+class AlbumTrack(TypedDict):
+    discNumber: int
+    name: str
+    originalArtist: str
+    originalName: str
+    trackNumber: int
+    trackTotal: int
+
+
+class AlbumBody(TypedDict):
+    album: str
+    discTotal: int
+    groupIds: list[str]
+    originalAlbum: str
+    tracks: list[AlbumTrack]
+    year: int
