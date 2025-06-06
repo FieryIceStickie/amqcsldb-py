@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Literal, Self
@@ -10,6 +10,7 @@ from attrs import define, field
 from amqcsl._client_consts import (
     DB_URL,
     DEFAULT_SESSION_PATH,
+    AlbumAdd,
     MetadataDelete,
     MetadataPost,
     QueueObj,
@@ -17,6 +18,7 @@ from amqcsl._client_consts import (
 )
 from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, ListCreateError, LoginError, QueryError
 from amqcsl.objects._db_types import (
+    AlbumTrack,
     ArtistCredit,
     CSLArtist,
     CSLArtistSample,
@@ -33,6 +35,7 @@ from amqcsl.objects._db_types import (
     TrackPutArtistCredit,
 )
 from amqcsl.objects._json_types import (
+    AlbumAddBody,
     JSONType,
     MetadataPostBody,
     Query,
@@ -264,7 +267,7 @@ class DBClient:
         self,
         search_term: str = '',
         *,
-        groups: list[CSLGroup] | None = None,
+        groups: Iterable[CSLGroup] | None = None,
         active_list: CSLList | None = None,
         missing_audio: bool = False,
         missing_info: bool = False,
@@ -669,7 +672,7 @@ class DBClient:
             ValueError: New track type is not a valid track type
         """
         if type is not None and type not in REVERSE_TRACK_TYPE:
-            raise ValueError('Track type must be one of the following: {', '.join(REVERSE_TRACK_TYPE)}')
+            raise ValueError(f'Track type must be one of the following: {", ".join(REVERSE_TRACK_TYPE)}')
         logger.info(f'Editing track {track.name}')
         body: TrackPutBody = {
             'artistCredits': None if artist_credits is None else [v.to_json(i) for i, v in enumerate(artist_credits)],
@@ -686,6 +689,38 @@ class DBClient:
         req = self.client.build_request('PUT', f'/api/track/{track.id}', json=body)
         if queue:
             self._enqueue(TrackEdit(req, track, body))
+        else:
+            res = self.client.send(req)
+            res.raise_for_status()
+
+    # --- Album Creation ---
+
+    def add_album(
+        self,
+        name: str,
+        original_name: str,
+        year: int,
+        groups: Iterable[CSLGroup],
+        tracks: Sequence[Sequence[AlbumTrack]],
+        *,
+        queue: bool = False,
+    ) -> None:
+        logger.info(f'Adding album {name}')
+        body: AlbumAddBody = {
+            'album': name,
+            'discTotal': len(tracks),
+            'groupIds': [group.id for group in groups],
+            'originalAlbum': original_name,
+            'year': year,
+            'tracks': [
+                track.to_json(disc_number, track_number, len(disc))
+                for disc_number, disc in enumerate(tracks)
+                for track_number, track in enumerate(disc)
+            ],
+        }
+        req = self.client.build_request('POST', '/api/album', json=body)
+        if queue:
+            self._enqueue(AlbumAdd(req, groups, body))
         else:
             res = self.client.send(req)
             res.raise_for_status()
