@@ -7,7 +7,13 @@ from attrs import frozen
 
 from amqcsl.exceptions import QueryError
 
-from ._json_types import JSONTrackPutArtistCredit, JSONType, MetadataPostArtistCredit, MetadataPostExtraMetadata
+from ._json_types import (
+    JSONAlbumTrack,
+    JSONTrackPutArtistCredit,
+    JSONType,
+    MetadataPostArtistCredit,
+    MetadataPostExtraMetadata,
+)
 from ._obj_consts import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE
 
 __all__ = ['CSLList']
@@ -529,7 +535,7 @@ class ExtraMetadata:
 @frozen
 class TrackPutArtistCredit:
     artist: CSLArtistSample
-    joinPhrase: str
+    join_phrase: str
     name: str = ''
 
     def __attrs_post_init__(self):
@@ -538,7 +544,7 @@ class TrackPutArtistCredit:
     def to_json(self, position: int) -> JSONTrackPutArtistCredit:
         return {
             'artistId': self.artist.id,
-            'joinPhrase': self.joinPhrase,
+            'joinPhrase': self.join_phrase,
             'name': self.name,
             'position': position,
         }
@@ -546,3 +552,20 @@ class TrackPutArtistCredit:
     @classmethod
     def simplify(cls, cred: CSLTrackArtistCredit):
         return cls(cred.artist, cred.join_phrase, cred.name)
+
+
+@frozen
+class AlbumTrack:
+    name: str
+    original_name: str
+    original_artist: str
+
+    def to_json(self, disc_number: int, track_number: int, track_total: int) -> JSONAlbumTrack:
+        return {
+            'discNumber': disc_number,
+            'name': self.name,
+            'originalArtist': self.original_artist,
+            'originalName': self.original_name,
+            'trackNumber': track_number,
+            'trackTotal': track_total,
+        }

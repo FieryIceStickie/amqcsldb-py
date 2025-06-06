@@ -1,11 +1,11 @@
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import Any
 
 import httpx
 from attrs import frozen
 
-from amqcsl.objects._db_types import CSLExtraMetadata, CSLSongArtistCredit, CSLTrack
-from amqcsl.objects._json_types import MetadataPostBody, TrackPutBody
+from amqcsl.objects._db_types import CSLExtraMetadata, CSLGroup, CSLSongArtistCredit, CSLTrack
+from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, TrackPutBody
 
 DB_URL = 'https://amqbot.082640.xyz'
 DEFAULT_SESSION_PATH = 'amq_session.txt'
@@ -68,3 +68,17 @@ class TrackEdit(QueueObj):
         yield 'new_original_name', body['originalName'], None
         yield 'new_song_id', body['songId'], None
         yield 'new_type', body['type'], None
+
+
+@frozen
+class AlbumAdd(QueueObj):
+    groups: Iterable[CSLGroup]
+    body: AlbumAddBody
+
+    def __rich_repr__(self) -> Iterator[Any]:
+        body = self.body
+        yield 'name', body['album']
+        yield 'original_name', body['originalAlbum']
+        yield 'year', body['year']
+        yield 'groups', [group.name for group in self.groups]
+        yield 'tracks', body['tracks']

@@ -198,7 +198,7 @@ class TrackPutBody(TypedDict):
 # --- Album ---
 
 
-class AlbumTrack(TypedDict):
+class JSONAlbumTrack(TypedDict):
     discNumber: int
     name: str
     originalArtist: str
@@ -207,10 +207,10 @@ class AlbumTrack(TypedDict):
     trackTotal: int
 
 
-class AlbumBody(TypedDict):
+class JSONAlbum(TypedDict):
     album: str
     discTotal: int
     groupIds: list[str]
     originalAlbum: str
-    tracks: list[AlbumTrack]
+    tracks: list[JSONAlbumTrack]
     year: int
