@@ -1,19 +1,39 @@
+import logging
 from collections.abc import Iterable, Iterator, Mapping
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, override
 
 import httpx
 from attrs import frozen
 
+from amqcsl.exceptions import QueryError
 from amqcsl.objects._db_types import CSLExtraMetadata, CSLGroup, CSLSongArtistCredit, CSLTrack
 from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, TrackPutBody
+
+if TYPE_CHECKING:
+    from amqcsl import DBClient
 
 DB_URL = 'https://amqbot.082640.xyz'
 DEFAULT_SESSION_PATH = 'amq_session.txt'
 
 
+logger = logging.getLogger('amqcsl.client')
+
+
 @frozen
 class QueueObj:
     req: httpx.Request
+
+    def run(self, client: 'DBClient', queue: bool) -> None:
+        if queue:
+            client.enqueue(self)
+            return
+        res = client.client.send(self.req)
+        try:
+            res.raise_for_status()
+        except httpx.HTTPStatusError:
+            logger.exception(f'Request {self.req.method} {self.req.url} caused an error')
+            raise
 
 
 @frozen
@@ -82,3 +102,42 @@ class AlbumAdd(QueueObj):
         yield 'year', body['year']
         yield 'groups', [group.name for group in self.groups]
         yield 'tracks', body['tracks']
+
+
+@frozen
+class AudioAdd(QueueObj):
+    track: CSLTrack
+    path: Path
+    mime_type: str
+
+    def __rich_repr__(self) -> Iterator[Any]:
+        yield 'id', self.track.id
+        yield 'name', self.track.name, None
+        yield 'audio_path', self.path.resolve()
+
+    @override
+    def run(self, client: 'DBClient', queue: bool) -> None:
+        if queue:
+            client.enqueue(self)
+            return
+        res = client.client.send(self.req)
+        res.raise_for_status()
+        match res.json():
+            case {
+                'sessionId': str(session_id),
+                'key': str(key),
+                'url': str(url),
+            }:
+                pass
+            case _:
+                logger.error(
+                    f'Presigning upload of {self.track.name} returned unknown json', extra={'return_json': res.json()}
+                )
+                raise QueryError('Received unknown json when presigning upload')
+        with open(self.path, 'rb') as file:
+            res = client.client.post(
+                url,
+                params={'sessionId': session_id, 'key': key},
+                files={'file': (self.path.name, file, self.mime_type)},
+            )
+        res.raise_for_status()

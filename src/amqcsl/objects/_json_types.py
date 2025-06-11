@@ -207,7 +207,7 @@ class JSONAlbumTrack(TypedDict):
     trackTotal: int
 
 
-class JSONAlbum(TypedDict):
+class AlbumAddBody(TypedDict):
     album: str
     discTotal: int
     groupIds: list[str]

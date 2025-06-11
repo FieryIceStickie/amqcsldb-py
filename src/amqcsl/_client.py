@@ -1,5 +1,7 @@
 import logging
 from collections.abc import Iterable, Iterator, Sequence
+import mimetypes
+from os import PathLike
 from pathlib import Path
 from types import TracebackType
 from typing import Literal, Self
@@ -11,12 +13,13 @@ from amqcsl._client_consts import (
     DB_URL,
     DEFAULT_SESSION_PATH,
     AlbumAdd,
+    AudioAdd,
     MetadataDelete,
     MetadataPost,
     QueueObj,
     TrackEdit,
 )
-from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, ListCreateError, LoginError, QueryError
+from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, InputError, LoginError, QueryError
 from amqcsl.objects._db_types import (
     AlbumTrack,
     ArtistCredit,
@@ -110,7 +113,12 @@ class DBClient:
 
     # --- Queue Methods ---
 
-    def _enqueue(self, obj: QueueObj):
+    def enqueue(self, obj: QueueObj):
+        """Add an object to the queue
+
+        Args:
+            obj: An object wrapper around a request
+        """
         self.queue.append(obj)
 
     def commit(self, *, stop_if_err: bool = True):
@@ -120,13 +128,10 @@ class DBClient:
             stop_if_err: Stop sending requests if one of them errors
         """
         logger.info(f'Commiting {len(self.queue)} changes')
-        client = self.client
         for obj in self.queue:
-            res = client.send(obj.req)
             try:
-                res.raise_for_status()
+                obj.run(self, False)
             except httpx.HTTPError:
-                logger.exception(f'Request {obj.req.method} {obj.req.url} caused an error')
                 if stop_if_err:
                     raise
 
@@ -397,7 +402,7 @@ class DBClient:
                 case {
                     'count': int(count),
                     **data,
-                } if isinstance(data.get(key, None), list):
+                } if isinstance(data.get(key), list):
                     if prev_count is None:
                         if count > self.max_query_size:
                             raise QueryError(
@@ -470,29 +475,13 @@ class DBClient:
 
     # --- List operations ---
 
-    def list_add(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
-        """Add tracks to a list
-
-        Args:
-            csl_list: List to add to
-            *tracks: Tracks to add
-        """
-        self.list_edit(csl_list, tracks, [])
-
-    def list_remove(self, csl_list: CSLList, *tracks: CSLTrack) -> None:
-        """Remove tracks from a list
-
-        Args:
-            csl_list: List to remove from
-            *tracks: Tracks to remove
-        """
-        self.list_edit(csl_list, [], tracks)
-
     def list_edit(
         self,
         csl_list: CSLList,
-        add_tracks: Sequence[CSLTrack],
-        remove_tracks: Sequence[CSLTrack],
+        *,
+        name: str | None = None,
+        add: Sequence[CSLTrack] = (),
+        remove: Sequence[CSLTrack] = (),
     ) -> None:
         """Edit a list
 
@@ -503,10 +492,10 @@ class DBClient:
         """
         logger.info(f'Editing list {csl_list.name}')
         body = {
-            'addSongIds': [track.id for track in add_tracks] if add_tracks else None,
+            'addSongIds': [track.id for track in add],
             'id': EMPTY_ID,
-            'name': None,
-            'removeSongIds': [track.id for track in remove_tracks] if remove_tracks else None,
+            'name': name,
+            'removeSongIds': [track.id for track in remove],
         }
         res = self.client.put(f'/api/list/{csl_list.id}', json=body)
         res.raise_for_status()
@@ -524,14 +513,14 @@ class DBClient:
         Raises:
             ListCreateError: Error if the request gives an error, probably because the list already exists
         """
-        logger.info(f'Making list {name}')
+        logger.info(f'Creating list {name}')
         body = {
             'importListIds': [csl_list.id for csl_list in csl_lists],
             'name': name,
         }
         res = self.client.post('/api/list', json=body)
         if res.status_code == 400:
-            raise ListCreateError(res.json()['errors']['generalErrors'][0])
+            raise InputError(f'Error when creating list: {res.json()["errors"]["generalErrors"][0]}')
         res.raise_for_status()
         logger.info(f'List {name} created')
         self._lists = None
@@ -560,7 +549,7 @@ class DBClient:
         override: bool | None = None,
         existing_meta: CSLMetadata | None = None,
         queue: bool = False,
-    ):
+    ) -> None:
         """Add metadata to a track
 
         Args:
@@ -615,18 +604,14 @@ class DBClient:
             logger.info('No changes necessary, skipping request')
             return
         req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
-        if queue:
-            self._enqueue(MetadataPost(req, track, body, id_to_name))
-        else:
-            res = self.client.send(req)
-            res.raise_for_status()
+        MetadataPost(req, track, body, id_to_name).run(self, queue)
 
     def track_remove_metadata(
         self,
         track: CSLTrack,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
         queue: bool = False,
-    ):
+    ) -> None:
         """Remove metadata from a track
 
         Args:
@@ -636,11 +621,7 @@ class DBClient:
         """
         logger.info(f'Removing metadata {meta} from {track.name}')
         req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
-        if queue:
-            self._enqueue(MetadataDelete(req, track, meta))
-        else:
-            res = self.client.send(req)
-            res.raise_for_status()
+        MetadataDelete(req, track, meta).run(self, queue)
 
     def track_edit(
         self,
@@ -654,7 +635,7 @@ class DBClient:
         song: CSLSong | None = None,
         type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = None,
         queue: bool = False,
-    ):
+    ) -> None:
         """Edit a track
 
         Args:
@@ -687,11 +668,7 @@ class DBClient:
             'type': None if type is None else REVERSE_TRACK_TYPE[type],
         }
         req = self.client.build_request('PUT', f'/api/track/{track.id}', json=body)
-        if queue:
-            self._enqueue(TrackEdit(req, track, body))
-        else:
-            res = self.client.send(req)
-            res.raise_for_status()
+        TrackEdit(req, track, body).run(self, queue)
 
     # --- Album Creation ---
 
@@ -719,8 +696,23 @@ class DBClient:
             ],
         }
         req = self.client.build_request('POST', '/api/album', json=body)
-        if queue:
-            self._enqueue(AlbumAdd(req, groups, body))
-        else:
-            res = self.client.send(req)
-            res.raise_for_status()
+        AlbumAdd(req, groups, body).run(self, queue)
+
+    def add_audio(
+        self,
+        track: CSLTrack,
+        audio_path: str | PathLike[str],
+        *,
+        queue: bool = False,
+    ) -> None:
+        logger.info(f'Uploading audio to {track.name}')
+        audio_path = Path(audio_path)
+        if not audio_path.exists():
+            raise QueryError(f'{audio_path.resolve()} does not exist')
+        elif not audio_path.is_file():
+            raise QueryError(f'{audio_path.resolve()} is not a file')
+        mime_type, _ = mimetypes.guess_type(audio_path)
+        if mime_type is None or not mime_type.startswith('audio/'):
+            raise QueryError(f'{audio_path.name} is not an audio file')
+        req = self.client.build_request('POST', f'/api/track/{track.id}/presigned-upload', json={})
+        AudioAdd(req, track, audio_path, mime_type).run(self, queue)
