@@ -1,0 +1,62 @@
+{
+    "id": "mock-id-artist-shukasaitou",
+    "name": "Shuka Saitou",
+    "originalName": "斉藤朱夏",
+    "disambiguation": null,
+    "type": 1,
+    "forwardRelations": [],
+    "reverseRelations": [
+        {
+            "id": "mock-id-artistrelation-shuka-aqours",
+            "artist": {
+                "id": "mock-id-artist-aqours",
+                "name": "Aqours",
+                "originalName": "Aqours",
+                "disambiguation": "Love Live! Sunshine!!",
+                "type": 3
+            },
+            "type": 1
+        }
+    ],
+    "linkedAMQSongs": [
+        {
+            "id": "mock-id-trackrelation-yumekataruyoriyumeutaou",
+            "name": "Yume Kataru yori Yume Utaou",
+            "artists": [
+                {
+                    "name": "Shuka Saitou",
+                    "joinPhrase": "",
+                    "position": 0,
+                    "artist": {
+                        "id": "mock-id-artist-shukasaitou",
+                        "name": "Shuka Saitou",
+                        "originalName": "斉藤朱夏",
+                        "disambiguation": null,
+                        "type": 1
+                    }
+                }
+            ]
+        }
+    ],
+    "linkedTracks": [
+        {
+            "id": "mock-id-track-sukiforyou",
+            "name": "SUKI for you, DREAM for you! (You Watanabe Solo Ver.)",
+            "artists": [
+                {
+                    "name": "Shuka Saitou",
+                    "joinPhrase": "",
+                    "position": 0,
+                    "artist": {
+                        "id": "mock-id-artist-shukasaitou",
+                        "name": "Shuka Saitou",
+                        "originalName": "斉藤朱夏",
+                        "disambiguation": null,
+                        "type": 1
+                    }
+                }
+            ]
+        }
+    ],
+    "extraCredits": []
+}

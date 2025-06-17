@@ -1,0 +1,40 @@
+{
+	"id": "mock-id-song-blueskysummer",
+	"name": "Blue sky summer",
+	"disambiguation": "Idoly Pride",
+	"createdAt": "2023-04-16T04:25:14.098261Z",
+	"artistCredits": [
+		{
+			"id": "mock-id-artistcredit-qmhz",
+			"type": "Composer",
+			"artist": {
+				"id": "mock-id-artist-qmhz",
+				"name": "Q-MHz",
+				"originalName": "Q-MHz",
+				"disambiguation": null,
+				"type": 3
+			}
+		}
+	],
+	"extraMetas": [],
+	"linkedTracks": [
+		{
+			"id": "mock-id-track-blueskysummer",
+			"name": "Blue sky summer",
+			"artists": [
+				{
+					"name": "LizNoir",
+					"joinPhrase": "",
+					"position": 0,
+					"artist": {
+						"id": "mock-id-artist-liznoir",
+						"name": "LizNoir",
+						"originalName": "LizNoir",
+						"disambiguation": "Idoly Pride",
+						"type": 3
+					}
+				}
+			]
+		}
+	]
+}

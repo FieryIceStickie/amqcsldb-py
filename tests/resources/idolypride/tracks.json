@@ -1,0 +1,402 @@
+[
+    {
+        "id": "mock-id-track-blueskysummer",
+        "name": "Blue sky summer",
+        "originalName": "Blue sky summer",
+        "originalSimpleArtist": "LizNoir",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 7,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-blueskysummer",
+            "name": "Blue sky summer",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T04:25:14.098261Z"
+        },
+        "artistCredits": [
+            {
+                "name": "LizNoir",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-liznoir",
+                    "name": "LizNoir",
+                    "originalName": "LizNoir",
+                    "disambiguation": "Idoly Pride",
+                    "type": 3
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-blueskysummer",
+        "audioName": "mock-audio-name.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-04T16:21:57.293066Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-topofthetops",
+        "name": "Top of the Tops",
+        "originalName": "Top of the Tops",
+        "originalSimpleArtist": "IIIX",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 8,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-topofthetops",
+            "name": "Top of the Tops",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T04:25:22.828013Z"
+        },
+        "artistCredits": [
+            {
+                "name": "IIIX",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-iiix",
+                    "name": "IIIX",
+                    "originalName": "IIIX",
+                    "disambiguation": "Idoly Pride",
+                    "type": 3
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-topofthetops",
+        "audioName": "mock-audio-topofthetops.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-04T16:21:57.293066Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-drop",
+        "name": "drop",
+        "originalName": "drop",
+        "originalSimpleArtist": "Yukina Shutou",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 9,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-drop",
+            "name": "drop",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T04:25:29.237412Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Yukina Shutou",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-yukinashutou",
+                    "name": "Yukina Shutou",
+                    "originalName": "首藤志奈",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-drop",
+        "audioName": "mock-audio-drop.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-04T16:21:57.293066Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-pajamaparty",
+        "name": "Pajama Party",
+        "originalName": "パジャマパーティー",
+        "originalSimpleArtist": "Pajapa!",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 10,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-pajamaparty",
+            "name": "Pajama Party",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T04:25:49.018041Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Pajapa!",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-pajapa",
+                    "name": "Pajapa!",
+                    "originalName": "ぱじゃパ!",
+                    "disambiguation": "Idoly Pride",
+                    "type": 3
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-pajamaparty",
+        "audioName": "mock-audio-pajamaparty.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-04T16:21:57.293066Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-shinyshiny",
+        "name": "shiny shiny",
+        "originalName": "shiny shiny",
+        "originalSimpleArtist": "Moka Hinata×Kanata Aikawa",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 11,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-shinyshiny",
+            "name": "shiny shiny",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T04:25:59.562859Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Kanata Aikawa",
+                "joinPhrase": "",
+                "position": 1,
+                "artist": {
+                    "id": "mock-id-artist-kanataaikawa",
+                    "name": "Kanata Aikawa",
+                    "originalName": "相川奏多",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            },
+            {
+                "name": "Moka Hinata",
+                "joinPhrase": "×",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-mokahinata",
+                    "name": "Moka Hinata",
+                    "originalName": "日向もか",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-shinyshiny",
+        "audioName": "mock-audio-shinyshiny.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-04T16:21:57.293066Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-tsunagarukokorobinary",
+        "name": "Tsunagaru Kokoro Binary",
+        "originalName": "つながる心Binary",
+        "originalSimpleArtist": "Koharu Miyazawa×Kanon Takao",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 12,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-tsunagarukokorobinary",
+            "name": "Tsunagaru Kokoro Binary",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T04:26:08.613887Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Koharu Miyazawa",
+                "joinPhrase": "×",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-koharumiyazawa",
+                    "name": "Koharu Miyazawa",
+                    "originalName": "宮沢小春",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            },
+            {
+                "name": "Kanon Takao",
+                "joinPhrase": "",
+                "position": 1,
+                "artist": {
+                    "id": "mock-id-artist-kanontakao",
+                    "name": "Kanon Takao",
+                    "originalName": "高尾奏音",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-tsunagarukokorobinary",
+        "audioName": "mock-audio-tsunagarukokorobinary.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-04T16:21:57.293066Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-sunnypeaceforyouandme",
+        "name": "SUNNY PEACE for You and Me!",
+        "originalName": "SUNNY PEACE for You and Me!",
+        "originalSimpleArtist": "サニーピース",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 13,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-sunnypeaceforyouandme",
+            "name": "SUNNY PEACE for You and Me!",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T04:26:20.267126Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Sunny Peace",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-sunnypeace",
+                    "name": "Sunny Peace",
+                    "originalName": "サニーピース",
+                    "disambiguation": "Idoly Pride",
+                    "type": 3
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-sunnypeaceforyouandme",
+        "audioName": "mock-audio-sunnypeaceforyouandme.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-04T16:21:57.293066Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-sayonarakarahajimarumonogatari(shuntoushortver)",
+        "name": "Sayonara kara Hajimaru Monogatari (Shuntou short ver.)",
+        "originalName": "サヨナラから始まる物語 (春闘 short ver.)",
+        "originalSimpleArtist": "spring battler",
+        "originalAlbum": "IDOLY PRIDE Collection Album [未来]",
+        "album": "IDOLY PRIDE Collection Album [Mirai]",
+        "trackNumber": 14,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2023,
+        "song": {
+            "id": "mock-id-song-sayonarakarahajimarumonogatari(shuntoushortver)",
+            "name": "Sayonara kara Hajimaru Monogatari",
+            "disambiguation": "Idoly Pride",
+            "createdAt": "2023-04-16T15:07:47.146381Z"
+        },
+        "artistCredits": [
+            {
+                "name": "spring battler",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-springbattler",
+                    "name": "spring battler",
+                    "originalName": "spring battler",
+                    "disambiguation": "Idoly Pride",
+                    "type": 3
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-idolypride",
+                "name": "IDOLY PRIDE"
+            }
+        ],
+        "audioId": "mock-id-audio-sayonarakarahajimarumonogatari(shuntoushortver)",
+        "audioName": "mock-audio-sayonarakarahajimarumonogatari(shuntoushortver).webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-04-16T04:07:52.450149Z",
+        "updatedAt": "2025-03-13T04:13:44.410454Z",
+        "inList": true,
+        "audioProcessingState": null
+    }
+]

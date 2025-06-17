@@ -1,0 +1,7 @@
+{
+    "statusCode": 404,
+    "message": "One or more errors occurred!",
+    "errors": {
+        "generalErrors": ["Song does not have metadata"]
+    }
+}

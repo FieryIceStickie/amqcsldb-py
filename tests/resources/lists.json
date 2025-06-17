@@ -1,0 +1,17 @@
+[
+    {
+        "id": "mock-id-list-bocchi",
+        "name": "bocchi",
+        "count": 5
+    },
+    {
+        "id": "mock-id-list-meihayasaka",
+        "name": "MeiHayasaka",
+        "count": 8
+    },
+    {
+        "id": "mock-id-list-yousoro",
+        "name": "yousoro",
+        "count": 8
+    }
+]

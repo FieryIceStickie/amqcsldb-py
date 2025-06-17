@@ -1,6 +1,6 @@
 import logging
-from collections.abc import Iterable, Iterator, Sequence
 import mimetypes
+from collections.abc import Iterable, Iterator, Sequence
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
@@ -19,7 +19,7 @@ from amqcsl._client_consts import (
     QueueObj,
     TrackEdit,
 )
-from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, InputError, LoginError, QueryError
+from amqcsl.exceptions import AMQCSLError, ClientDoesNotExistError, LoginError, QueryError
 from amqcsl.objects._db_types import (
     AlbumTrack,
     ArtistCredit,
@@ -170,6 +170,7 @@ class DBClient:
 
             if not is_valid_cookie:
                 logger.info('Invalid session cookie, attempting login')
+                client.cookies.delete('session-id')
                 self._login(client)
                 res = client.get('/api/auth/me')
 
@@ -475,6 +476,30 @@ class DBClient:
 
     # --- List operations ---
 
+    def create_list(self, name: str, *csl_lists: CSLList) -> CSLList:
+        """Make a list
+
+        Args:
+            name: name of the list
+            *csl_lists: Lists to pull tracks from
+
+        Returns:
+            Newly created list
+
+        Raises:
+            ListCreateError: Error if the request gives an error, probably because the list already exists
+        """
+        logger.info(f'Creating list {name}')
+        body = {
+            'importListIds': [csl_list.id for csl_list in csl_lists],
+            'name': name,
+        }
+        res = self.client.post('/api/list', json=body)
+        res.raise_for_status()
+        logger.info(f'List {name} created')
+        self._lists = None
+        return self.lists[name]
+
     def list_edit(
         self,
         csl_list: CSLList,
@@ -499,32 +524,6 @@ class DBClient:
         }
         res = self.client.put(f'/api/list/{csl_list.id}', json=body)
         res.raise_for_status()
-
-    def create_list(self, name: str, *csl_lists: CSLList) -> CSLList:
-        """Make a list
-
-        Args:
-            name: name of the list
-            *csl_lists: Lists to pull tracks from
-
-        Returns:
-            Newly created list
-
-        Raises:
-            ListCreateError: Error if the request gives an error, probably because the list already exists
-        """
-        logger.info(f'Creating list {name}')
-        body = {
-            'importListIds': [csl_list.id for csl_list in csl_lists],
-            'name': name,
-        }
-        res = self.client.post('/api/list', json=body)
-        if res.status_code == 400:
-            raise InputError(f'Error when creating list: {res.json()["errors"]["generalErrors"][0]}')
-        res.raise_for_status()
-        logger.info(f'List {name} created')
-        self._lists = None
-        return self.lists[name]
 
     # --- General Editing ---
 
@@ -691,8 +690,8 @@ class DBClient:
             'year': year,
             'tracks': [
                 track.to_json(disc_number, track_number, len(disc))
-                for disc_number, disc in enumerate(tracks)
-                for track_number, track in enumerate(disc)
+                for disc_number, disc in enumerate(tracks, start=1)
+                for track_number, track in enumerate(disc, start=1)
             ],
         }
         req = self.client.build_request('POST', '/api/album', json=body)
