@@ -1,6 +1,6 @@
 [project]
 name = "amqcsldb-py"
-version = "1.0.6"
+version = "1.1.0"
 description = "Add your description here"
 readme = "README.rst"
 authors = [
