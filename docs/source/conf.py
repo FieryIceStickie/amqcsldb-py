@@ -11,7 +11,7 @@ project = 'AMQCSLdb'
 copyright = '2025, FieryIceStickie'
 author = 'FieryIceStickie'
 version = '1.0'
-release = '1.0.6'
+release = '1.1.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
