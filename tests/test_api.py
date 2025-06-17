@@ -5,8 +5,7 @@ from httpx import Response
 from respx import Router
 
 from amqcsl import DBClient
-from amqcsl.objects import CSLArtist, CSLMetadata, CSLSong, ExtraMetadata
-from amqcsl.objects._db_types import AlbumTrack
+from amqcsl.objects import CSLArtist, CSLMetadata, CSLSong, ExtraMetadata, AlbumTrack
 
 
 def test_list(router: Router, client: DBClient):
