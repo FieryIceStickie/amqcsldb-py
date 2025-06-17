@@ -217,7 +217,7 @@ client offers a queue for this case. When calling
 after confirming your changes:
 
 .. code-block:: python
-
+   
     from amqcsl.objects import ExtraMetadata
     from amqcsl.utils import prompt
 
@@ -229,3 +229,11 @@ after confirming your changes:
 
     if prompt(client.queue):
         client.commit()
+
+Adding Albums and Adding Audio
+------------------------------
+
+You can upload albums with :py:meth:`add_album <amqcsl.DBClient.add_album>`,
+as well as upload audio with :py:meth:`add_audio <amqcsl.DBClient.add_audio>`. The functionality
+for this is very basic right now, and a new workflow for doing this will be introduced next
+version, so probably don't worry about this yet.
