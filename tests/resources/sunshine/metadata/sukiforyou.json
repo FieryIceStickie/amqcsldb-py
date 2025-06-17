@@ -1,0 +1,14 @@
+{
+    "override": false,
+    "artistCredits": [],
+    "extraMetas": [
+        {
+            "id": "mock-id-meta-sukiforyou-youwatanabe",
+            "type": 2,
+            "key": "Character",
+            "value": "You Watanabe"
+        }
+    ],
+    "totalCount": 1,
+    "fields": ["Character"]
+}

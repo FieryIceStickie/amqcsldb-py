@@ -1,0 +1,50 @@
+[
+    {
+        "id": "mock-id-song-blueskysummer",
+        "name": "Blue sky summer",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T04:25:14.098261Z"
+    },
+    {
+        "id": "mock-id-song-topofthetops",
+        "name": "Top of the Tops",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T04:25:22.828013Z"
+    },
+    {
+        "id": "mock-id-song-drop",
+        "name": "drop",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T04:25:29.237412Z"
+    },
+    {
+        "id": "mock-id-song-pajamaparty",
+        "name": "Pajama Party",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T04:25:49.018041Z"
+    },
+    {
+        "id": "mock-id-song-shinyshiny",
+        "name": "shiny shiny",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T04:25:59.562859Z"
+    },
+    {
+        "id": "mock-id-song-tsunagarukokorobinary",
+        "name": "Tsunagaru Kokoro Binary",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T04:26:08.613887Z"
+    },
+    {
+        "id": "mock-id-song-sunnypeaceforyouandme",
+        "name": "SUNNY PEACE for You and Me!",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T04:26:20.267126Z"
+    },
+    {
+        "id": "mock-id-song-sayonarakarahajimarumonogatari(shuntoushortver)",
+        "name": "Sayonara kara Hajimaru Monogatari",
+        "disambiguation": "Idoly Pride",
+        "createdAt": "2023-04-16T15:07:47.146381Z"
+    }
+]

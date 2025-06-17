@@ -1,0 +1,72 @@
+[
+    {
+        "id": "mock-id-artist-liznoir",
+        "name": "LizNoir",
+        "originalName": "LizNoir",
+        "disambiguation": "Idoly Pride",
+        "type": 3
+    },
+    {
+        "id": "mock-id-artist-iiix",
+        "name": "IIIX",
+        "originalName": "IIIX",
+        "disambiguation": "Idoly Pride",
+        "type": 3
+    },
+    {
+        "id": "mock-id-artist-yukinashutou",
+        "name": "Yukina Shutou",
+        "originalName": "首藤志奈",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-pajapa",
+        "name": "Pajapa!",
+        "originalName": "ぱじゃパ!",
+        "disambiguation": "Idoly Pride",
+        "type": 3
+    },
+    {
+        "id": "mock-id-artist-kanataaikawa",
+        "name": "Kanata Aikawa",
+        "originalName": "相川奏多",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-mokahinata",
+        "name": "Moka Hinata",
+        "originalName": "日向もか",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-koharumiyazawa",
+        "name": "Koharu Miyazawa",
+        "originalName": "宮沢小春",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-kanontakao",
+        "name": "Kanon Takao",
+        "originalName": "高尾奏音",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-sunnypeace",
+        "name": "Sunny Peace",
+        "originalName": "サニーピース",
+        "disambiguation": "Idoly Pride",
+        "type": 3
+    },
+    {
+        "id": "mock-id-artist-springbattler",
+        "name": "spring battler",
+        "originalName": "spring battler",
+        "disambiguation": "Idoly Pride",
+        "type": 3
+    }
+]
