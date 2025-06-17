@@ -30,11 +30,10 @@ After that, you'll want to fill in the two dictionaries. For characters, fill it
 keys -> character names:
 
 .. code-block:: python
-
     characters: cm.CharacterDict = {
         'kotono': 'Kotono Nagase',
         'nagisa': 'Nagisa Ibuki',
-        'saki': 'Saki Shiraishi
+        'saki': 'Saki Shiraishi',
         'suzu': 'Suzu Narumiya',
         'mei': 'Mei Hayasaka',
         'fran': 'fran',
