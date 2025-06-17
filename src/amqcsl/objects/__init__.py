@@ -1,4 +1,5 @@
 from ._db_types import (
+    AlbumTrack,
     ArtistCredit,
     CSLArtist,
     CSLArtistSample,
@@ -19,6 +20,7 @@ from ._db_types import (
 )
 
 __all__ = [
+    'AlbumTrack',
     'ArtistCredit',
     'CSLArtist',
     'CSLArtistSample',
