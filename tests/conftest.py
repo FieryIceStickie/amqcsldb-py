@@ -9,7 +9,7 @@ from httpx import Response
 from respx import Router, SetCookie
 
 import amqcsl
-from amqcsl._client_consts import DB_URL
+from amqcsl.clients._client_consts import DB_URL
 
 
 @pytest.fixture
