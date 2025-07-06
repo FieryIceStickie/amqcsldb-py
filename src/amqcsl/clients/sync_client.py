@@ -9,7 +9,7 @@ import httpx
 from attrs import define, field
 from attrs.validators import gt, instance_of, optional
 
-from amqcsl.clients._client_consts import (
+from ._client_consts import (
     DB_URL,
     DEFAULT_SESSION_PATH,
 )

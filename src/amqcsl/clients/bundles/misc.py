@@ -11,7 +11,7 @@ from attrs import Attribute, field, frozen
 from attrs.validators import deep_iterable, gt, in_, instance_of, min_len
 
 from amqcsl.exceptions import LoginError, QueryError
-from amqcsl.objects._db_types import (
+from amqcsl.objects import (
     AlbumTrack,
     ArtistCredit,
     CSLArtist,
