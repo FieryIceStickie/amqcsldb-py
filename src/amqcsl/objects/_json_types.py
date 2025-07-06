@@ -108,8 +108,6 @@ class JSONMetadata(TypedDict):
     fields: list[str]
 
 
-# --- Requests ---
-
 # --- Queries ---
 
 
@@ -118,31 +116,25 @@ class Query(TypedDict):
     take: int
 
 
-class QuerySong(TypedDict):
+class QuerySong(Query):
     searchTerm: str
-    skip: int
-    take: int
     orderBy: str
     filter: str
 
 
-class QueryArtist(TypedDict):
+class QueryArtist(Query):
     searchTerm: str
-    skip: int
-    take: int
     orderBy: str
     filter: str
 
 
-class QueryTrack(TypedDict):
+class QueryTrack(Query):
     activeListId: str | None
     filter: str
     groupFilters: list[str]
     orderBy: str
     quickFilters: list[int]
     searchTerm: str
-    skip: int
-    take: int
 
 
 # --- Metadata ---

@@ -1,110 +1,122 @@
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Generator, Iterator, Sequence
+from functools import cached_property
 from typing import Iterable, override
 
 import httpx
-from attrs import Attribute, field, frozen
+from attrs import Attribute, define, field, frozen
 from attrs.validators import deep_iterable, gt, instance_of
 
 from amqcsl.exceptions import QueryError
-from amqcsl.objects._db_types import CSLGroup, CSLList, CSLTrack
-from amqcsl.objects._json_types import JSONType
+from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
+from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from .core import Bundle, SingleVendor, httpxClient, MultiVendor
+from .core import LazyBundle, LazyMultiVendor, LazySingleVendor, LazyVendor, RichReprRtn, httpxClient
 
 logger = logging.getLogger('amqcsl.client')
 
+type Page = tuple[int, str, Sequence[JSONType]]
+type SyncPageVendor[R] = Generator[httpx.Request, R, None]
+type AsyncPageVendor[R] = Generator[Iterable[httpx.Request], R, None]
+
 
 @frozen
-class PageBundle[R](Bundle[Iterable[R]], ABC):
+class PageBundle[R](LazyBundle[Page, R], ABC):
     max_batch_size: int = field(validator=[instance_of(int), gt(0)])
     max_query_size: int = field(validator=[instance_of(int), gt(0)])
     batch_size: int = field()
+    strategy: 'PageStrategy[R]'
 
     @batch_size.validator  # type: ignore
-    def check(self, attribute: 'Attribute[int]', value: int) -> None:
-        if value <= 0:
+    def check(self, _: 'Attribute[int]', value: int) -> None:
+        if not isinstance(value, int):  # type: ignore[reportUnnecessaryComparison]
+            raise QueryError('Batch size must be an integer')
+        elif value <= 0:
             raise QueryError('Batch size must be positive')
         elif value > self.max_batch_size:
             raise QueryError(f'Batch size {value} is larger than the max batch size of {self.max_batch_size}')
 
-    @abstractmethod
-    def page_request(self, skip: int, take: int) -> httpx.Request: ...
-
-    @abstractmethod
-    def process(self, item: JSONType) -> R: ...
-
-
-@frozen
-class SyncPageBundle[R](PageBundle[R], ABC):
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[Iterable[R]]:
-        prev_count = None
-        skip = 0
-        items: list[R] = []
-        while True:
-            res = yield self.page_request(skip, self.batch_size)
-            res.raise_for_status()
-            match res.json():
-                case {
-                    'count': int(count),
-                    **data,
-                }:
-                    if prev_count is None:
-                        if count > self.max_query_size:
-                            raise QueryError(
-                                f'Query returns {count} results, which is larger than the max query size of {self.max_query_size}'
-                            )
-                    elif count != prev_count:
-                        logger.error(f'Count mutated from {prev_count} to {count}')
-                case _:
-                    logger.error('Unexpected query response', extra={'response': res.json()})
-                    raise QueryError('Unexpected query response')
-            key, item = data.popitem()
-            skip += len(data[key])
-            items.append(item)
-            logger.info('Page exhausted')
-            if skip >= count:
-                break
-            prev_count = count
-            logger.info('Querying next page')
-        logger.info(f'Finished querying {key}')
-        return items
+    def vendor(self, client: httpxClient) -> LazyVendor[Page]:
+        return self.strategy.vendor(self, client)
 
-
-class AsyncPageBundle[R](PageBundle[R], ABC):
     @override
-    def vendor(self, client: httpxClient) -> MultiVendor[Iterable[R]]:
-        logger.info('Querying first page')
-        (res,) = yield [self.page_request(0, self.batch_size)]
+    def process(self, res: httpx.Response) -> Page:
+        return self.strategy.process(self, res)
+
+    @override
+    def wrap(self, item: Page) -> Iterator[R]:
+        count, key, page = item
+        yield from map(self.process_item, page)
+
+    @abstractmethod
+    def page_request(self, client: httpxClient, skip: int) -> httpx.Request: ...
+
+    @abstractmethod
+    def process_item(self, item: JSONType) -> R: ...
+
+
+class PageStrategy[R](ABC):
+    _count: int | None = None
+
+    @abstractmethod
+    def vendor(self, bundle: PageBundle[R], client: httpxClient) -> LazyVendor[Page]: ...
+
+    def process(self, bundle: PageBundle[R], res: httpx.Response) -> Page:
         res.raise_for_status()
         match res.json():
             case {
                 'count': int(count),
                 **data,
             }:
-                key, page = data.popitem()
+                if self._count is None:
+                    if count > bundle.max_query_size:
+                        raise QueryError(
+                            f'Query returns {count} results, which is larger than the max query size of {bundle.max_query_size}'
+                        )
+                    self._count = count
+                elif count != self._count:
+                    logger.error(f'Count mutated from {self._count} to {count}')
             case _:
                 logger.error('Unexpected query response', extra={'response': res.json()})
                 raise QueryError('Unexpected query response')
+        key, item = data.popitem()
+        return count, key, item
+
+
+@define
+class SyncPageStrategy[R](PageStrategy[R], ABC):
+    @override
+    def vendor(self, bundle: PageBundle[R], client: httpxClient) -> LazySingleVendor[Page]:
+        skip = 0
+        self._count = None
+        while True:
+            count, key, page = yield bundle.page_request(client, skip)
+            skip += len(page)
+            logger.info('Page exhausted')
+            if skip >= count:
+                break
+            logger.info('Querying next page')
+        logger.info(f'Finished querying {key}')
+
+
+@define
+class AsyncPageStrategy[R](PageStrategy[R], ABC):
+    @override
+    def vendor(self, bundle: PageBundle[R], client: httpxClient) -> LazyMultiVendor[Page]:
+        logger.info('Querying first page')
+        ((count, key, page),) = yield [bundle.page_request(client, 0)]
         reqs = [
-            self.page_request(skip, self.batch_size)  #
-            for skip in range(self.batch_size, count, self.batch_size)
+            bundle.page_request(client, skip)  #
+            for skip in range(bundle.batch_size, count, bundle.batch_size)
         ]
         logger.info(f'Querying {len(reqs)} more pages')
-        resps = yield reqs
-        pages = [page]
-        for res in resps:
-            data = res.json()
-            if data['count'] != count:
-                logger.error(f'Count mutated from {data["count"]} to {count}')
-            pages.append(data[key])
-        items = [self.process(item) for page in pages for item in page]
-        return items
+        yield reqs
 
 
 @frozen
-class IterTracksBundle(SyncPageBundle[CSLTrack]):
+class IterTracksBundle(PageBundle[CSLTrack]):
     search_term: str = field(validator=instance_of(str))
     groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
     active_list: CSLList | None = field(validator=instance_of((CSLList, type(None))))
@@ -112,10 +124,115 @@ class IterTracksBundle(SyncPageBundle[CSLTrack]):
     missing_info: bool = field(validator=instance_of(bool))
     from_active_list: bool = field(validator=instance_of(bool))
 
-    @override
-    def page_request(self, skip: int, take: int) -> httpx.Request:
-        return []
+    @cached_property
+    def body(self) -> QueryTrack:
+        body: QueryTrack = {
+            'activeListId': getattr(self.active_list, 'id', None),
+            'filter': '',
+            'groupFilters': [group.id for group in self.groups],
+            'orderBy': '',
+            'quickFilters': [
+                idx
+                for idx, val in enumerate(
+                    [self.missing_audio, self.missing_info, self.from_active_list],
+                    start=1,
+                )
+                if val
+            ],
+            'searchTerm': self.search_term,
+            'skip': -1,
+            'take': -1,
+        }
+        return body
 
     @override
-    def process(self, item: JSONType) -> CSLTrack:
+    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+        body = self.body
+        body['skip'] = skip
+        body['take'] = self.batch_size
+        return client.build_request('POST', '/api/tracks', json=body)
+
+    @override
+    def process_item(self, item: JSONType) -> CSLTrack:
         return CSLTrack.from_json(item)
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'search_term', self.search_term
+        if self.groups:
+            yield 'groups', [group.name for group in self.groups]
+        if self.active_list:
+            yield 'active_list', self.active_list
+        flags: list[str] = []
+        if self.missing_audio:
+            flags.append('missing_audio')
+        if self.missing_info:
+            flags.append('missing_info')
+        if self.from_active_list:
+            flags.append('from_active_list')
+        yield 'flags', flags, flags
+        yield 'batch_size', self.batch_size
+
+
+@frozen
+class IterSongsBundle(PageBundle[CSLSongSample]):
+    search_term: str = field(validator=instance_of(str))
+
+    @cached_property
+    def params(self) -> QuerySong:
+        params: QuerySong = {
+            'searchTerm': self.search_term,
+            'orderBy': '',
+            'filter': '',
+            'skip': -1,
+            'take': -1,
+        }
+        return params
+
+    @override
+    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+        params = self.params
+        params['skip'] = skip
+        params['take'] = self.batch_size
+        return client.build_request('GET', '/api/songs', params=params)  # type: ignore[reportArgumentType]
+
+    @override
+    def process_item(self, item: JSONType) -> CSLSongSample:
+        return CSLSongSample.from_json(item)
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'search_term', self.search_term
+        yield 'batch_size', self.batch_size
+
+
+@frozen
+class IterArtistsBundle(PageBundle[CSLArtistSample]):
+    search_term: str = field(validator=instance_of(str))
+
+    @cached_property
+    def params(self) -> QueryArtist:
+        params: QueryArtist = {
+            'searchTerm': self.search_term,
+            'orderBy': '',
+            'filter': '',
+            'skip': -1,
+            'take': -1,
+        }
+        return params
+
+    @override
+    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+        params = self.params
+        params['skip'] = skip
+        params['take'] = self.batch_size
+        return client.build_request('GET', '/api/artists', params=params)  # type: ignore[reportArgumentType]
+
+    @override
+    def process_item(self, item: JSONType) -> CSLArtistSample:
+        return CSLArtistSample.from_json(item)
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'search_term', self.search_term
+        yield 'batch_size', self.batch_size
