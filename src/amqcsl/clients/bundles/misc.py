@@ -1,13 +1,35 @@
 import logging
+import mimetypes
+from collections.abc import Iterable, Sequence
+from functools import cached_property
 from pathlib import Path
-from typing import override
+from typing import Literal, override
 
 import httpx
-from attrs import field, frozen
-from attrs.validators import instance_of
+from attr.validators import optional
+from attrs import Attribute, field, frozen
+from attrs.validators import deep_iterable, gt, in_, instance_of, min_len
 
-from amqcsl.exceptions import LoginError
-from amqcsl.objects._db_types import CSLGroup, CSLList
+from amqcsl.exceptions import LoginError, QueryError
+from amqcsl.objects._db_types import (
+    AlbumTrack,
+    ArtistCredit,
+    CSLArtist,
+    CSLArtistSample,
+    CSLExtraMetadata,
+    CSLGroup,
+    CSLList,
+    CSLMetadata,
+    CSLSong,
+    CSLSongArtistCredit,
+    CSLSongSample,
+    CSLTrack,
+    ExtraMetadata,
+    Metadata,
+    TrackPutArtistCredit,
+)
+from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, TrackPutBody
+from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
 
 from .core import Bundle, RichReprRtn, SingleVendor, httpxClient
 
@@ -16,8 +38,8 @@ logger = logging.getLogger('amqcsl.client')
 
 @frozen
 class AuthBundle(Bundle[None]):
-    username: str | None = field(validator=instance_of((str, type(None))))
-    password: str | None = field(repr=False, validator=instance_of((str, type(None))))
+    username: str | None = field(validator=optional(instance_of(str)))
+    password: str | None = field(repr=False, validator=optional(instance_of(str)))
     session_path: Path = field(validator=instance_of(Path))
 
     def get_session_cookie(self) -> str:
@@ -175,3 +197,338 @@ class GroupBundle(Bundle[CSLGroups]):
     def __rich_repr__(self) -> RichReprRtn:
         return
         yield
+
+
+@frozen
+class GetSongBundle(Bundle[CSLSong]):
+    song: CSLSongSample = field(validator=instance_of(CSLSongSample))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[CSLSong]:
+        song = self.song
+        if isinstance(song, CSLSong):
+            logger.warning(f'client.get_song called with already filled CSLSong {song.name}')
+            return song
+        res = yield client.build_request('GET', f'/api/song/{song.id}')
+        res.raise_for_status()
+        return CSLSong.from_json(res.json())
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'song', self.song
+
+
+@frozen
+class GetArtistBundle(Bundle[CSLArtist]):
+    artist: CSLArtistSample = field(validator=instance_of(CSLArtistSample))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[CSLArtist]:
+        artist = self.artist
+        if isinstance(artist, CSLArtist):
+            logger.warning(f'client.get_artist called with already filled CSLArtist {artist.name}')
+            return artist
+        res = yield client.build_request('GET', f'/api/artist/{artist.id}')
+        res.raise_for_status()
+        return CSLArtist.from_json(res.json())
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'artist', self.artist
+
+
+@frozen
+class GetMetadataBundle(Bundle[CSLMetadata | None]):
+    track: CSLTrack = field(validator=instance_of(CSLTrack))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[CSLMetadata | None]:
+        res = yield client.build_request('GET', f'/api/track/{self.track.id}/metadata')
+        match res.json():
+            case {'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}}:
+                return None
+            case _:
+                res.raise_for_status()
+                return CSLMetadata.from_json(res.json())
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'track', self.track
+
+
+@frozen
+class CreateListBundle(Bundle[None]):
+    name: str = field(validator=[instance_of(str), min_len(1)])
+    csl_lists: Iterable[CSLList] = field(validator=deep_iterable(instance_of(CSLList)))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Creating list {self.name}')
+        body = {
+            'importListIds': [csl_list.id for csl_list in self.csl_lists],
+            'name': self.name,
+        }
+        res = yield client.build_request('POST', '/api/list', json=body)
+        res.raise_for_status()
+        logger.info(f'List {self.name} created')
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'name', self.name
+        yield 'lists', self.csl_lists, []
+
+
+@frozen
+class ListEditBundle(Bundle[None]):
+    csl_list: CSLList = field(validator=instance_of(CSLList))
+    name: str | None = field(validator=optional([instance_of(str), min_len(1)]))
+    add: Iterable[CSLTrack] = field(validator=deep_iterable(instance_of(CSLTrack)))
+    remove: Iterable[CSLTrack] = field(validator=deep_iterable(instance_of(CSLTrack)))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        csl_list = self.csl_list
+        logger.info(f'Editing list {csl_list.name}')
+        body = {
+            'addSongIds': [track.id for track in self.add],
+            'id': EMPTY_ID,
+            'name': self.name,
+            'removeSongIds': [track.id for track in self.remove],
+        }
+        res = yield client.build_request('PUT', f'/api/list/{csl_list.id}', json=body)
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'list', self.csl_list
+        yield 'new_name', self.name, None
+
+
+@frozen
+class CreateGroupBundle(Bundle[CSLGroup]):
+    name: str = field(validator=[instance_of(str), min_len(1)])
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[CSLGroup]:
+        logger.info(f'Adding group {self.name}')
+        res = yield client.build_request('POST', '/api/group', json={'name': self.name})
+        res.raise_for_status()
+        return CSLGroup.from_json(res.json())
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'name', self.name
+
+
+@frozen
+class TrackAddMetadataBundle(Bundle[None]):
+    track: CSLTrack = field(validator=instance_of(CSLTrack))
+    metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
+    _override: bool | None = field(validator=optional(instance_of(bool)))
+    existing_meta: CSLMetadata | None = field(validator=optional(instance_of(CSLMetadata)))
+
+    @cached_property
+    def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
+        current_metas: set[Metadata]
+        if self.existing_meta is None:
+            current_metas = set()
+        else:
+            current_metas = {
+                *map(ArtistCredit.simplify, self.existing_meta.artist_credits),
+                *map(ExtraMetadata.simplify, self.existing_meta.extra_metas),
+            }
+
+        artist_credits: list[ArtistCredit] = []
+        extra_metadata: list[ExtraMetadata] = []
+        for meta in self.metas:
+            match meta:
+                case ArtistCredit():
+                    if meta not in current_metas:
+                        logger.debug(f'Adding artist credit {meta.type} {meta.artist.name}')
+                        artist_credits.append(meta)
+                case ExtraMetadata():
+                    if meta not in current_metas:
+                        logger.debug(f'Adding extra metadata {meta.type}: {meta.value}')
+                        extra_metadata.append(meta)
+                case _:
+                    raise ValueError('metas must be ArtistCredit or ExtraMetadata')
+            current_metas.add(meta)
+        return artist_credits, extra_metadata
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        track = self.track
+        logger.info(f'Queuing metadata edit on {track.name}')
+
+        artist_credits, extra_metadata = self.filtered_metas
+        if self._override is None and not any((artist_credits, extra_metadata)):
+            logger.info('No changes necessary, skipping request')
+            return
+        body: MetadataPostBody = {
+            'artistCredits': [meta.to_json() for meta in artist_credits],
+            'extraMetadatas': [meta.to_json() for meta in extra_metadata],
+            'id': EMPTY_ID,
+            'override': self._override,
+        }
+        res = yield client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'track', self.track
+        yield 'override', self._override, None
+        artist_credits, extra_metadata = self.filtered_metas
+        yield 'artist_credits', artist_credits, []
+        yield 'extra_metadata', extra_metadata, []
+
+
+@frozen
+class TrackDeleteMetadataBundle(Bundle[None]):
+    track: CSLTrack = field(validator=instance_of(CSLTrack))
+    meta: CSLSongArtistCredit | CSLExtraMetadata = field(validator=instance_of((CSLSongArtistCredit, CSLExtraMetadata)))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Removing metadata {self.meta} from {self.track.name}')
+        res = yield client.build_request('DELETE', f'/api/track/{self.track.id}/metadata/{self.meta.id}')
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'track', self.track
+        yield 'meta', self.meta
+
+
+@frozen
+class TrackEditBundle(Bundle[None]):
+    track: CSLTrack = field(validator=instance_of(CSLTrack))
+    artist_credits: Sequence[TrackPutArtistCredit] | None = field(  # type: ignore[reportUnknownArgumentType]
+        validator=optional(deep_iterable(instance_of(TrackPutArtistCredit)))  # type: ignore[reportUnknownArgumentType]
+    )
+    groups: Sequence[CSLGroup] | None = field(validator=optional(deep_iterable(instance_of(CSLGroup))))  # type: ignore[reportUnknownArgumentType]
+    name: str | None = field(validator=optional(instance_of(str)))
+    original_artist: str | None = field(validator=optional(instance_of(str)))
+    original_name: str | None = field(validator=optional(instance_of(str)))
+    song: CSLSong | None = field(validator=optional(instance_of(CSLSong)))
+    type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = field(
+        validator=optional(in_(REVERSE_TRACK_TYPE))  # type: ignore[reportUnknownArgumentType]
+    )
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        track = self.track
+        logger.info(f'Editing track {track.name}')
+        body: TrackPutBody = {
+            'artistCredits': None
+            if self.artist_credits is None
+            else [v.to_json(i) for i, v in enumerate(self.artist_credits)],
+            'batchSongIds': None,
+            'groupIds': None if self.groups is None else [group.id for group in self.groups],
+            'id': EMPTY_ID,
+            'name': self.name,
+            'newSong': None,
+            'originalArtist': self.original_artist,
+            'originalName': self.original_name,
+            'songId': getattr(self.song, 'id', None),
+            'type': None if self.type is None else REVERSE_TRACK_TYPE[self.type],
+        }
+        yield client.build_request('PUT', f'/api/track/{track.id}', json=body)
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'track', self.track
+        yield 'artist_credits', self.artist_credits, None
+        yield 'groups', self.groups, None
+        yield 'name', self.name, None
+        yield 'original_artist', self.original_artist, None
+        yield 'original_name', self.original_name, None
+        yield 'song', self.song, None
+        yield 'type', self.type, None
+
+
+@frozen
+class CreateAlbumBundle(Bundle[None]):
+    name: str = field(validator=[instance_of(str), min_len(1)])
+    original_name: str = field(validator=[instance_of(str), min_len(1)])
+    year: int = field(validator=[instance_of(int), gt(0)])
+    groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
+    tracks: Sequence[Sequence[AlbumTrack]] = field(validator=deep_iterable(deep_iterable(instance_of(AlbumTrack))))  # type: ignore[reportUnknownArgumentType]
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        name = self.name
+        logger.info(f'Adding album {name}')
+        body: AlbumAddBody = {
+            'album': name,
+            'discTotal': len(self.tracks),
+            'groupIds': [group.id for group in self.groups],
+            'originalAlbum': self.original_name,
+            'year': self.year,
+            'tracks': [
+                track.to_json(disc_number, track_number, len(disc))
+                for disc_number, disc in enumerate(self.tracks, start=1)
+                for track_number, track in enumerate(disc, start=1)
+            ],
+        }
+        res = yield client.build_request('POST', '/api/album', json=body)
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'name', self.name
+        yield 'original_name', self.original_name
+        yield 'year', self.year
+        yield 'groups', self.groups
+        yield 'tracks', self.tracks
+
+
+@frozen
+class AddAudioBundle(Bundle[None]):
+    track: CSLTrack = field(validator=instance_of(CSLTrack))
+    audio_path: Path = field(converter=Path)
+
+    @audio_path.validator  # type: ignore
+    def check(self, _: 'Attribute[Path]', value: Path) -> None:
+        if not value.exists():
+            raise QueryError(f'{value.resolve()} does not exist')
+        elif not value.is_file():
+            raise QueryError(f'{value.resolve()} is not a file')
+
+    @cached_property
+    def mime_type(self) -> str:
+        mime_type, _ = mimetypes.guess_type(self.audio_path)
+        if mime_type is None or not mime_type.startswith('audio/'):
+            raise QueryError(f'{self.audio_path.name} is not an audio file')
+        return mime_type
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        track = self.track
+        logger.info(f'Uploading audio to {track.name}')
+        res = yield client.build_request('POST', f'/api/track/{track.id}/presigned-upload', json={})
+        res.raise_for_status()
+        match res.json():
+            case {
+                'sessionId': str(session_id),
+                'key': str(key),
+                'url': str(url),
+            }:
+                pass
+            case _:
+                logger.error(
+                    f'Presigning upload of {self.track.name} returned unknown json', extra={'return_json': res.json()}
+                )
+                raise QueryError('Received unknown json when presigning upload')
+        with open(self.audio_path, 'rb') as file:
+            res = yield client.build_request(
+                'POST',
+                url,
+                params={'sessionId': session_id, 'key': key},
+                files={'file': (self.audio_path.name, file, self.mime_type)},
+            )
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> RichReprRtn:
+        yield 'track', self.track
+        yield 'audio_path', self.audio_path.resolve()
