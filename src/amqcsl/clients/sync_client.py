@@ -1,5 +1,4 @@
 import logging
-import mimetypes
 from collections.abc import Iterable, Iterator, Sequence
 from os import PathLike
 from pathlib import Path
@@ -8,23 +7,40 @@ from typing import Any, Literal, Self
 
 import httpx
 from attrs import define, field
+from attrs.validators import gt, instance_of, optional
 
-from amqcsl._client_consts import (
+from amqcsl.clients._client_consts import (
     DB_URL,
     DEFAULT_SESSION_PATH,
-    AlbumAdd,
-    AudioAdd,
-    MetadataDelete,
-    MetadataPost,
-    TrackEdit,
 )
-from amqcsl.clients.bundles import AuthBundle, Bundle, CSLGroups, CSLLists, GroupBundle, ListBundle, LogoutBundle
-from amqcsl.clients.bundles.core import LazyBundle
-from amqcsl.clients.bundles.pages import IterArtistsBundle, IterSongsBundle, IterTracksBundle, SyncPageStrategy
-from amqcsl.exceptions import ClientDoesNotExistError, QueryError
-from amqcsl.objects._db_types import (
+from amqcsl.clients.bundles import (
+    AddAudioBundle,
+    AuthBundle,
+    Bundle,
+    CreateAlbumBundle,
+    CreateGroupBundle,
+    CreateListBundle,
+    CSLGroups,
+    CSLLists,
+    GetArtistBundle,
+    GetMetadataBundle,
+    GetSongBundle,
+    GroupBundle,
+    IterArtistsBundle,
+    IterSongsBundle,
+    IterTracksBundle,
+    LazyBundle,
+    ListBundle,
+    ListEditBundle,
+    LogoutBundle,
+    SyncPageStrategy,
+    TrackAddMetadataBundle,
+    TrackDeleteMetadataBundle,
+    TrackEditBundle,
+)
+from amqcsl.exceptions import ClientDoesNotExistError
+from amqcsl.objects import (
     AlbumTrack,
-    ArtistCredit,
     CSLArtist,
     CSLArtistSample,
     CSLExtraMetadata,
@@ -35,16 +51,9 @@ from amqcsl.objects._db_types import (
     CSLSongArtistCredit,
     CSLSongSample,
     CSLTrack,
-    ExtraMetadata,
     Metadata,
     TrackPutArtistCredit,
 )
-from amqcsl.objects._json_types import (
-    AlbumAddBody,
-    MetadataPostBody,
-    TrackPutBody,
-)
-from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -56,23 +65,23 @@ class DBClient:
     """
 
     #: DB username
-    username: str | None = None
+    username: str | None = field(default=None, validator=optional(instance_of(str)))
     #: DB password
-    password: str | None = None
+    password: str | None = field(default=None, validator=optional(instance_of(str)))
     #: Filepath to look for/store session cookie in, defaults to amq_session.txt
     session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
     _client: httpx.Client | None = field(default=None, init=False, repr=False)
 
     #: Maximum batch size when querying db
-    max_batch_size: int = 100
+    max_batch_size: int = field(default=100, validator=[instance_of(int), gt(0)])
     #: Maximum number of queries when iterating
-    max_query_size: int = 1500
+    max_query_size: int = field(default=1500, validator=[instance_of(int), gt(0)])
 
     _lists: CSLLists | None = None
     _groups: CSLGroups | None = None
 
     #: Request queue
-    queue: list[Bundle[Any]] = field(factory=list)
+    _queue: list[Bundle[Any]] = field(factory=list)
 
     @property
     def client(self) -> httpx.Client:
@@ -81,7 +90,9 @@ class DBClient:
             raise ClientDoesNotExistError
         return self._client
 
-    # --- Queue Methods ---
+    @property
+    def queue(self) -> list[Bundle[Any]]:
+        return self._queue
 
     def _process[R](self, bundle: Bundle[R]) -> R:
         """Processes a bundle
@@ -140,7 +151,7 @@ class DBClient:
         Args:
             obj: An object wrapper around a request
         """
-        self.queue.append(bundle)
+        self._queue.append(bundle)
 
     def commit(self, *, stop_if_err: bool = True):
         """Commit changes in the queue
@@ -148,8 +159,8 @@ class DBClient:
         Args:
             stop_if_err: Stop sending requests if one of them errors
         """
-        logger.info(f'Commiting {len(self.queue)} changes')
-        for bundle in self.queue:
+        logger.info(f'Commiting {len(self._queue)} changes')
+        for bundle in self._queue:
             try:
                 self._process(bundle)
             except httpx.HTTPError:
@@ -310,12 +321,8 @@ class DBClient:
         Returns:
             CSLSong
         """
-        if isinstance(song, CSLSong):
-            logger.warning(f'client.get_song called with already filled CSLSong {song.name}')
-            return song
-        res = self.client.get(f'/api/song/{song.id}')
-        res.raise_for_status()
-        return CSLSong.from_json(res.json())
+        bundle = GetSongBundle(song)
+        return self._process(bundle)
 
     def get_artist(self, artist: CSLArtistSample) -> CSLArtist:
         """Fetch detailed artist info from db
@@ -326,12 +333,8 @@ class DBClient:
         Returns:
             CSLArtist
         """
-        if isinstance(artist, CSLArtist):
-            logger.warning(f'client.get_artist called with already filled CSLArtist {artist.name}')
-            return artist
-        res = self.client.get(f'/api/artist/{artist.id}')
-        res.raise_for_status()
-        return CSLArtist.from_json(res.json())
+        bundle = GetArtistBundle(artist)
+        return self._process(bundle)
 
     def get_metadata(self, track: CSLTrack) -> CSLMetadata | None:
         """Fetch metadata info from db
@@ -342,11 +345,8 @@ class DBClient:
         Returns:
             CSLMetadata, or None if it doesn't have any metadata
         """
-        res = self.client.get(f'/api/track/{track.id}/metadata')
-        if res.status_code == 404 and res.json()['errors']['generalErrors'][0] == 'Song does not have metadata':
-            return None
-        res.raise_for_status()
-        return CSLMetadata.from_json(res.json())
+        bundle = GetMetadataBundle(track)
+        return self._process(bundle)
 
     # --- List operations ---
 
@@ -363,14 +363,8 @@ class DBClient:
         Raises:
             ListCreateError: Error if the request gives an error, probably because the list already exists
         """
-        logger.info(f'Creating list {name}')
-        body = {
-            'importListIds': [csl_list.id for csl_list in csl_lists],
-            'name': name,
-        }
-        res = self.client.post('/api/list', json=body)
-        res.raise_for_status()
-        logger.info(f'List {name} created')
+        bundle = CreateListBundle(name, csl_lists)
+        self._process(bundle)
         self._lists = None
         return self.lists[name]
 
@@ -379,29 +373,23 @@ class DBClient:
         csl_list: CSLList,
         *,
         name: str | None = None,
-        add: Sequence[CSLTrack] = (),
-        remove: Sequence[CSLTrack] = (),
+        add: Iterable[CSLTrack] = (),
+        remove: Iterable[CSLTrack] = (),
     ) -> None:
         """Edit a list
 
         Args:
             csl_list: List to edit
+            name: New name
             add_tracks: Tracks to add
             remove_tracks: Tracks to remove
         """
-        logger.info(f'Editing list {csl_list.name}')
-        body = {
-            'addSongIds': [track.id for track in add],
-            'id': EMPTY_ID,
-            'name': name,
-            'removeSongIds': [track.id for track in remove],
-        }
-        res = self.client.put(f'/api/list/{csl_list.id}', json=body)
-        res.raise_for_status()
+        bundle = ListEditBundle(csl_list, name, add, remove)
+        self._process(bundle)
 
     # --- General Editing ---
 
-    def add_group(self, name: str) -> CSLGroup:
+    def create_group(self, name: str) -> CSLGroup:
         """Create a group
 
         Args:
@@ -410,10 +398,8 @@ class DBClient:
         Returns:
             Newly created group
         """
-        logger.info(f'Adding group {name}')
-        res = self.client.post('/api/group', json={'name': name})
-        res.raise_for_status()
-        return CSLGroup.from_json(res.json())
+        bundle = CreateGroupBundle(name)
+        return self._process(bundle)
 
     def track_add_metadata(
         self,
@@ -435,49 +421,11 @@ class DBClient:
         Raises:
             ValueError: If non-metadata is passed into metas
         """
-        logger.info(f'Queuing metadata edit on {track.name}')
-
-        current_metas: set[Metadata]
-        if existing_meta is None:
-            current_metas = set()
+        bundle = TrackAddMetadataBundle(track, metas, override, existing_meta)
+        if queue:
+            self.enqueue(bundle)
         else:
-            current_metas = {
-                *map(ArtistCredit.simplify, existing_meta.artist_credits),
-                *map(ExtraMetadata.simplify, existing_meta.extra_metas),
-            }
-        id_to_name: dict[str, str] = {}
-
-        body: MetadataPostBody = {
-            'artistCredits': [],
-            'extraMetadatas': [],
-            'id': EMPTY_ID,
-            'override': override,
-        }
-        for meta in metas:
-            match meta:
-                case ArtistCredit():
-                    if meta not in current_metas:
-                        logger.debug(f'Adding artist credit {meta.type} {meta.artist.name}')
-                        body['artistCredits'].append(meta.to_json())
-                        current_metas.add(meta)
-                        id_to_name[meta.artist.id] = meta.artist.name
-                case ExtraMetadata():
-                    if meta not in current_metas:
-                        logger.debug(f'Adding extra metadata {meta.type}: {meta.value}')
-                        body['extraMetadatas'].append(meta.to_json())
-                        current_metas.add(meta)
-                case _:
-                    raise ValueError('metas must be ArtistCredit or ExtraMetadata')
-        if (
-            not body['artistCredits']
-            and not body['extraMetadatas']
-            and body['id'] == EMPTY_ID
-            and body['override'] is None
-        ):
-            logger.info('No changes necessary, skipping request')
-            return
-        req = self.client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
-        MetadataPost(req, track, body, id_to_name).run(self, queue)
+            self._process(bundle)
 
     def track_remove_metadata(
         self,
@@ -492,9 +440,11 @@ class DBClient:
             meta: Metadata to remove
             queue: Whether to queue the request, defaults to False
         """
-        logger.info(f'Removing metadata {meta} from {track.name}')
-        req = self.client.build_request('DELETE', f'/api/track/{track.id}/metadata/{meta.id}')
-        MetadataDelete(req, track, meta).run(self, queue)
+        bundle = TrackDeleteMetadataBundle(track, meta)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self._process(bundle)
 
     def track_edit(
         self,
@@ -525,27 +475,15 @@ class DBClient:
         Raises:
             ValueError: New track type is not a valid track type
         """
-        if type is not None and type not in REVERSE_TRACK_TYPE:
-            raise ValueError(f'Track type must be one of the following: {", ".join(REVERSE_TRACK_TYPE)}')
-        logger.info(f'Editing track {track.name}')
-        body: TrackPutBody = {
-            'artistCredits': None if artist_credits is None else [v.to_json(i) for i, v in enumerate(artist_credits)],
-            'batchSongIds': None,
-            'groupIds': None if groups is None else [group.id for group in groups],
-            'id': EMPTY_ID,
-            'name': name,
-            'newSong': None,
-            'originalArtist': original_artist,
-            'originalName': original_name,
-            'songId': None if song is None else song.id,
-            'type': None if type is None else REVERSE_TRACK_TYPE[type],
-        }
-        req = self.client.build_request('PUT', f'/api/track/{track.id}', json=body)
-        TrackEdit(req, track, body).run(self, queue)
+        bundle = TrackEditBundle(track, artist_credits, groups, name, original_artist, original_name, song, type)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self._process(bundle)
 
     # --- Album Creation ---
 
-    def add_album(
+    def create_album(
         self,
         name: str,
         original_name: str,
@@ -555,21 +493,21 @@ class DBClient:
         *,
         queue: bool = False,
     ) -> None:
-        logger.info(f'Adding album {name}')
-        body: AlbumAddBody = {
-            'album': name,
-            'discTotal': len(tracks),
-            'groupIds': [group.id for group in groups],
-            'originalAlbum': original_name,
-            'year': year,
-            'tracks': [
-                track.to_json(disc_number, track_number, len(disc))
-                for disc_number, disc in enumerate(tracks, start=1)
-                for track_number, track in enumerate(disc, start=1)
-            ],
-        }
-        req = self.client.build_request('POST', '/api/album', json=body)
-        AlbumAdd(req, groups, body).run(self, queue)
+        """Create an album
+
+        Args:
+            name: Album name
+            original_name: Original album name
+            year: Year album was created
+            groups: Groups associated with album
+            tracks: CSLTrack[][], where each CSLTrack[] is a disc
+            queue: Whether to queue the request, defaults to False
+        """
+        bundle = CreateAlbumBundle(name, original_name, year, groups, tracks)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self._process(bundle)
 
     def add_audio(
         self,
@@ -578,14 +516,18 @@ class DBClient:
         *,
         queue: bool = False,
     ) -> None:
-        logger.info(f'Uploading audio to {track.name}')
-        audio_path = Path(audio_path)
-        if not audio_path.exists():
-            raise QueryError(f'{audio_path.resolve()} does not exist')
-        elif not audio_path.is_file():
-            raise QueryError(f'{audio_path.resolve()} is not a file')
-        mime_type, _ = mimetypes.guess_type(audio_path)
-        if mime_type is None or not mime_type.startswith('audio/'):
-            raise QueryError(f'{audio_path.name} is not an audio file')
-        req = self.client.build_request('POST', f'/api/track/{track.id}/presigned-upload', json={})
-        AudioAdd(req, track, audio_path, mime_type).run(self, queue)
+        """Add audio to a track
+
+        Args:
+            track: CSLTrack
+            audio_path: Path to the audio file
+            queue: Whether to queue the request, defaults to False
+
+        Raises:
+            QueryError: Audio path is invalid
+        """
+        bundle = AddAudioBundle(track, audio_path)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self._process(bundle)

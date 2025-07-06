@@ -293,7 +293,7 @@ def test_add_group(router: Router, client: DBClient):
         name='add_group',
         json={'name': 'Genshin Impact'},
     ) % Response(200, json={'id': 'mock-id-group-genshinimpact', 'name': 'Genshin Impact'})
-    group = client.add_group('Genshin Impact')
+    group = client.create_group('Genshin Impact')
     assert group.id == 'mock-id-group-genshinimpact'
     assert group.name == 'Genshin Impact'
     assert route.call_count == 1
@@ -434,7 +434,7 @@ def test_add_album(router: Router, client: DBClient):
         json__year=year,
         json__tracks=[track],
     ) % Response(200)
-    client.add_album(album_name, original_album_name, year, [group], [[album_track]])
+    client.create_album(album_name, original_album_name, year, [group], [[album_track]])
     assert route.call_count == 1
 
 
