@@ -19,6 +19,8 @@ from amqcsl._client_consts import (
     TrackEdit,
 )
 from amqcsl.clients.bundles import AuthBundle, Bundle, CSLGroups, CSLLists, GroupBundle, ListBundle, LogoutBundle
+from amqcsl.clients.bundles.core import LazyBundle
+from amqcsl.clients.bundles.pages import IterArtistsBundle, IterSongsBundle, IterTracksBundle, SyncPageStrategy
 from amqcsl.exceptions import ClientDoesNotExistError, QueryError
 from amqcsl.objects._db_types import (
     AlbumTrack,
@@ -39,12 +41,7 @@ from amqcsl.objects._db_types import (
 )
 from amqcsl.objects._json_types import (
     AlbumAddBody,
-    JSONType,
     MetadataPostBody,
-    Query,
-    QueryArtist,
-    QuerySong,
-    QueryTrack,
     TrackPutBody,
 )
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
@@ -109,6 +106,33 @@ class DBClient:
                     res = client.send(req)
                 case reqs:
                     res = [client.send(req) for req in reqs]
+
+    def _process_lazy[R, Rt](self, bundle: LazyBundle[R, Rt]) -> Iterator[Rt]:
+        """Processes a bundle lazily
+
+        Args:
+            bundle: Bundle
+
+        Yields:
+            Output of the bundle
+        """
+        logger.debug(f'Processing {type(bundle)} lazily')
+        client = self.client
+        g = bundle.vendor(client)
+        item: R | None = None
+        while True:
+            try:
+                req = g.send(item)  # type: ignore[reportArgumentType]
+            except StopIteration:
+                break
+            match req:
+                case httpx.Request():
+                    resps = [client.send(req)]
+                case reqs:
+                    resps = [client.send(req) for req in reqs]
+            for res in resps:
+                item = bundle.process(res)
+                yield from bundle.wrap(item)
 
     def enqueue[R](self, bundle: Bundle[R]):
         """Add an object to the queue
@@ -198,10 +222,11 @@ class DBClient:
         self,
         search_term: str = '',
         *,
-        groups: Iterable[CSLGroup] | None = None,
+        groups: Iterable[CSLGroup] = (),
         active_list: CSLList | None = None,
         missing_audio: bool = False,
         missing_info: bool = False,
+        from_active_list: bool | None = None,
         batch_size: int = 50,
     ) -> Iterator[CSLTrack]:
         """Iterate over tracks matching search parameters
@@ -212,42 +237,27 @@ class DBClient:
             active_list: List to restrict search by
             missing_audio: Restrict to songs without audio
             missing_info: Restrict to songs missing info
+            from_active_list: Restrict to songs from active list, defaults to True if active_list is given and False otherwise
             batch_size: How many tracks to query at once (page size)
 
         Yields:
             CSLTrack
         """
-        if groups is None:
-            groups = []
-
-        logger.info(
-            f'Fetching songs matching search term "{search_term}"',
-            extra={
-                'groups': [(group.id, group.name) for group in groups],
-                'missing_audio': missing_audio,
-                'missing_info': missing_info,
-                'active_list': None if active_list is None else {'id': active_list.id, 'name': active_list.name},
-            },
+        from_active_list = bool(active_list) if from_active_list is None else from_active_list
+        bundle = IterTracksBundle(
+            search_term=search_term,
+            groups=groups,
+            active_list=active_list,
+            missing_audio=missing_audio,
+            missing_info=missing_info,
+            from_active_list=from_active_list,
+            batch_size=batch_size,
+            max_batch_size=self.max_batch_size,
+            max_query_size=self.max_query_size,
+            strategy=SyncPageStrategy(),
         )
-        body: QueryTrack = {
-            'activeListId': None if active_list is None else active_list.id,
-            'filter': '',
-            'groupFilters': [group.id for group in groups],
-            'orderBy': '',
-            'quickFilters': [
-                idx
-                for idx, val in enumerate(
-                    [missing_audio, missing_info, active_list],
-                    start=1,
-                )
-                if val
-            ],
-            'searchTerm': search_term,
-            'skip': 0,
-            'take': batch_size,
-        }
-        for page in self._iter_pages('POST', '/api/tracks', body, 'tracks'):
-            yield from map(CSLTrack.from_json, page)
+        logger.info(f'Fetching tracks matching search term "{search_term}"')
+        yield from self._process_lazy(bundle)
 
     def iter_songs(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLSongSample]:
         """Iterate over songs matching search_term
@@ -259,16 +269,15 @@ class DBClient:
         Yields:
             CSLSongSample
         """
+        bundle = IterSongsBundle(
+            search_term=search_term,
+            batch_size=batch_size,
+            max_batch_size=self.max_batch_size,
+            max_query_size=self.max_query_size,
+            strategy=SyncPageStrategy(),
+        )
         logger.info(f'Fetching songs matching search term "{search_term}"')
-        params: QuerySong = {
-            'searchTerm': search_term,
-            'skip': 0,
-            'take': batch_size,
-            'orderBy': '',
-            'filter': '',
-        }
-        for page in self._iter_pages('GET', '/api/songs', params, 'songs'):
-            yield from map(CSLSongSample.from_json, page)
+        yield from self._process_lazy(bundle)
 
     def iter_artists(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLArtistSample]:
         """Iterator over artists matching search_term
@@ -280,75 +289,15 @@ class DBClient:
         Yields:
             CSLArtistSample
         """
-        params: QueryArtist = {
-            'searchTerm': search_term,
-            'skip': 0,
-            'take': batch_size,
-            'orderBy': '',
-            'filter': '',
-        }
+        bundle = IterArtistsBundle(
+            search_term=search_term,
+            batch_size=batch_size,
+            max_batch_size=self.max_batch_size,
+            max_query_size=self.max_query_size,
+            strategy=SyncPageStrategy(),
+        )
         logger.info(f'Fetching artists matching search term "{search_term}"')
-        for page in self._iter_pages('GET', '/api/artists', params, 'artists'):
-            yield from map(CSLArtistSample.from_json, page)
-
-    def _iter_pages(
-        self,
-        req_type: Literal['POST', 'GET'],
-        path: str,
-        query: Query,
-        key: str,
-    ) -> Iterator[list[JSONType]]:
-        """Internal helper for iterating over pages
-
-        Args:
-            req_type: Type of the request
-            path: Request path
-            query: Query/Body for the request
-            key: Name of the thing being searched for (song/artist/track)
-
-        Yields:
-            JSON objects from the pages
-
-        Raises:
-            QueryError: Batch size is invalid
-        """
-        if query['take'] <= 0:
-            raise QueryError('Batch size must be positive')
-        elif query['take'] > self.max_batch_size:
-            raise QueryError(f'Batch size {query["take"]} is larger than the max batch size of {self.max_batch_size}')
-        prev_count = None
-        num_read = 0
-        while True:
-            if req_type == 'POST':
-                res = self.client.post(path, json=query)
-            else:
-                res = self.client.get(path, params=query)  # type: ignore[reportArgumentType]
-            res.raise_for_status()
-            match res.json():
-                case {
-                    'count': int(count),
-                    **data,
-                } if isinstance(data.get(key), list):
-                    if prev_count is None:
-                        if count > self.max_query_size:
-                            raise QueryError(
-                                f'Query returns {count} results, which is larger than the max query size of {self.max_query_size}'
-                            )
-                    elif count != prev_count:
-                        logger.error(f'Count mutated from {prev_count} to {count}')
-                case _:
-                    logger.error(f'Unexpected query response from {req_type} {path}', extra={'response': res.json()})
-                    raise QueryError('Unexpected query response')
-            yield data[key]
-            num_read += len(data[key])
-            logger.info('Page exhausted')
-            if num_read >= count:
-                break
-            prev_count = count
-
-            logger.info('Querying next page')
-            query['skip'] += query['take']
-        logger.info(f'Finished querying {key}')
+        yield from self._process_lazy(bundle)
 
     # --- Detailed DB reading ---
 

@@ -38,7 +38,7 @@ class AuthBundle(Bundle[None]):
         except FileNotFoundError:
             return ''
 
-    def login(self) -> SingleVendor[None]:
+    def login(self, client: httpxClient) -> SingleVendor[None]:
         """Attempt login, saves session_id to file if successful
 
         Args:
@@ -53,7 +53,7 @@ class AuthBundle(Bundle[None]):
             'username': self.username,
             'password': self.password,
         }
-        res = yield httpx.Request('POST', '/api/login', json=body)
+        res = yield client.build_request('POST', '/api/login', json=body)
         if res.status_code == 403:
             raise LoginError('Invalid login credentials')
         logger.info(f'Writing session_id to {self.session_path}')
@@ -85,7 +85,7 @@ class AuthBundle(Bundle[None]):
             if not is_valid_cookie:
                 logger.info('Invalid session cookie, attempting login')
                 client.cookies.delete('session-id')
-                yield from self.login()
+                yield from self.login(client)
                 res = yield client.build_request('GET', '/api/auth/me')
 
             if res is None:
