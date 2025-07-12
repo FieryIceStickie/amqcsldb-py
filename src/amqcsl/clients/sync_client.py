@@ -9,10 +9,6 @@ import httpx
 from attrs import define, field
 from attrs.validators import gt, instance_of, optional
 
-from ._client_consts import (
-    DB_URL,
-    DEFAULT_SESSION_PATH,
-)
 from amqcsl.clients.bundles import (
     AddAudioBundle,
     AuthBundle,
@@ -29,10 +25,12 @@ from amqcsl.clients.bundles import (
     IterArtistsBundle,
     IterSongsBundle,
     IterTracksBundle,
-    LazyBundle,
     ListBundle,
     ListEditBundle,
     LogoutBundle,
+    PageBundle,
+    PageSingleVendor,
+    RawPage,
     SyncPageStrategy,
     TrackAddMetadataBundle,
     TrackDeleteMetadataBundle,
@@ -53,6 +51,11 @@ from amqcsl.objects import (
     CSLTrack,
     Metadata,
     TrackPutArtistCredit,
+)
+
+from ._client_consts import (
+    DB_URL,
+    DEFAULT_SESSION_PATH,
 )
 
 logger = logging.getLogger('amqcsl.client')
@@ -79,8 +82,6 @@ class DBClient:
 
     _lists: CSLLists | None = None
     _groups: CSLGroups | None = None
-
-    #: Request queue
     _queue: list[Bundle[Any]] = field(factory=list)
 
     @property
@@ -118,34 +119,7 @@ class DBClient:
                 case reqs:
                     res = [client.send(req) for req in reqs]
 
-    def _process_lazy[R, Rt](self, bundle: LazyBundle[R, Rt]) -> Iterator[Rt]:
-        """Processes a bundle lazily
-
-        Args:
-            bundle: Bundle
-
-        Yields:
-            Output of the bundle
-        """
-        logger.debug(f'Processing {type(bundle)} lazily')
-        client = self.client
-        g = bundle.vendor(client)
-        item: R | None = None
-        while True:
-            try:
-                req = g.send(item)  # type: ignore[reportArgumentType]
-            except StopIteration:
-                break
-            match req:
-                case httpx.Request():
-                    resps = [client.send(req)]
-                case reqs:
-                    resps = [client.send(req) for req in reqs]
-            for res in resps:
-                item = bundle.process(res)
-                yield from bundle.wrap(item)
-
-    def enqueue[R](self, bundle: Bundle[R]):
+    def enqueue(self, bundle: Bundle[None]):
         """Add an object to the queue
 
         Args:
@@ -229,6 +203,33 @@ class DBClient:
             self._groups = self._process(bundle)
         return self._groups
 
+    def _process_pages[R](self, bundle: PageBundle[R, PageSingleVendor]) -> Iterator[R]:
+        """Processes a page bundle by lazily yielding results
+
+        Args:
+            bundle: LazyBundle
+
+        Yields:
+            Output of the bundle
+        """
+        logger.debug(f'Processing {type(bundle)}')
+        client = self.client
+        g = bundle.vendor(client)
+        raw_page: RawPage | None = None
+        while True:
+            try:
+                req = g.send(raw_page)  # type: ignore[reportArgumentType]
+            except StopIteration:
+                break
+            match req:
+                case httpx.Request():
+                    resps = [client.send(req)]
+                case reqs:
+                    resps = [client.send(req) for req in reqs]
+            for res in resps:
+                raw_page = bundle.process_response(res)
+                yield from bundle.clean_raw_page(raw_page)
+
     def iter_tracks(
         self,
         search_term: str = '',
@@ -254,7 +255,6 @@ class DBClient:
         Yields:
             CSLTrack
         """
-        from_active_list = bool(active_list) if from_active_list is None else from_active_list
         bundle = IterTracksBundle(
             search_term=search_term,
             groups=groups,
@@ -267,8 +267,7 @@ class DBClient:
             max_query_size=self.max_query_size,
             strategy=SyncPageStrategy(),
         )
-        logger.info(f'Fetching tracks matching search term "{search_term}"')
-        yield from self._process_lazy(bundle)
+        yield from self._process_pages(bundle)
 
     def iter_songs(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLSongSample]:
         """Iterate over songs matching search_term
@@ -287,8 +286,7 @@ class DBClient:
             max_query_size=self.max_query_size,
             strategy=SyncPageStrategy(),
         )
-        logger.info(f'Fetching songs matching search term "{search_term}"')
-        yield from self._process_lazy(bundle)
+        yield from self._process_pages(bundle)
 
     def iter_artists(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLArtistSample]:
         """Iterator over artists matching search_term
@@ -307,8 +305,7 @@ class DBClient:
             max_query_size=self.max_query_size,
             strategy=SyncPageStrategy(),
         )
-        logger.info(f'Fetching artists matching search term "{search_term}"')
-        yield from self._process_lazy(bundle)
+        yield from self._process_pages(bundle)
 
     # --- Detailed DB reading ---
 

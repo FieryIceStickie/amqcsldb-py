@@ -5,28 +5,31 @@ from functools import cached_property
 from typing import Iterable, override
 
 import httpx
-from attrs import Attribute, define, field, frozen
+from attrs import Attribute, Converter, define, field, frozen
 from attrs.validators import deep_iterable, gt, instance_of
 
 from amqcsl.exceptions import QueryError
 from amqcsl.objects import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from .core import LazyBundle, LazyMultiVendor, LazySingleVendor, LazyVendor, RichReprRtn, httpxClient
+from .core import RichReprRtn, httpxClient
 
 logger = logging.getLogger('amqcsl.client')
 
-type Page = tuple[int, str, Sequence[JSONType]]
-type SyncPageVendor[R] = Generator[httpx.Request, R, None]
-type AsyncPageVendor[R] = Generator[Iterable[httpx.Request], R, None]
+type RawPage = tuple[int, str, Sequence[JSONType]]
+
+
+type PageSingleVendor = Generator[httpx.Request, RawPage, None]
+type PageMultiVendor = Generator[Iterable[httpx.Request], Iterable[RawPage], None]
+type PageVendor = PageSingleVendor | PageMultiVendor
 
 
 @frozen
-class PageBundle[R](LazyBundle[Page, R], ABC):
+class PageBundle[R, Vd: PageVendor](ABC):
     max_batch_size: int = field(validator=[instance_of(int), gt(0)])
     max_query_size: int = field(validator=[instance_of(int), gt(0)])
     batch_size: int = field()
-    strategy: 'PageStrategy[R]'
+    strategy: 'PageStrategy[R, Vd]'
 
     @batch_size.validator  # type: ignore
     def check(self, _: 'Attribute[int]', value: int) -> None:
@@ -37,16 +40,13 @@ class PageBundle[R](LazyBundle[Page, R], ABC):
         elif value > self.max_batch_size:
             raise QueryError(f'Batch size {value} is larger than the max batch size of {self.max_batch_size}')
 
-    @override
-    def vendor(self, client: httpxClient) -> LazyVendor[Page]:
+    def vendor(self, client: httpxClient) -> Vd:
         return self.strategy.vendor(self, client)
 
-    @override
-    def process(self, res: httpx.Response) -> Page:
+    def process_response(self, res: httpx.Response) -> RawPage:
         return self.strategy.process(self, res)
 
-    @override
-    def wrap(self, item: Page) -> Iterator[R]:
+    def clean_raw_page(self, item: RawPage) -> Iterator[R]:
         count, key, page = item
         yield from map(self.process_item, page)
 
@@ -56,14 +56,17 @@ class PageBundle[R](LazyBundle[Page, R], ABC):
     @abstractmethod
     def process_item(self, item: JSONType) -> R: ...
 
+    @abstractmethod
+    def __rich_repr__(self) -> RichReprRtn: ...
 
-class PageStrategy[R](ABC):
+
+class PageStrategy[R, Vd: PageVendor](ABC):
     _count: int | None = None
 
     @abstractmethod
-    def vendor(self, bundle: PageBundle[R], client: httpxClient) -> LazyVendor[Page]: ...
+    def vendor(self, bundle: PageBundle[R, Vd], client: httpxClient) -> Vd: ...
 
-    def process(self, bundle: PageBundle[R], res: httpx.Response) -> Page:
+    def process(self, bundle: PageBundle[R, Vd], res: httpx.Response) -> RawPage:
         res.raise_for_status()
         match res.json():
             case {
@@ -86,9 +89,9 @@ class PageStrategy[R](ABC):
 
 
 @define
-class SyncPageStrategy[R](PageStrategy[R], ABC):
+class SyncPageStrategy[R](PageStrategy[R, PageSingleVendor], ABC):
     @override
-    def vendor(self, bundle: PageBundle[R], client: httpxClient) -> LazySingleVendor[Page]:
+    def vendor(self, bundle: PageBundle[R, PageSingleVendor], client: httpxClient) -> PageSingleVendor:
         skip = 0
         self._count = None
         while True:
@@ -102,9 +105,9 @@ class SyncPageStrategy[R](PageStrategy[R], ABC):
 
 
 @define
-class AsyncPageStrategy[R](PageStrategy[R], ABC):
+class AsyncPageStrategy[R](PageStrategy[R, PageMultiVendor], ABC):
     @override
-    def vendor(self, bundle: PageBundle[R], client: httpxClient) -> LazyMultiVendor[Page]:
+    def vendor(self, bundle: PageBundle[R, PageMultiVendor], client: httpxClient) -> PageMultiVendor:
         logger.info('Querying first page')
         ((count, key, page),) = yield [bundle.page_request(client, 0)]
         reqs = [
@@ -116,13 +119,19 @@ class AsyncPageStrategy[R](PageStrategy[R], ABC):
 
 
 @frozen
-class IterTracksBundle(PageBundle[CSLTrack]):
+class IterTracksBundle[Vd: PageVendor](PageBundle[CSLTrack, Vd]):
     search_term: str = field(validator=instance_of(str))
     groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
     active_list: CSLList | None = field(validator=instance_of((CSLList, type(None))))
     missing_audio: bool = field(validator=instance_of(bool))
     missing_info: bool = field(validator=instance_of(bool))
-    from_active_list: bool = field(validator=instance_of(bool))
+    from_active_list: bool | None = field(
+        validator=instance_of(bool),
+        converter=Converter(
+            lambda value, self_: bool(self_.active_list) if value is None else value,  # type: ignore
+            takes_self=True,
+        ),
+    )
 
     @cached_property
     def body(self) -> QueryTrack:
@@ -144,6 +153,11 @@ class IterTracksBundle(PageBundle[CSLTrack]):
             'take': -1,
         }
         return body
+
+    @override
+    def vendor(self, client: httpxClient) -> Vd:
+        logger.info(f'Fetching tracks matching search term "{self.search_term}"')
+        return super().vendor(client)
 
     @override
     def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
@@ -175,7 +189,7 @@ class IterTracksBundle(PageBundle[CSLTrack]):
 
 
 @frozen
-class IterSongsBundle(PageBundle[CSLSongSample]):
+class IterSongsBundle[Vd: PageVendor](PageBundle[CSLSongSample, Vd]):
     search_term: str = field(validator=instance_of(str))
 
     @cached_property
@@ -188,6 +202,11 @@ class IterSongsBundle(PageBundle[CSLSongSample]):
             'take': -1,
         }
         return params
+
+    @override
+    def vendor(self, client: httpxClient) -> Vd:
+        logger.info(f'Fetching songs matching search term "{self.search_term}"')
+        return super().vendor(client)
 
     @override
     def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
@@ -207,7 +226,7 @@ class IterSongsBundle(PageBundle[CSLSongSample]):
 
 
 @frozen
-class IterArtistsBundle(PageBundle[CSLArtistSample]):
+class IterArtistsBundle[Vd: PageVendor](PageBundle[CSLArtistSample, Vd]):
     search_term: str = field(validator=instance_of(str))
 
     @cached_property
@@ -220,6 +239,11 @@ class IterArtistsBundle(PageBundle[CSLArtistSample]):
             'take': -1,
         }
         return params
+
+    @override
+    def vendor(self, client: httpxClient) -> Vd:
+        logger.info(f'Fetching artists matching search term "{self.search_term}"')
+        return super().vendor(client)
 
     @override
     def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
