@@ -1,9 +1,5 @@
 from .core import (
     Bundle,
-    LazyBundle,
-    LazyMultiVendor,
-    LazySingleVendor,
-    LazyVendor,
     MultiVendor,
     RichReprRtn,
     SingleVendor,
@@ -28,14 +24,22 @@ from .misc import (
     TrackDeleteMetadataBundle,
     TrackEditBundle,
 )
-from .pages import IterArtistsBundle, IterSongsBundle, IterTracksBundle, PageBundle, SyncPageStrategy, AsyncPageStrategy
+from .pages import (
+    AsyncPageStrategy,
+    IterArtistsBundle,
+    IterSongsBundle,
+    IterTracksBundle,
+    RawPage,
+    PageBundle,
+    PageStrategy,
+    SyncPageStrategy,
+    PageSingleVendor,
+    PageMultiVendor,
+    PageVendor,
+)
 
 __all__ = [
     'Bundle',
-    'LazyBundle',
-    'LazyMultiVendor',
-    'LazySingleVendor',
-    'LazyVendor',
     'MultiVendor',
     'RichReprRtn',
     'SingleVendor',
@@ -60,7 +64,12 @@ __all__ = [
     'IterArtistsBundle',
     'IterSongsBundle',
     'IterTracksBundle',
+    'RawPage',
     'PageBundle',
     'SyncPageStrategy',
+    'PageStrategy',
     'AsyncPageStrategy',
+    'PageSingleVendor',
+    'PageMultiVendor',
+    'PageVendor',
 ]
