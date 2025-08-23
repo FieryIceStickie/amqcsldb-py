@@ -152,14 +152,14 @@ class AsyncDBClient:
         """
         self._queue.append(bundle)
 
-    def commit(self, *, stop_if_err: bool = True):
+    async def commit(self, *, stop_if_err: bool = True):
         """Commit changes in the queue
 
         Args:
             stop_if_err: Stop sending requests if one of them errors
         """
         logger.info(f'Commiting {len(self.queue)} changes')
-        results = asyncio.gather(*map(self.process, self.queue), return_exceptions=stop_if_err)
+        results = await asyncio.gather(*map(self.process, self.queue), return_exceptions=stop_if_err)
         for task, r in zip(self.queue, results):
             if isinstance(r, Exception):
                 logger.error(f'{task} failed: {r!r}')
@@ -313,7 +313,7 @@ class AsyncDBClient:
         search_term: str,
         *,
         batch_size: int = 50,
-        func: ItemProcessor[CSLSongSample, R],
+        func: ItemProcessor[CSLSongSample, R] = default_func,
     ) -> Iterable[R]:
         """Gather songs matching search term, optionally applying a continuation to each song
 
