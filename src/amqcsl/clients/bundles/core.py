@@ -1,10 +1,10 @@
-from collections.abc import Generator, Iterator
-from typing import Any, Iterable, Protocol
+from collections.abc import Generator
+from typing import Iterable, Protocol
 
 import httpx
+import rich.repr
 
 type httpxClient = httpx.Client | httpx.AsyncClient
-type RichReprRtn = Iterator[str | tuple[str, Any] | tuple[str, Any, Any]]
 
 type SingleVendor[R] = Generator[httpx.Request, httpx.Response, R]
 type MultiVendor[R] = Generator[Iterable[httpx.Request], Iterable[httpx.Response], R]
@@ -16,4 +16,4 @@ class Bundle[R](Protocol):
     # Do not use to send actual requests, since it should work for both sync
     # and async clients
     def vendor(self, client: httpxClient) -> Vendor[R]: ...
-    def __rich_repr__(self) -> RichReprRtn: ...
+    def __rich_repr__(self) -> rich.repr.Result: ...

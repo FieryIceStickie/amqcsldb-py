@@ -14,7 +14,6 @@ from attrs.validators import gt, instance_of, le, optional
 
 from amqcsl.clients.bundles import (
     AddAudioBundle,
-    AsyncPageStrategy,
     AuthBundle,
     Bundle,
     CreateAlbumBundle,
@@ -65,6 +64,10 @@ logger = logging.getLogger('amqcsl.client')
 type ItemProcessor[T, R] = Callable[[AsyncDBClient, T], Coroutine[None, None, R]]
 
 
+async def default_func[T](_: 'AsyncDBClient', item: T) -> T:
+    return item
+
+
 @define
 class AsyncDBClient:
     """Async client for accessing the db.
@@ -84,11 +87,19 @@ class AsyncDBClient:
     #: Maximum number of queries when iterating
     max_query_size: int = field(default=1500, validator=[instance_of(int), gt(0)])
     #: Maximum number of concurrent requests
-    max_request_count: int = field(default=10, validator=[instance_of(int), gt(0), le(50)])
+    max_request_count: int = field(default=15, validator=[instance_of(int), gt(0), le(50)])
 
     _lists: CSLLists = field(factory=dict)
     _groups: CSLGroups = field(factory=dict)
     _queue: list[Bundle[Any]] = field(factory=list)
+
+    def is_sync(self) -> bool:
+        """Check for if client is synchronous
+
+        Returns:
+            False
+        """
+        return False
 
     @cached_property
     def _request_semaphore(self) -> asyncio.Semaphore:
@@ -109,8 +120,8 @@ class AsyncDBClient:
         async with self._request_semaphore:
             return await self.client.send(req)
 
-    async def _process[R](self, bundle: Bundle[R]) -> R:
-        """Processes a bundle
+    async def process[R](self, bundle: Bundle[R]) -> R:
+        """Processes a bundle (Mainly for internal use)
 
         Args:
             bundle: Bundle
@@ -148,7 +159,7 @@ class AsyncDBClient:
             stop_if_err: Stop sending requests if one of them errors
         """
         logger.info(f'Commiting {len(self.queue)} changes')
-        results = asyncio.gather(*map(self._process, self.queue), return_exceptions=stop_if_err)
+        results = asyncio.gather(*map(self.process, self.queue), return_exceptions=stop_if_err)
         for task, r in zip(self.queue, results):
             if isinstance(r, Exception):
                 logger.error(f'{task} failed: {r!r}')
@@ -161,7 +172,7 @@ class AsyncDBClient:
         try:
             logger.info('Verifying permissions')
             bundle = AuthBundle(self.username, self.password, self.session_path)
-            await self._process(bundle)
+            await self.process(bundle)
         except Exception:
             await self._client.aclose()
             raise
@@ -197,7 +208,7 @@ class AsyncDBClient:
             AMQCSLError: httpx client doesn't exist yet
         """
         bundle = LogoutBundle(self.session_path)
-        await self._process(bundle)
+        await self.process(bundle)
 
     # --- Batch DB reading ---
 
@@ -209,7 +220,7 @@ class AsyncDBClient:
     async def refresh_lists(self) -> None:
         """Refresh client.lists (usually done automatically)"""
         bundle = ListBundle()
-        self._lists = await self._process(bundle)
+        self._lists = await self.process(bundle)
 
     @property
     def groups(self) -> CSLGroups:
@@ -219,7 +230,7 @@ class AsyncDBClient:
     async def refresh_groups(self) -> None:
         """Refresh client.groups (usually done automatically)"""
         bundle = GroupBundle()
-        self._groups = await self._process(bundle)
+        self._groups = await self.process(bundle)
 
     async def _process_pages[T, R](
         self,
@@ -258,9 +269,8 @@ class AsyncDBClient:
             tasks = [tg.create_task(func(self, item)) for item in page]
         return [task.result() for task in tasks]
 
-    async def map_tracks[R](
+    async def iter_tracks[R](
         self,
-        func: ItemProcessor[CSLTrack, R],
         search_term: str = '',
         *,
         groups: Iterable[CSLGroup] = (),
@@ -269,11 +279,11 @@ class AsyncDBClient:
         missing_info: bool = False,
         from_active_list: bool | None = None,
         batch_size: int = 50,
+        func: ItemProcessor[CSLTrack, R] = default_func,
     ) -> Iterable[R]:
-        """Map a function over tracks matching search parameters
+        """Gather tracks matching search term, optionally applying a continuation to each track
 
         Args:
-            func: Function to map
             search_term: Search term
             groups: List of groups to restrict to, leave empty if no restriction
             active_list: List to restrict search by
@@ -281,11 +291,13 @@ class AsyncDBClient:
             missing_info: Restrict to songs missing info
             from_active_list: Restrict to songs from active list, defaults to True if active_list is given and False otherwise
             batch_size: How many tracks to query at once (page size)
+            func: Continuation
 
         Returns:
             Iterable of results from calling func on each track
         """
-        bundle = IterTracksBundle(
+        bundle = IterTracksBundle.from_client(
+            self,
             search_term=search_term,
             groups=groups,
             active_list=active_list,
@@ -293,61 +305,54 @@ class AsyncDBClient:
             missing_info=missing_info,
             from_active_list=from_active_list,
             batch_size=batch_size,
-            max_batch_size=self.max_batch_size,
-            max_query_size=self.max_query_size,
-            strategy=AsyncPageStrategy(),
         )
         return await self._process_pages(bundle, func)
 
-    async def map_songs[R](
+    async def iter_songs[R](
         self,
-        func: ItemProcessor[CSLSongSample, R],
         search_term: str,
         *,
         batch_size: int = 50,
+        func: ItemProcessor[CSLSongSample, R],
     ) -> Iterable[R]:
-        """Map a function over songs matching search term
+        """Gather songs matching search term, optionally applying a continuation to each song
 
         Args:
-            func: Function to map
             search_term: Term to search for
             batch_size: Number of songs per page
+            func: Continuation
 
         Returns:
             Iterable of results from calling func on each song
         """
-        bundle = IterSongsBundle(
+        bundle = IterSongsBundle.from_client(
+            self,
             search_term=search_term,
             batch_size=batch_size,
-            max_batch_size=self.max_batch_size,
-            max_query_size=self.max_query_size,
-            strategy=AsyncPageStrategy(),
         )
         return await self._process_pages(bundle, func)
 
     async def iter_artists[R](
         self,
-        func: ItemProcessor[CSLArtistSample, R],
         search_term: str,
         *,
         batch_size: int = 50,
+        func: ItemProcessor[CSLArtistSample, R] = default_func,
     ) -> Iterable[R]:
-        """Map a function over artists matching search term
+        """Gather artists matching search term, optionally applying a continuation to each artist
 
         Args:
-            func: Function to map
             search_term: Term to search for
             batch_size: Number of artists per page
+            func: Continuation
 
         Returns:
             Iterable of results from calling func on each artist
         """
-        bundle = IterArtistsBundle(
+        bundle = IterArtistsBundle.from_client(
+            self,
             search_term=search_term,
             batch_size=batch_size,
-            max_batch_size=self.max_batch_size,
-            max_query_size=self.max_query_size,
-            strategy=AsyncPageStrategy(),
         )
         return await self._process_pages(bundle, func)
 
@@ -363,7 +368,7 @@ class AsyncDBClient:
             CSLSong
         """
         bundle = GetSongBundle(song)
-        return await self._process(bundle)
+        return await self.process(bundle)
 
     async def get_artist(self, artist: CSLArtistSample) -> CSLArtist:
         """Fetch detailed artist info from db
@@ -375,7 +380,7 @@ class AsyncDBClient:
             CSLArtist
         """
         bundle = GetArtistBundle(artist)
-        return await self._process(bundle)
+        return await self.process(bundle)
 
     async def get_metadata(self, track: CSLTrack) -> CSLMetadata | None:
         """Fetch metadata info from db
@@ -387,7 +392,7 @@ class AsyncDBClient:
             CSLMetadata, or None if it doesn't have any metadata
         """
         bundle = GetMetadataBundle(track)
-        return await self._process(bundle)
+        return await self.process(bundle)
 
     # --- List operations ---
 
@@ -405,7 +410,7 @@ class AsyncDBClient:
             ListCreateError: Error if the request gives an error, probably because the list already exists
         """
         bundle = CreateListBundle(name, csl_lists)
-        await self._process(bundle)
+        await self.process(bundle)
         await self.refresh_lists()
         return self.lists[name]
 
@@ -426,7 +431,7 @@ class AsyncDBClient:
             remove_tracks: Tracks to remove
         """
         bundle = ListEditBundle(csl_list, name, add, remove)
-        await self._process(bundle)
+        await self.process(bundle)
 
     # --- General Editing ---
 
@@ -440,7 +445,7 @@ class AsyncDBClient:
             Newly created group
         """
         bundle = CreateGroupBundle(name)
-        group = await self._process(bundle)
+        group = await self.process(bundle)
         await self.refresh_groups()
         return group
 
@@ -468,7 +473,7 @@ class AsyncDBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            await self._process(bundle)
+            await self.process(bundle)
 
     async def track_remove_metadata(
         self,
@@ -487,7 +492,7 @@ class AsyncDBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            await self._process(bundle)
+            await self.process(bundle)
 
     async def track_edit(
         self,
@@ -522,7 +527,7 @@ class AsyncDBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            await self._process(bundle)
+            await self.process(bundle)
 
     # --- Album Creation ---
 
@@ -550,7 +555,7 @@ class AsyncDBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            await self._process(bundle)
+            await self.process(bundle)
 
     async def add_audio(
         self,
@@ -573,4 +578,4 @@ class AsyncDBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            await self._process(bundle)
+            await self.process(bundle)

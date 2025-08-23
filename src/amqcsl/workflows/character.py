@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Generator, Iterable, Mapping, Sequence
 from itertools import chain
-from typing import Self, override
+from typing import Self, overload, override
 
-from attrs import frozen
+import rich.repr
+from attrs import define, field, frozen
+from attrs.validators import deep_iterable, deep_mapping, instance_of, optional
 
-from amqcsl._client import DBClient
+from amqcsl import DBClient
+from amqcsl.clients.async_client import AsyncDBClient
+from amqcsl.clients.bundles.core import Bundle, MultiVendor, httpxClient
+from amqcsl.clients.bundles.misc import TrackAddMetadataBundle, TrackDeleteMetadataBundle
 from amqcsl.exceptions import AMQCSLError
 from amqcsl.objects._db_types import (
     CSLArtistSample,
@@ -26,13 +32,14 @@ __all__ = [
     'ArtistToMeta',
     'compact_make_artist_to_meta',
     'make_artist_to_meta',
-    'conv_artists',
-    'match_artist',
     'queue_character_metadata',
     'prompt',
 ]
 
 logger = logging.getLogger('amqcsl.workflows.character_metadata')
+
+
+# --- Types ---
 
 
 class _Wildcard:
@@ -92,67 +99,30 @@ type ArtistDict = Mapping[ArtistKey, str]
 type ArtistToMeta = Mapping[CSLArtistSample, Sequence[ExtraMetadata]]
 
 
-def compact_make_artist_to_meta(
-    client: DBClient,
-    artists: ArtistDict,
-    search_phrases: Sequence[str] = (),
-    sep: str = ', ',
-) -> ArtistToMeta:
-    """Make the artist to metadata dict with a compact artist dict
-
-    Args:
-        client: DBClient
-        artists: ArtistDict, values should be character names separated by sep
-        search_phrases: List of search phrases to be passed to iter_artists
-        sep: Separator for artist values
-
-    Returns:
-        ArtistToMeta
-    """
-    artist_objs = conv_artists(client, artists, search_phrases)
-    return {artist_objs[k]: [ExtraMetadata(True, 'Character', c) for c in v.split(sep)] for k, v in artists.items()}
+# --- Helpers ---
 
 
-def make_artist_to_meta(
-    client: DBClient,
-    characters: CharacterDict,
-    artists: ArtistDict,
-    search_phrases: Sequence[str] = (),
-    sep: str = ' ',
-) -> ArtistToMeta:
-    """Make the artist to metadata dict
-
-    Args:
-        client: DBClient
-        characters: CharacterDict
-        artists: ArtistDict, values should be keys of characters separated by sep
-        search_phrases: List of search phrases to be passed to iter_artists
-        sep: Separator for artist values
-
-    Returns:
-        ArtistToMeta
-    """
-    metas = {k: ExtraMetadata(True, 'Character', v) for k, v in characters.items()}
-    artist_objs = conv_artists(client, artists, search_phrases)
-    return {artist_objs[k]: [metas[c] for c in v.split(sep)] for k, v in artists.items()}
-
-
-def conv_artists(
-    client: DBClient,
+def _conv_artists(
     artist_keys: Iterable[ArtistKey],
-    search_phrases: Sequence[str] = (),
-) -> dict[ArtistKey, CSLArtistSample]:
-    """Converts a dict {ArtistKey: T} into {artist: T}
+    search_phrases: Sequence[str],
+) -> Generator[Iterable[str], dict[str, Iterable[CSLArtistSample]], dict[ArtistKey, CSLArtistSample]]:
+    """Converts an iterable of ArtistKey into {ArtistKey: T}
 
-    Args: client: DBClient
-        artists: Input dict
+    Args:
+        artist_keys: Iterable of artist keys
         search_phrases: List of search phrases to be passed to iter_artists
 
+    Yields:
+        [search_phrase]
+
+    Receives:
+        {search_phrase: client.iter_artists(search_phrase)}
+
     Returns:
-        Output dict
+        {ArtistKey: T}
 
     Raises:
-        AMQCSLError: If search phrases is not enough to fill dict with artists
+        AMQCSLError: Ambiguities in artist query/Couldn't find artist
     """
     rtn: dict[ArtistKey, CSLArtistSample] = {}
     seen: dict[CSLArtistSample, ArtistKey] = {}
@@ -160,10 +130,11 @@ def conv_artists(
 
     if search_phrases:
         logger.info('Searching phrases for artists')
-    artists = {*chain.from_iterable(map(client.iter_artists, search_phrases))}
+    search_results = yield search_phrases
+    artists = {*chain.from_iterable(search_results.values())}
     for key in artist_keys:
         artist_name = ArtistName.from_key(key)
-        artist = match_artist(artist_name, artists)
+        artist = _match_artist(artist_name, artists)
         if artist is None:
             not_found[artist_name.name].append(key)
         elif artist in seen:
@@ -174,11 +145,12 @@ def conv_artists(
 
     if not_found:
         logger.info('Searching for artists by name directly')
+    search_results = yield not_found
     for name, keys in not_found.items():
-        artists = {*client.iter_artists(name)}
+        artists = {*search_results[name]}
         for key in keys:
             artist_name = ArtistName.from_key(key)
-            artist = match_artist(artist_name, artists)
+            artist = _match_artist(artist_name, artists)
             if artist is None:
                 raise AMQCSLError(f'Could not find artist {artist_name}')
             elif artist in seen:
@@ -189,7 +161,7 @@ def conv_artists(
     return rtn
 
 
-def match_artist(artist_name: ArtistName, artists: set[CSLArtistSample]) -> CSLArtistSample | None:
+def _match_artist(artist_name: ArtistName, artists: set[CSLArtistSample]) -> CSLArtistSample | None:
     """Match an ArtistName with an artist
 
     Args:
@@ -213,12 +185,190 @@ def match_artist(artist_name: ArtistName, artists: set[CSLArtistSample]) -> CSLA
             raise AMQCSLError(f'{len(matching_artists)} artists found for {artist_name}')
 
 
-def queue_character_metadata(
+def _sync_conv_artists(
     client: DBClient,
+    artist_keys: Iterable[ArtistKey],
+    search_phrases: Sequence[str] = (),
+) -> dict[ArtistKey, CSLArtistSample]:
+    g = _conv_artists(artist_keys, search_phrases)
+    phrase_to_artists = None
+    while True:
+        try:
+            res = g.send(phrase_to_artists)  # type: ignore[reportArgumentType]
+        except StopIteration as e:
+            return e.value
+        phrase_to_artists = {phrase: client.iter_artists(phrase) for phrase in res}
+
+
+async def _async_conv_artists(
+    client: AsyncDBClient,
+    artist_keys: Iterable[ArtistKey],
+    search_phrases: Sequence[str] = (),
+) -> dict[ArtistKey, CSLArtistSample]:
+    g = _conv_artists(artist_keys, search_phrases)
+    phrase_to_artists = None
+    while True:
+        try:
+            res = g.send(phrase_to_artists)  # type: ignore[reportArgumentType]
+        except StopIteration as e:
+            return e.value
+        async with asyncio.TaskGroup() as tg:
+            tasks = {phrase: tg.create_task(client.iter_artists(phrase)) for phrase in res}
+        phrase_to_artists = {phrase: task.result() for phrase, task in tasks.items()}
+
+
+# --- Exports ---
+
+
+@overload
+def compact_make_artist_to_meta(
+    client: DBClient,
+    artists: ArtistDict,
+    search_phrases: Sequence[str] = (),
+    sep: str = ', ',
+) -> ArtistToMeta: ...
+@overload
+def compact_make_artist_to_meta(
+    client: AsyncDBClient,
+    artists: ArtistDict,
+    search_phrases: Sequence[str] = (),
+    sep: str = ', ',
+) -> Awaitable[ArtistToMeta]: ...
+
+
+def compact_make_artist_to_meta(
+    client: DBClient | AsyncDBClient,
+    artists: ArtistDict,
+    search_phrases: Sequence[str] = (),
+    sep: str = ', ',
+) -> ArtistToMeta | Awaitable[ArtistToMeta]:
+    """Make the artist to metadata dict with a compact artist dict
+
+    Args:
+        client: (Async)DBClient
+        artists: ArtistDict, values should be character names separated by sep
+        search_phrases: List of search phrases to be passed to iter_artists
+        sep: Separator for artist values
+
+    Returns:
+        ArtistToMeta
+    """
+    match client:
+        case DBClient():
+            artist_objs = _sync_conv_artists(client, artists, search_phrases)
+            return {
+                artist_objs[k]: [ExtraMetadata(True, 'Character', c) for c in v.split(sep)]  #
+                for k, v in artists.items()
+            }
+        case AsyncDBClient():
+
+            async def rtn():
+                artist_objs = await _async_conv_artists(client, artists, search_phrases)
+                return {
+                    artist_objs[k]: [ExtraMetadata(True, 'Character', c) for c in v.split(sep)]  #
+                    for k, v in artists.items()
+                }
+
+            return rtn()
+
+
+def make_artist_to_meta(
+    client: DBClient,
+    characters: CharacterDict,
+    artists: ArtistDict,
+    search_phrases: Sequence[str] = (),
+    sep: str = ' ',
+) -> ArtistToMeta:
+    """Make the artist to metadata dict
+
+    Args:
+        client: (Async)DBClient
+        characters: CharacterDict
+        artists: ArtistDict, values should be keys of characters separated by sep
+        search_phrases: List of search phrases to be passed to iter_artists
+        sep: Separator for artist values
+
+    Returns:
+        ArtistToMeta
+    """
+    metas = {k: ExtraMetadata(True, 'Character', v) for k, v in characters.items()}
+    match client:
+        case DBClient():
+            artist_objs = _sync_conv_artists(client, artists, search_phrases)
+            return {artist_objs[k]: [metas[c] for c in v.split(sep)] for k, v in artists.items()}
+        case AsyncDBClient():
+
+            async def rtn():
+                artist_objs = await _async_conv_artists(client, artists, search_phrases)
+                return {artist_objs[k]: [metas[c] for c in v.split(sep)] for k, v in artists.items()}
+
+            return rtn()
+
+
+type MetadataBundle = TrackAddMetadataBundle | TrackDeleteMetadataBundle
+
+
+@define
+class QueueCharacterMetadataBundle(Bundle[None]):
+    track: CSLTrack = field(validator=instance_of(CSLTrack))
+    artist_to_meta: ArtistToMeta = field(
+        validator=deep_mapping(
+            key_validator=instance_of(CSLArtistSample),
+            value_validator=deep_iterable(instance_of(ExtraMetadata)),  # type: ignore[reportUnknownArgumentType]
+        ),
+    )
+    meta: CSLMetadata | None = field(default=None, validator=optional(instance_of(CSLMetadata)))
+
+    unknown_artists: list[CSLArtistSample] = field(factory=list[CSLArtistSample], init=False)
+    bundles: list[MetadataBundle] = field(factory=list[MetadataBundle], init=False)
+
+    def __attrs_post_init__(self) -> None:
+        # Add character metadata if not already exists
+        metas: set[ExtraMetadata] = set()
+        for cred in self.track.artist_credits:
+            new_metas = self.artist_to_meta.get(cred.artist)
+            if new_metas is None:
+                self.unknown_artists.append(cred.artist)
+            else:
+                metas.update(new_metas)
+        bundle = TrackAddMetadataBundle(self.track, metas, existing_meta=self.meta)
+        self.bundles.append(bundle)
+        if self.unknown_artists:
+            _ = prompt(
+                self.track,
+                msg=f'Unidentified artists {", ".join(artist.name for artist in self.unknown_artists)}. Continue?',
+                continue_on_empty=True,
+            )
+            return
+
+        if self.meta is None:
+            return
+        # Remove existing character metadata
+        curr = {ExtraMetadata.simplify(m): m for m in self.meta.extra_metas if m.key == 'Character'}
+        unknown_metas = curr.keys() - metas
+        for m in unknown_metas:
+            bundle = TrackDeleteMetadataBundle(self.track, curr[m])
+            self.bundles.append(bundle)
+
+    @override
+    def vendor(self, client: httpxClient) -> MultiVendor[None]:
+        vendors = [bundle.vendor(client) for bundle in self.bundles]
+        reqs = [next(vd) for vd in vendors]
+        resps = yield reqs
+        for res, vd in zip(resps, vendors):
+            vd.send(res)
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'bundles', self.bundles
+
+
+def queue_character_metadata(
+    client: DBClient | AsyncDBClient,
     track: CSLTrack,
     artist_to_meta: ArtistToMeta,
     meta: CSLMetadata | None,
-) -> CSLArtistSample | None:
+) -> None:
     """Queue character metadata changes
     This function will clear any existing character metadata (including any that are song metadata)
     and add all metadata according to artist_to_meta
@@ -228,24 +378,8 @@ def queue_character_metadata(
         track: Track to be edited
         artist_to_meta: {artist: [metas]}
         meta: Existing metadata of the track
-
-    Returns:
-        An artist if it isn't in artist_to_meta
-        None otherwise
     """
-    # Add character metadata if not already exists
-    metas: set[ExtraMetadata] = set()
-    for cred in track.artist_credits:
-        new_metas = artist_to_meta.get(cred.artist)
-        if new_metas is None:
-            return cred.artist
-        metas.update(new_metas)
-    logger.info(f'Adding {len(metas)} new metadata to {track.name}')
-    client.track_add_metadata(track, *metas, existing_meta=meta, queue=True)
-
-    if meta is None:
+    bundle = QueueCharacterMetadataBundle(track, artist_to_meta, meta)
+    if not any(bundle.bundles):
         return
-    # Remove existing character metadata
-    curr = {ExtraMetadata.simplify(m): m for m in meta.extra_metas if m.key == 'Character'}
-    for m in curr.keys() - metas:
-        client.track_remove_metadata(track, curr[m], queue=True)
+    client.enqueue(bundle)

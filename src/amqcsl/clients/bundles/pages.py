@@ -2,9 +2,10 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Generator, Iterator, Sequence
 from functools import cached_property
-from typing import Iterable, override
+from typing import TYPE_CHECKING, Generic, Iterable, TypeVar, overload, override
 
 import httpx
+import rich.repr
 from attrs import Attribute, Converter, define, field, frozen
 from attrs.validators import deep_iterable, gt, instance_of
 
@@ -12,7 +13,10 @@ from amqcsl.exceptions import QueryError
 from amqcsl.objects import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from .core import RichReprRtn, httpxClient
+from .core import httpxClient
+
+if TYPE_CHECKING:
+    from amqcsl import AsyncDBClient, DBClient
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -29,7 +33,7 @@ class PageBundle[R, Vd: PageVendor](ABC):
     max_batch_size: int = field(validator=[instance_of(int), gt(0)])
     max_query_size: int = field(validator=[instance_of(int), gt(0)])
     batch_size: int = field()
-    strategy: 'PageStrategy[R, Vd]'
+    strategy: 'PageStrategy[R, Vd]' = field()
 
     @batch_size.validator  # type: ignore
     def check(self, _: 'Attribute[int]', value: int) -> None:
@@ -57,10 +61,14 @@ class PageBundle[R, Vd: PageVendor](ABC):
     def process_item(self, item: JSONType) -> R: ...
 
     @abstractmethod
-    def __rich_repr__(self) -> RichReprRtn: ...
+    def __rich_repr__(self) -> rich.repr.Result: ...
 
 
-class PageStrategy[R, Vd: PageVendor](ABC):
+R = TypeVar('R')
+Vd = TypeVar('Vd', bound=PageVendor, covariant=True)
+
+
+class PageStrategy(ABC, Generic[R, Vd]):
     _count: int | None = None
 
     @abstractmethod
@@ -119,7 +127,7 @@ class AsyncPageStrategy[R](PageStrategy[R, PageMultiVendor], ABC):
 
 
 @frozen
-class IterTracksBundle[Vd: PageVendor](PageBundle[CSLTrack, Vd]):
+class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
     search_term: str = field(validator=instance_of(str))
     groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
     active_list: CSLList | None = field(validator=instance_of((CSLList, type(None))))
@@ -132,6 +140,58 @@ class IterTracksBundle[Vd: PageVendor](PageBundle[CSLTrack, Vd]):
             takes_self=True,
         ),
     )
+
+    @overload
+    @classmethod
+    def from_client(
+        cls,
+        client: 'DBClient',
+        search_term: str,
+        groups: Iterable[CSLGroup] = (),
+        active_list: CSLList | None = None,
+        missing_audio: bool = False,
+        missing_info: bool = False,
+        from_active_list: bool | None = None,
+        batch_size: int = 100,
+    ) -> 'IterTracksBundle[PageSingleVendor]': ...
+    @overload
+    @classmethod
+    def from_client(
+        cls,
+        client: 'AsyncDBClient',
+        search_term: str,
+        groups: Iterable[CSLGroup] = (),
+        active_list: CSLList | None = None,
+        missing_audio: bool = False,
+        missing_info: bool = False,
+        from_active_list: bool | None = None,
+        batch_size: int = 100,
+    ) -> 'IterTracksBundle[PageMultiVendor]': ...
+
+    @classmethod
+    def from_client(
+        cls,
+        client: 'DBClient | AsyncDBClient',
+        search_term: str,
+        groups: Iterable[CSLGroup] = (),
+        active_list: CSLList | None = None,
+        missing_audio: bool = False,
+        missing_info: bool = False,
+        from_active_list: bool | None = None,
+        batch_size: int = 100,
+    ) -> 'IterTracksBundle[PageVendor]':
+        return IterTracksBundle(
+            search_term=search_term,
+            groups=groups,
+            active_list=active_list,
+            missing_audio=missing_audio,
+            missing_info=missing_info,
+            from_active_list=from_active_list,
+            max_batch_size=client.max_batch_size,
+            max_query_size=client.max_query_size,
+            batch_size=batch_size,
+            strategy=SyncPageStrategy() if client.is_sync() else AsyncPageStrategy(),
+        )
 
     @cached_property
     def body(self) -> QueryTrack:
@@ -171,7 +231,7 @@ class IterTracksBundle[Vd: PageVendor](PageBundle[CSLTrack, Vd]):
         return CSLTrack.from_json(item)
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'search_term', self.search_term
         if self.groups:
             yield 'groups', [group.name for group in self.groups]
@@ -189,8 +249,39 @@ class IterTracksBundle[Vd: PageVendor](PageBundle[CSLTrack, Vd]):
 
 
 @frozen
-class IterSongsBundle[Vd: PageVendor](PageBundle[CSLSongSample, Vd]):
+class IterSongsBundle(PageBundle[CSLSongSample, Vd], Generic[Vd]):
     search_term: str = field(validator=instance_of(str))
+
+    @overload
+    @classmethod
+    def from_client(
+        cls,
+        client: 'DBClient',
+        search_term: str,
+        batch_size: int = 100,
+    ) -> 'IterSongsBundle[PageSingleVendor]': ...
+    @overload
+    @classmethod
+    def from_client(
+        cls,
+        client: 'AsyncDBClient',
+        search_term: str,
+        batch_size: int = 100,
+    ) -> 'IterSongsBundle[PageMultiVendor]': ...
+    @classmethod
+    def from_client(
+        cls,
+        client: 'DBClient | AsyncDBClient',
+        search_term: str,
+        batch_size: int = 100,
+    ) -> 'IterSongsBundle[PageVendor]':
+        return IterSongsBundle(
+            search_term=search_term,
+            max_batch_size=client.max_batch_size,
+            max_query_size=client.max_query_size,
+            batch_size=batch_size,
+            strategy=SyncPageStrategy() if client.is_sync() else AsyncPageStrategy(),
+        )
 
     @cached_property
     def params(self) -> QuerySong:
@@ -220,14 +311,45 @@ class IterSongsBundle[Vd: PageVendor](PageBundle[CSLSongSample, Vd]):
         return CSLSongSample.from_json(item)
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'search_term', self.search_term
         yield 'batch_size', self.batch_size
 
 
 @frozen
-class IterArtistsBundle[Vd: PageVendor](PageBundle[CSLArtistSample, Vd]):
+class IterArtistsBundle(PageBundle[CSLArtistSample, Vd], Generic[Vd]):
     search_term: str = field(validator=instance_of(str))
+
+    @overload
+    @classmethod
+    def from_client(
+        cls,
+        client: 'DBClient',
+        search_term: str,
+        batch_size: int = 100,
+    ) -> 'IterArtistsBundle[PageSingleVendor]': ...
+    @overload
+    @classmethod
+    def from_client(
+        cls,
+        client: 'AsyncDBClient',
+        search_term: str,
+        batch_size: int = 100,
+    ) -> 'IterArtistsBundle[PageMultiVendor]': ...
+    @classmethod
+    def from_client(
+        cls,
+        client: 'DBClient | AsyncDBClient',
+        search_term: str,
+        batch_size: int = 100,
+    ) -> 'IterArtistsBundle[PageVendor]':
+        return IterArtistsBundle(
+            search_term=search_term,
+            max_batch_size=client.max_batch_size,
+            max_query_size=client.max_query_size,
+            batch_size=batch_size,
+            strategy=SyncPageStrategy() if client.is_sync() else AsyncPageStrategy(),
+        )
 
     @cached_property
     def params(self) -> QueryArtist:
@@ -257,6 +379,6 @@ class IterArtistsBundle[Vd: PageVendor](PageBundle[CSLArtistSample, Vd]):
         return CSLArtistSample.from_json(item)
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'search_term', self.search_term
         yield 'batch_size', self.batch_size
