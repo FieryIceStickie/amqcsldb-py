@@ -353,6 +353,13 @@ class CSLSong(CSLSongSample):
 
 
 @frozen
+class SimpleCSLTrack:
+    id: str
+    name: str | None
+    original_simple_artist: str
+
+
+@frozen
 class CSLTrack:
     id: str
     name: str | None
@@ -391,6 +398,10 @@ class CSLTrack:
     @property
     def str_artist_credits(self) -> str:
         return ''.join([f'{credit.name}{credit.join_phrase}' for credit in self.artist_credits])
+
+    @property
+    def simp(self) -> SimpleCSLTrack:
+        return SimpleCSLTrack(self.id, self.name, self.original_simple_artist)
 
     @classmethod
     def from_json(cls, data: JSONType):

@@ -1,7 +1,6 @@
 from .core import (
     Bundle,
     MultiVendor,
-    RichReprRtn,
     SingleVendor,
     Vendor,
 )
@@ -41,7 +40,6 @@ from .pages import (
 __all__ = [
     'Bundle',
     'MultiVendor',
-    'RichReprRtn',
     'SingleVendor',
     'Vendor',
     'AddAudioBundle',

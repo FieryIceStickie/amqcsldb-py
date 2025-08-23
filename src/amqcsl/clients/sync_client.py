@@ -31,7 +31,6 @@ from amqcsl.clients.bundles import (
     PageBundle,
     PageSingleVendor,
     RawPage,
-    SyncPageStrategy,
     TrackAddMetadataBundle,
     TrackDeleteMetadataBundle,
     TrackEditBundle,
@@ -84,6 +83,14 @@ class DBClient:
     _groups: CSLGroups | None = None
     _queue: list[Bundle[Any]] = field(factory=list)
 
+    def is_sync(self) -> bool:
+        """Check for if client is synchronous
+
+        Returns:
+            True
+        """
+        return True
+
     @property
     def client(self) -> httpx.Client:
         """Underlying httpx.Client"""
@@ -95,8 +102,8 @@ class DBClient:
     def queue(self) -> list[Bundle[Any]]:
         return self._queue
 
-    def _process[R](self, bundle: Bundle[R]) -> R:
-        """Processes a bundle
+    def process[R](self, bundle: Bundle[R]) -> R:
+        """Processes a bundle (Mainly for internal use)
 
         Args:
             bundle: Bundle
@@ -136,7 +143,7 @@ class DBClient:
         logger.info(f'Commiting {len(self._queue)} changes')
         for bundle in self._queue:
             try:
-                self._process(bundle)
+                self.process(bundle)
             except httpx.HTTPError:
                 if stop_if_err:
                     raise
@@ -149,7 +156,7 @@ class DBClient:
         try:
             logger.info('Verifying permissions')
             bundle = AuthBundle(self.username, self.password, self.session_path)
-            self._process(bundle)
+            self.process(bundle)
         except Exception:
             self._client.close()
             raise
@@ -183,7 +190,7 @@ class DBClient:
             AMQCSLError: httpx client doesn't exist yet
         """
         bundle = LogoutBundle(self.session_path)
-        self._process(bundle)
+        self.process(bundle)
 
     # --- Batch DB reading ---
 
@@ -192,7 +199,7 @@ class DBClient:
         """Dictionary of user's lists, indexed by name"""
         if self._lists is None:
             bundle = ListBundle()
-            self._lists = self._process(bundle)
+            self._lists = self.process(bundle)
         return self._lists
 
     @property
@@ -200,7 +207,7 @@ class DBClient:
         """Dictionary of DB groups, indexed by name"""
         if self._groups is None:
             bundle = GroupBundle()
-            self._groups = self._process(bundle)
+            self._groups = self.process(bundle)
         return self._groups
 
     def _process_pages[R](self, bundle: PageBundle[R, PageSingleVendor]) -> Iterator[R]:
@@ -255,7 +262,8 @@ class DBClient:
         Yields:
             CSLTrack
         """
-        bundle = IterTracksBundle(
+        bundle = IterTracksBundle.from_client(
+            self,
             search_term=search_term,
             groups=groups,
             active_list=active_list,
@@ -263,9 +271,6 @@ class DBClient:
             missing_info=missing_info,
             from_active_list=from_active_list,
             batch_size=batch_size,
-            max_batch_size=self.max_batch_size,
-            max_query_size=self.max_query_size,
-            strategy=SyncPageStrategy(),
         )
         yield from self._process_pages(bundle)
 
@@ -279,12 +284,10 @@ class DBClient:
         Yields:
             CSLSongSample
         """
-        bundle = IterSongsBundle(
+        bundle = IterSongsBundle.from_client(
+            self,
             search_term=search_term,
             batch_size=batch_size,
-            max_batch_size=self.max_batch_size,
-            max_query_size=self.max_query_size,
-            strategy=SyncPageStrategy(),
         )
         yield from self._process_pages(bundle)
 
@@ -298,12 +301,10 @@ class DBClient:
         Yields:
             CSLArtistSample
         """
-        bundle = IterArtistsBundle(
+        bundle = IterArtistsBundle.from_client(
+            self,
             search_term=search_term,
             batch_size=batch_size,
-            max_batch_size=self.max_batch_size,
-            max_query_size=self.max_query_size,
-            strategy=SyncPageStrategy(),
         )
         yield from self._process_pages(bundle)
 
@@ -319,7 +320,7 @@ class DBClient:
             CSLSong
         """
         bundle = GetSongBundle(song)
-        return self._process(bundle)
+        return self.process(bundle)
 
     def get_artist(self, artist: CSLArtistSample) -> CSLArtist:
         """Fetch detailed artist info from db
@@ -331,7 +332,7 @@ class DBClient:
             CSLArtist
         """
         bundle = GetArtistBundle(artist)
-        return self._process(bundle)
+        return self.process(bundle)
 
     def get_metadata(self, track: CSLTrack) -> CSLMetadata | None:
         """Fetch metadata info from db
@@ -343,7 +344,7 @@ class DBClient:
             CSLMetadata, or None if it doesn't have any metadata
         """
         bundle = GetMetadataBundle(track)
-        return self._process(bundle)
+        return self.process(bundle)
 
     # --- List operations ---
 
@@ -361,7 +362,7 @@ class DBClient:
             ListCreateError: Error if the request gives an error, probably because the list already exists
         """
         bundle = CreateListBundle(name, csl_lists)
-        self._process(bundle)
+        self.process(bundle)
         self._lists = None
         return self.lists[name]
 
@@ -382,7 +383,7 @@ class DBClient:
             remove_tracks: Tracks to remove
         """
         bundle = ListEditBundle(csl_list, name, add, remove)
-        self._process(bundle)
+        self.process(bundle)
 
     # --- General Editing ---
 
@@ -396,7 +397,7 @@ class DBClient:
             Newly created group
         """
         bundle = CreateGroupBundle(name)
-        return self._process(bundle)
+        return self.process(bundle)
 
     def track_add_metadata(
         self,
@@ -422,7 +423,7 @@ class DBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            self._process(bundle)
+            self.process(bundle)
 
     def track_remove_metadata(
         self,
@@ -441,7 +442,7 @@ class DBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            self._process(bundle)
+            self.process(bundle)
 
     def track_edit(
         self,
@@ -476,7 +477,7 @@ class DBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            self._process(bundle)
+            self.process(bundle)
 
     # --- Album Creation ---
 
@@ -504,7 +505,7 @@ class DBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            self._process(bundle)
+            self.process(bundle)
 
     def add_audio(
         self,
@@ -527,4 +528,4 @@ class DBClient:
         if queue:
             self.enqueue(bundle)
         else:
-            self._process(bundle)
+            self.process(bundle)

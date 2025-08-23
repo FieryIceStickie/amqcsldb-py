@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal, override
 
 import httpx
+import rich.repr
 from attr.validators import optional
 from attrs import Attribute, field, frozen
 from attrs.validators import deep_iterable, gt, in_, instance_of, min_len
@@ -31,7 +32,7 @@ from amqcsl.objects import (
 from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, TrackPutBody
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
 
-from .core import Bundle, RichReprRtn, SingleVendor, httpxClient
+from .core import Bundle, SingleVendor, httpxClient
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -80,7 +81,6 @@ class AuthBundle(Bundle[None]):
             raise LoginError('Invalid login credentials')
         logger.info(f'Writing session_id to {self.session_path}')
         session_id = res.cookies['session-id']
-        logger.debug('session_id', extra={'session-id': session_id})
         with open(self.session_path, 'w') as file:
             file.write(session_id)
 
@@ -131,7 +131,7 @@ class AuthBundle(Bundle[None]):
             raise LoginError(f'User {res.json()["name"]} does not have admin privileges')
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'username', self.username
         yield 'session_path', self.session_path
 
@@ -151,7 +151,7 @@ class LogoutBundle(Bundle[None]):
             pass
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'session_path', self.session_path
 
 
@@ -172,7 +172,7 @@ class ListBundle(Bundle[CSLLists]):
         return rtn
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         return
         yield
 
@@ -194,7 +194,7 @@ class GroupBundle(Bundle[CSLGroups]):
         return rtn
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         return
         yield
 
@@ -214,7 +214,7 @@ class GetSongBundle(Bundle[CSLSong]):
         return CSLSong.from_json(res.json())
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'song', self.song
 
 
@@ -233,7 +233,7 @@ class GetArtistBundle(Bundle[CSLArtist]):
         return CSLArtist.from_json(res.json())
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'artist', self.artist
 
 
@@ -252,14 +252,14 @@ class GetMetadataBundle(Bundle[CSLMetadata | None]):
                 return CSLMetadata.from_json(res.json())
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
-        yield 'track', self.track
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
 
 
 @frozen
 class CreateListBundle(Bundle[None]):
     name: str = field(validator=[instance_of(str), min_len(1)])
-    csl_lists: Iterable[CSLList] = field(validator=deep_iterable(instance_of(CSLList)))
+    csl_lists: Iterable[CSLList] = field(default=(), validator=deep_iterable(instance_of(CSLList)))
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -273,7 +273,7 @@ class CreateListBundle(Bundle[None]):
         logger.info(f'List {self.name} created')
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'name', self.name
         yield 'lists', self.csl_lists, []
 
@@ -281,9 +281,9 @@ class CreateListBundle(Bundle[None]):
 @frozen
 class ListEditBundle(Bundle[None]):
     csl_list: CSLList = field(validator=instance_of(CSLList))
-    name: str | None = field(validator=optional([instance_of(str), min_len(1)]))
-    add: Iterable[CSLTrack] = field(validator=deep_iterable(instance_of(CSLTrack)))
-    remove: Iterable[CSLTrack] = field(validator=deep_iterable(instance_of(CSLTrack)))
+    name: str | None = field(default=None, validator=optional([instance_of(str), min_len(1)]))
+    add: Iterable[CSLTrack] = field(default=(), validator=deep_iterable(instance_of(CSLTrack)))
+    remove: Iterable[CSLTrack] = field(default=(), validator=deep_iterable(instance_of(CSLTrack)))
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -299,7 +299,7 @@ class ListEditBundle(Bundle[None]):
         res.raise_for_status()
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'list', self.csl_list
         yield 'new_name', self.name, None
 
@@ -316,7 +316,7 @@ class CreateGroupBundle(Bundle[CSLGroup]):
         return CSLGroup.from_json(res.json())
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'name', self.name
 
 
@@ -324,8 +324,8 @@ class CreateGroupBundle(Bundle[CSLGroup]):
 class TrackAddMetadataBundle(Bundle[None]):
     track: CSLTrack = field(validator=instance_of(CSLTrack))
     metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
-    _override: bool | None = field(validator=optional(instance_of(bool)))
-    existing_meta: CSLMetadata | None = field(validator=optional(instance_of(CSLMetadata)))
+    _override: bool | None = field(default=None, validator=optional(instance_of(bool)))
+    existing_meta: CSLMetadata | None = field(default=None, validator=optional(instance_of(CSLMetadata)))
 
     @cached_property
     def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
@@ -355,13 +355,17 @@ class TrackAddMetadataBundle(Bundle[None]):
             current_metas.add(meta)
         return artist_credits, extra_metadata
 
+    def __len__(self) -> int:
+        artist_credits, extra_metadata = self.filtered_metas
+        return len(artist_credits) + len(extra_metadata)
+
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
         track = self.track
         logger.info(f'Queuing metadata edit on {track.name}')
 
         artist_credits, extra_metadata = self.filtered_metas
-        if self._override is None and not any((artist_credits, extra_metadata)):
+        if self._override is None and not self:
             logger.info('No changes necessary, skipping request')
             return
         body: MetadataPostBody = {
@@ -374,8 +378,8 @@ class TrackAddMetadataBundle(Bundle[None]):
         res.raise_for_status()
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
-        yield 'track', self.track
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
         yield 'override', self._override, None
         artist_credits, extra_metadata = self.filtered_metas
         yield 'artist_credits', artist_credits, []
@@ -394,8 +398,8 @@ class TrackDeleteMetadataBundle(Bundle[None]):
         res.raise_for_status()
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
-        yield 'track', self.track
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
         yield 'meta', self.meta
 
 
@@ -403,15 +407,17 @@ class TrackDeleteMetadataBundle(Bundle[None]):
 class TrackEditBundle(Bundle[None]):
     track: CSLTrack = field(validator=instance_of(CSLTrack))
     artist_credits: Sequence[TrackPutArtistCredit] | None = field(  # type: ignore[reportUnknownArgumentType]
-        validator=optional(deep_iterable(instance_of(TrackPutArtistCredit)))  # type: ignore[reportUnknownArgumentType]
+        default=None,
+        validator=optional(deep_iterable(instance_of(TrackPutArtistCredit))),  # type: ignore[reportUnknownArgumentType]
     )
-    groups: Sequence[CSLGroup] | None = field(validator=optional(deep_iterable(instance_of(CSLGroup))))  # type: ignore[reportUnknownArgumentType]
-    name: str | None = field(validator=optional(instance_of(str)))
-    original_artist: str | None = field(validator=optional(instance_of(str)))
-    original_name: str | None = field(validator=optional(instance_of(str)))
-    song: CSLSong | None = field(validator=optional(instance_of(CSLSong)))
+    groups: Sequence[CSLGroup] | None = field(default=None, validator=optional(deep_iterable(instance_of(CSLGroup))))  # type: ignore[reportUnknownArgumentType]
+    name: str | None = field(default=None, validator=optional(instance_of(str)))
+    original_artist: str | None = field(default=None, validator=optional(instance_of(str)))
+    original_name: str | None = field(default=None, validator=optional(instance_of(str)))
+    song: CSLSong | None = field(default=None, validator=optional(instance_of(CSLSong)))
     type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = field(
-        validator=optional(in_(REVERSE_TRACK_TYPE))  # type: ignore[reportUnknownArgumentType]
+        default=None,
+        validator=optional(in_(REVERSE_TRACK_TYPE)),  # type: ignore[reportUnknownArgumentType]
     )
 
     @override
@@ -435,8 +441,8 @@ class TrackEditBundle(Bundle[None]):
         yield client.build_request('PUT', f'/api/track/{track.id}', json=body)
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
-        yield 'track', self.track
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
         yield 'artist_credits', self.artist_credits, None
         yield 'groups', self.groups, None
         yield 'name', self.name, None
@@ -474,7 +480,7 @@ class CreateAlbumBundle(Bundle[None]):
         res.raise_for_status()
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
+    def __rich_repr__(self) -> rich.repr.Result:
         yield 'name', self.name
         yield 'original_name', self.original_name
         yield 'year', self.year
@@ -529,6 +535,6 @@ class AddAudioBundle(Bundle[None]):
         res.raise_for_status()
 
     @override
-    def __rich_repr__(self) -> RichReprRtn:
-        yield 'track', self.track
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
         yield 'audio_path', self.audio_path.resolve()
