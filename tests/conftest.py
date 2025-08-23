@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 import respx
 from helpers import load
 from httpx import Response
@@ -41,6 +42,14 @@ def client(tmp_path: Path, router: Router, mock_id: str):
     session_path = tmp_path / 'amq_session.txt'
     session_path.write_text(mock_id)
     with amqcsl.DBClient(session_path=session_path) as client:
+        yield client
+
+
+@pytest_asyncio.fixture
+async def aclient(tmp_path: Path, router: Router, mock_id: str):
+    session_path = tmp_path / 'amq_session.txt'
+    session_path.write_text(mock_id)
+    async with amqcsl.AsyncDBClient(session_path=session_path) as client:
         yield client
 
 
