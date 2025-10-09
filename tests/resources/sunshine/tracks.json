@@ -49,5 +49,52 @@
         "updatedAt": "2025-04-18T18:00:47.925778Z",
         "inList": false,
         "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-sukiforyou",
+        "name": "SUKI for you, DREAM for you!",
+        "originalName": "SUKI for you, DREAM for you!",
+        "originalSimpleArtist": "Aqours",
+        "originalAlbum": "KU-RU-KU-RU Cruller! / Aqours",
+        "album": "KU-RU-KU-RU Cruller! / Aqours",
+        "trackNumber": 2,
+        "trackTotal": 6,
+        "discNumber": 1,
+        "discTotal": 2,
+        "year": 2021,
+        "song": {
+            "id": "mock-id-song-sukiforyou",
+            "name": "SUKI for you, DREAM for you!",
+            "disambiguation": "Love Live!",
+            "createdAt": "2023-05-22T23:47:57.221138Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Aqours",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-aqours",
+                    "name": "Aqours",
+                    "originalName": "Aqours",
+                    "disambiguation": "Love Live! Sunshine!!",
+                    "type": 3
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-lovelivesunshine",
+                "name": "Love Live! Sunshine!!"
+            }
+        ],
+        "audioId": "mock-id-audio-sukiforyou",
+        "audioName": "mock-id-audio-sukiforyou.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2023-05-22T23:46:57.058165Z",
+        "updatedAt": "2025-04-18T20:23:49.455195Z",
+        "inList": false,
+        "audioProcessingState": null
     }
 ]

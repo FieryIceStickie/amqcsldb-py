@@ -27,6 +27,7 @@ dependencies = [
 docs = [
     { name = "furo" },
     { name = "sphinx" },
+    { name = "sphinx-autobuild" },
     { name = "sphinx-autodoc-typehints" },
     { name = "sphinx-design" },
 ]
@@ -38,7 +39,6 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "respx" },
     { name = "ruff" },
-    { name = "sphinx-autobuild" },
 ]
 
 [package.metadata]
@@ -49,6 +49,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "rich", specifier = ">=14.0.0" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=8.2.3" },
+    { name = "sphinx-autobuild", marker = "extra == 'docs'", specifier = ">=2024.10.3" },
     { name = "sphinx-autodoc-typehints", marker = "extra == 'docs'", specifier = ">=3.2.0" },
     { name = "sphinx-design", marker = "extra == 'docs'", specifier = ">=0.6.1" },
     { name = "typer", specifier = ">=0.15.4" },
@@ -62,7 +63,6 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.1.0" },
     { name = "respx", specifier = ">=0.22.0" },
     { name = "ruff", specifier = ">=0.11.7" },
-    { name = "sphinx-autobuild", specifier = ">=2024.10.3" },
 ]
 
 [[package]]

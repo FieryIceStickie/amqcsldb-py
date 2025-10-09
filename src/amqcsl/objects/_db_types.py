@@ -13,6 +13,7 @@ from ._json_types import (
     JSONType,
     MetadataPostArtistCredit,
     MetadataPostExtraMetadata,
+    TrackNewSong,
 )
 from ._obj_consts import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE
 
@@ -544,13 +545,26 @@ class ExtraMetadata:
 
 
 @frozen
+class NewSong:
+    name: str
+    disambiguation: str | None = None
+
+    def to_json(self) -> TrackNewSong:
+        return {
+            'name': self.name,
+            'disambiguation': self.disambiguation,
+        }
+
+
+@frozen
 class TrackPutArtistCredit:
     artist: CSLArtistSample
-    join_phrase: str
-    name: str = ''
+    join_phrase: str = ''
+    _name: str | None = None
 
-    def __attrs_post_init__(self):
-        self.__setattr__('name', self.name or self.artist.name)
+    @property
+    def name(self):
+        return self.artist.name if self._name is None else self._name
 
     def to_json(self, position: int) -> JSONTrackPutArtistCredit:
         return {
