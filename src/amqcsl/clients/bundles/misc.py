@@ -29,6 +29,7 @@ from amqcsl.objects import (
     Metadata,
     TrackPutArtistCredit,
 )
+from amqcsl.objects._db_types import NewSong
 from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, TrackPutBody
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
 
@@ -321,6 +322,81 @@ class CreateGroupBundle(Bundle[CSLGroup]):
 
 
 @frozen
+class GroupEditBundle(Bundle[None]):
+    group: CSLGroup = field(validator=instance_of(CSLGroup))
+    name: str = field(validator=[instance_of(str), min_len(1)])
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Editing group {self.group.name}')
+        body = {
+            'id': EMPTY_ID,
+            'name': self.name,
+        }
+        res = yield client.build_request('PUT', f'/api/group/{self.group.id}', json=body)
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'group', self.group
+        yield 'new_name', self.name, None
+
+
+@frozen
+class GroupDeleteBundle(Bundle[None]):
+    group: CSLGroup = field(validator=instance_of(CSLGroup))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Deleting group {self.group.name}')
+        res = yield client.build_request('DELETE', f'/api/group/{self.group.id}')
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'group', self.group
+
+
+@frozen
+class SongEditBundle(Bundle[None]):
+    song: CSLSong = field(validator=instance_of(CSLSong))
+    name: str | None = field(validator=optional(instance_of(str)))
+    disambiguation: str | None = field(validator=optional(instance_of(str)))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Editing song {self.song.name}')
+        body = {
+            'id': EMPTY_ID,
+            'name': self.name if self.name else self.song.name,
+            'disambiguation': self.disambiguation if self.disambiguation else self.song.disambiguation,
+        }
+        res = yield client.build_request('PUT', f'/api/group/{self.song.id}', json=body)
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'song', self.song
+        yield 'new_name', self.name, self.song.name
+        yield 'new_disambiguation', self.name, self.song.disambiguation
+
+
+@frozen
+class SongDeleteBundle(Bundle[None]):
+    song: CSLSong = field(validator=instance_of(CSLSong))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Deleting song {self.song.name}')
+        res = yield client.build_request('DELETE', f'/api/song/{self.song.id}')
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'song', self.song
+
+
+@frozen
 class TrackAddMetadataBundle(Bundle[None]):
     track: CSLTrack = field(validator=instance_of(CSLTrack))
     metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
@@ -414,7 +490,7 @@ class TrackEditBundle(Bundle[None]):
     name: str | None = field(default=None, validator=optional(instance_of(str)))
     original_artist: str | None = field(default=None, validator=optional(instance_of(str)))
     original_name: str | None = field(default=None, validator=optional(instance_of(str)))
-    song: CSLSong | None = field(default=None, validator=optional(instance_of(CSLSong)))
+    song: NewSong | None = field(default=None, validator=optional(instance_of(NewSong)))
     type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = field(
         default=None,
         validator=optional(in_(REVERSE_TRACK_TYPE)),  # type: ignore[reportUnknownArgumentType]
@@ -432,7 +508,7 @@ class TrackEditBundle(Bundle[None]):
             'groupIds': None if self.groups is None else [group.id for group in self.groups],
             'id': EMPTY_ID,
             'name': self.name,
-            'newSong': None,
+            'newSong': None if self.song is None else self.song.to_json(),
             'originalArtist': self.original_artist,
             'originalName': self.original_name,
             'songId': getattr(self.song, 'id', None),

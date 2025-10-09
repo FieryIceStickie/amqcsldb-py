@@ -35,6 +35,7 @@ from amqcsl.clients.bundles import (
     TrackDeleteMetadataBundle,
     TrackEditBundle,
 )
+from amqcsl.clients.bundles.misc import GroupDeleteBundle, GroupEditBundle, SongDeleteBundle, SongEditBundle
 from amqcsl.exceptions import ClientDoesNotExistError
 from amqcsl.objects import (
     AlbumTrack,
@@ -51,6 +52,7 @@ from amqcsl.objects import (
     Metadata,
     TrackPutArtistCredit,
 )
+from amqcsl.objects._db_types import NewSong
 
 from ._client_consts import (
     DB_URL,
@@ -399,6 +401,64 @@ class DBClient:
         bundle = CreateGroupBundle(name)
         return self.process(bundle)
 
+    def group_edit(self, group: CSLGroup, name: str, *, queue: bool = False) -> None:
+        """Edit a group
+
+        Args:
+            group: CSLGroup
+            name: New name of the group
+        """
+        bundle = GroupEditBundle(group, name)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self.process(bundle)
+
+    def group_delete(self, group: CSLGroup, *, queue: bool = False) -> None:
+        """Delete a group
+
+        Args:
+            group: CSLGroup
+        """
+        bundle = GroupDeleteBundle(group)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self.process(bundle)
+
+    def song_edit(
+        self,
+        song: CSLSong,
+        name: str | None = None,
+        disambiguation: str | None = None,
+        *,
+        queue: bool = False,
+    ) -> None:
+        """Edit a song
+
+        Args:
+            song: CSLSong
+            name: New name
+            disambiguation: New disambiguation
+        """
+        bundle = SongEditBundle(song, name, disambiguation)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self.process(bundle)
+
+    def song_delete(self, song: CSLSong, *, queue: bool = False) -> None:
+        """Delete a song
+
+        Args:
+            song: CSLSong
+        """
+        bundle = SongDeleteBundle(song)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self.process(bundle)
+
     def track_add_metadata(
         self,
         track: CSLTrack,
@@ -429,6 +489,7 @@ class DBClient:
         self,
         track: CSLTrack,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
+        *,
         queue: bool = False,
     ) -> None:
         """Remove metadata from a track
@@ -453,7 +514,7 @@ class DBClient:
         name: str | None = None,
         original_artist: str | None = None,
         original_name: str | None = None,
-        song: CSLSong | None = None,
+        song: NewSong | None = None,
         type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = None,
         queue: bool = False,
     ) -> None:
@@ -472,6 +533,9 @@ class DBClient:
 
         Raises:
             ValueError: New track type is not a valid track type
+
+        Returns:
+            Newly edited track
         """
         bundle = TrackEditBundle(track, artist_credits, groups, name, original_artist, original_name, song, type)
         if queue:
