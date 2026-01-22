@@ -6,13 +6,13 @@ from itertools import chain
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal, Self
+from typing import Any, Self
 
 import httpx
 from attrs import define, field
 from attrs.validators import gt, instance_of, le, optional
 
-from amqcsl.clients.bundles import (
+from amqcsl.clients.bundles._misc import (
     AddAudioBundle,
     AuthBundle,
     Bundle,
@@ -25,21 +25,28 @@ from amqcsl.clients.bundles import (
     GetMetadataBundle,
     GetSongBundle,
     GroupBundle,
-    IterArtistsBundle,
-    IterSongsBundle,
-    IterTracksBundle,
+    GroupDeleteBundle,
+    GroupEditBundle,
     ListBundle,
     ListEditBundle,
     LogoutBundle,
-    PageBundle,
-    PageMultiVendor,
+    SongAddMetadataBundle,
+    SongDeleteBundle,
+    SongDeleteMetadataBundle,
+    SongEditBundle,
     TrackAddMetadataBundle,
     TrackDeleteMetadataBundle,
     TrackEditBundle,
 )
-from amqcsl.clients.bundles.misc import GroupDeleteBundle, GroupEditBundle, SongDeleteBundle, SongEditBundle
+from amqcsl.clients.bundles._pages import (
+    IterArtistsBundle,
+    IterSongsBundle,
+    IterTracksBundle,
+    PageBundle,
+    PageMultiVendor,
+)
 from amqcsl.exceptions import ClientDoesNotExistError
-from amqcsl.objects import (
+from amqcsl.objects._db_types import (
     AlbumTrack,
     CSLArtist,
     CSLArtistSample,
@@ -52,9 +59,10 @@ from amqcsl.objects import (
     CSLSongSample,
     CSLTrack,
     Metadata,
+    NewSong,
     TrackPutArtistCredit,
 )
-from amqcsl.objects._db_types import NewSong
+from amqcsl.objects._obj_consts import TrackType
 
 from ._client_consts import (
     DB_URL,
@@ -165,6 +173,7 @@ class AsyncDBClient:
         for task, r in zip(self.queue, results):
             if isinstance(r, Exception):
                 logger.error(f'{task} failed: {r!r}')
+        self.queue.clear()
 
     # --- Initialization ---
 
@@ -234,6 +243,8 @@ class AsyncDBClient:
         bundle = GroupBundle()
         self._groups = await self.process(bundle)
 
+    # The following 3 functions handle requesting pages
+    # Functions are written in CPS to allow for full asynchronicity
     async def _process_pages[T, R](
         self,
         bundle: PageBundle[T, PageMultiVendor],
@@ -495,6 +506,44 @@ class AsyncDBClient:
         bundle = SongDeleteBundle(song)
         await self.process(bundle)
 
+    async def song_add_metadata(
+        self,
+        song: CSLSong,
+        *metas: Metadata,
+        queue: bool = False,
+    ) -> None:
+        """Add metadata to a song
+
+        Args:
+            song: CSLSong
+            *metas: Metadata to add
+            queue: Whether to queue the request, defaults to False
+        """
+        bundle = SongAddMetadataBundle(song, metas)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            await self.process(bundle)
+
+    async def song_delete_metadata(
+        self,
+        song: CSLSong,
+        meta: CSLSongArtistCredit | CSLExtraMetadata,
+        queue: bool = False,
+    ) -> None:
+        """Remove metadata from a song
+
+        Args:
+            song: CSLSong
+            meta: Metadata to remove
+            queue: Whether to queue the request, defaults to False
+        """
+        bundle = SongDeleteMetadataBundle(song, meta)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            await self.process(bundle)
+
     async def track_add_metadata(
         self,
         track: CSLTrack,
@@ -550,7 +599,7 @@ class AsyncDBClient:
         original_artist: str | None = None,
         original_name: str | None = None,
         song: NewSong | None = None,
-        type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = None,
+        type: TrackType | None = None,
         queue: bool = False,
     ) -> None:
         """Edit a track

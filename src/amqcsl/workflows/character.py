@@ -11,10 +11,16 @@ import rich.repr
 from attrs import define, field, frozen
 from attrs.validators import deep_iterable, deep_mapping, instance_of, optional
 
-from amqcsl import DBClient
-from amqcsl.clients.async_client import AsyncDBClient
-from amqcsl.clients.bundles.core import Bundle, MultiVendor, httpxClient
-from amqcsl.clients.bundles.misc import TrackAddMetadataBundle, TrackDeleteMetadataBundle
+from amqcsl import AsyncDBClient, DBClient
+from amqcsl.clients.bundles._core import (
+    Bundle,
+    MultiVendor,
+    httpxClient,
+)
+from amqcsl.clients.bundles._misc import (
+    TrackAddMetadataBundle,
+    TrackDeleteMetadataBundle,
+)
 from amqcsl.exceptions import AMQCSLError
 from amqcsl.objects._db_types import (
     CSLArtistSample,
@@ -22,7 +28,8 @@ from amqcsl.objects._db_types import (
     CSLTrack,
     ExtraMetadata,
 )
-from amqcsl.workflows._workflow_utils import prompt
+
+from ._workflow_utils import prompt
 
 __all__ = [
     'ArtistName',
