@@ -15,10 +15,7 @@ from ._json_types import (
     MetadataPostExtraMetadata,
     TrackNewSong,
 )
-from ._obj_consts import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE
-
-__all__ = ['CSLList']
-
+from ._obj_consts import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE, TrackType
 
 logger = logging.getLogger('amqcsl.object')
 
@@ -385,7 +382,7 @@ class CSLTrack:
     in_list: bool
 
     @property
-    def type(self) -> str:
+    def type(self) -> TrackType:
         return TRACK_TYPE[self.type_id]
 
     @property

@@ -152,6 +152,12 @@ class MetadataPostExtraMetadata(TypedDict):
     value: str
 
 
+class SongMetadataPostBody(TypedDict):
+    artistCredits: list[MetadataPostArtistCredit]
+    extraMetadatas: list[MetadataPostExtraMetadata]
+    id: str
+
+
 class MetadataPostBody(TypedDict):
     artistCredits: list[MetadataPostArtistCredit]
     extraMetadatas: list[MetadataPostExtraMetadata]

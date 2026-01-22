@@ -1,10 +1,11 @@
-from .core import (
+from ._core import (
     Bundle,
     MultiVendor,
     SingleVendor,
     Vendor,
+    httpxClient,
 )
-from .misc import (
+from ._misc import (
     AddAudioBundle,
     AuthBundle,
     CreateAlbumBundle,
@@ -16,25 +17,31 @@ from .misc import (
     GetMetadataBundle,
     GetSongBundle,
     GroupBundle,
+    GroupDeleteBundle,
+    GroupEditBundle,
     ListBundle,
     ListEditBundle,
     LogoutBundle,
+    SongAddMetadataBundle,
+    SongDeleteBundle,
+    SongDeleteMetadataBundle,
+    SongEditBundle,
     TrackAddMetadataBundle,
     TrackDeleteMetadataBundle,
     TrackEditBundle,
 )
-from .pages import (
+from ._pages import (
     AsyncPageStrategy,
     IterArtistsBundle,
     IterSongsBundle,
     IterTracksBundle,
-    RawPage,
     PageBundle,
-    PageStrategy,
-    SyncPageStrategy,
-    PageSingleVendor,
     PageMultiVendor,
+    PageSingleVendor,
+    PageStrategy,
     PageVendor,
+    RawPage,
+    SyncPageStrategy,
 )
 
 __all__ = [
@@ -42,6 +49,7 @@ __all__ = [
     'MultiVendor',
     'SingleVendor',
     'Vendor',
+    'httpxClient',
     'AddAudioBundle',
     'AuthBundle',
     'CreateAlbumBundle',
@@ -53,9 +61,15 @@ __all__ = [
     'GetMetadataBundle',
     'GetSongBundle',
     'GroupBundle',
+    'GroupDeleteBundle',
+    'GroupEditBundle',
     'ListBundle',
     'ListEditBundle',
     'LogoutBundle',
+    'SongAddMetadataBundle',
+    'SongDeleteBundle',
+    'SongDeleteMetadataBundle',
+    'SongEditBundle',
     'TrackAddMetadataBundle',
     'TrackDeleteMetadataBundle',
     'TrackEditBundle',

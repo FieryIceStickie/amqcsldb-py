@@ -1,3 +1,6 @@
+from typing import Literal
+
+
 ARTIST_TYPE = {
     0: 'Other',
     1: 'Person',
@@ -8,14 +11,16 @@ ARTIST_TYPE = {
 }
 REVERSE_ARTIST_TYPE = {v: k for k, v in ARTIST_TYPE.items()}
 
-TRACK_TYPE = {
+type TrackType = Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other']
+
+TRACK_TYPE: dict[int, TrackType] = {
     0: 'Vocal',
     1: 'OffVocal',
     2: 'Instrumental',
     3: 'Dialogue',
     10: 'Other',
 }
-REVERSE_TRACK_TYPE = {v: k for k, v in TRACK_TYPE.items()}
+REVERSE_TRACK_TYPE: dict[TrackType, int] = {v: k for k, v in TRACK_TYPE.items()}
 
 EXTRA_METADATA_TYPE = {
     1: 'Song',

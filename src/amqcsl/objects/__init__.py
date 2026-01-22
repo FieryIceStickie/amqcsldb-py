@@ -16,8 +16,10 @@ from ._db_types import (
     CSLTrackLink,
     ExtraMetadata,
     Metadata,
+    NewSong,
     TrackPutArtistCredit,
 )
+from ._obj_consts import TrackType
 
 __all__ = [
     'AlbumTrack',
@@ -37,5 +39,7 @@ __all__ = [
     'CSLTrackLink',
     'ExtraMetadata',
     'Metadata',
+    'NewSong',
     'TrackPutArtistCredit',
+    'TrackType',
 ]

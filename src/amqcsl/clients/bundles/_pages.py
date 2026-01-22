@@ -10,10 +10,10 @@ from attrs import Attribute, Converter, define, field, frozen
 from attrs.validators import deep_iterable, gt, instance_of
 
 from amqcsl.exceptions import QueryError
-from amqcsl.objects import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
+from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from .core import httpxClient
+from ._core import httpxClient
 
 if TYPE_CHECKING:
     from amqcsl import AsyncDBClient, DBClient

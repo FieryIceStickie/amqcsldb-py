@@ -3,7 +3,7 @@ import mimetypes
 from collections.abc import Iterable, Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, override
+from typing import override
 
 import httpx
 import rich.repr
@@ -12,7 +12,7 @@ from attrs import Attribute, field, frozen
 from attrs.validators import deep_iterable, gt, in_, instance_of, min_len
 
 from amqcsl.exceptions import LoginError, QueryError
-from amqcsl.objects import (
+from amqcsl.objects._db_types import (
     AlbumTrack,
     ArtistCredit,
     CSLArtist,
@@ -27,13 +27,13 @@ from amqcsl.objects import (
     CSLTrack,
     ExtraMetadata,
     Metadata,
+    NewSong,
     TrackPutArtistCredit,
 )
-from amqcsl.objects._db_types import NewSong
-from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, TrackPutBody
-from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE
+from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, SongMetadataPostBody, TrackPutBody
+from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
 
-from .core import Bundle, SingleVendor, httpxClient
+from ._core import Bundle, SingleVendor, httpxClient
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -397,6 +397,62 @@ class SongDeleteBundle(Bundle[None]):
 
 
 @frozen
+class SongAddMetadataBundle(Bundle[None]):
+    song: CSLSong = field(validator=instance_of(CSLSong))
+    metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
+
+    @cached_property
+    def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
+        artist_credits: list[ArtistCredit] = []
+        extra_metadata: list[ExtraMetadata] = []
+        for meta in self.metas:
+            match meta:
+                case ArtistCredit():
+                    artist_credits.append(meta)
+                case ExtraMetadata():
+                    extra_metadata.append(meta)
+                case _:
+                    raise ValueError('metas must be ArtistCredit or ExtraMetadata')
+        return artist_credits, extra_metadata
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Queuing metadata edit on {self.song.name}')
+        artist_credits, extra_metadata = self.filtered_metas
+        body: SongMetadataPostBody = {
+            'id': self.song.id,
+            'artistCredits': [meta.to_json() for meta in artist_credits],
+            'extraMetadatas': [meta.to_json() for meta in extra_metadata],
+        }
+        res = yield client.build_request('POST', f'/api/song/{self.song.id}', json=body)
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'song', self.song
+        artist_credits, extra_metadata = self.filtered_metas
+        yield 'artist_credits', artist_credits, []
+        yield 'extra_metadata', extra_metadata, []
+
+
+@frozen
+class SongDeleteMetadataBundle(Bundle[None]):
+    song: CSLSong = field(validator=instance_of(CSLSong))
+    meta: CSLSongArtistCredit | CSLExtraMetadata = field(validator=instance_of((CSLSongArtistCredit, CSLExtraMetadata)))
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        logger.info(f'Removing metadata {self.meta} from song {self.song.name}')
+        res = yield client.build_request('DELETE', f'/api/track/{self.song.id}/metadata/{self.meta.id}')
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.song.name
+        yield 'meta', self.meta
+
+
+@frozen
 class TrackAddMetadataBundle(Bundle[None]):
     track: CSLTrack = field(validator=instance_of(CSLTrack))
     metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
@@ -469,7 +525,7 @@ class TrackDeleteMetadataBundle(Bundle[None]):
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
-        logger.info(f'Removing metadata {self.meta} from {self.track.name}')
+        logger.info(f'Removing metadata {self.meta} from track {self.track.name}')
         res = yield client.build_request('DELETE', f'/api/track/{self.track.id}/metadata/{self.meta.id}')
         res.raise_for_status()
 
@@ -491,7 +547,7 @@ class TrackEditBundle(Bundle[None]):
     original_artist: str | None = field(default=None, validator=optional(instance_of(str)))
     original_name: str | None = field(default=None, validator=optional(instance_of(str)))
     song: NewSong | None = field(default=None, validator=optional(instance_of(NewSong)))
-    type: Literal['Vocal', 'OffVocal', 'Instrumental', 'Dialogue', 'Other'] | None = field(
+    type: TrackType | None = field(
         default=None,
         validator=optional(in_(REVERSE_TRACK_TYPE)),  # type: ignore[reportUnknownArgumentType]
     )
