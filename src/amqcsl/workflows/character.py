@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Generator, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from itertools import chain
 from typing import Self, overload, override
 
@@ -279,13 +279,31 @@ def compact_make_artist_to_meta(
             return rtn()
 
 
+@overload
 def make_artist_to_meta(
     client: DBClient,
     characters: CharacterDict,
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ' ',
-) -> ArtistToMeta:
+) -> ArtistToMeta: ...
+@overload
+def make_artist_to_meta(
+    client: AsyncDBClient,
+    characters: CharacterDict,
+    artists: ArtistDict,
+    search_phrases: Sequence[str] = (),
+    sep: str = ' ',
+) -> Awaitable[ArtistToMeta]: ...
+
+
+def make_artist_to_meta(
+    client: DBClient | AsyncDBClient,
+    characters: CharacterDict,
+    artists: ArtistDict,
+    search_phrases: Sequence[str] = (),
+    sep: str = ' ',
+) -> ArtistToMeta | Awaitable[ArtistToMeta]:
     """Make the artist to metadata dict
 
     Args:
@@ -315,6 +333,20 @@ def make_artist_to_meta(
 type MetadataBundle = TrackAddMetadataBundle | TrackDeleteMetadataBundle
 
 
+type UnknownArtistHandler = Callable[[CSLTrack, ArtistToMeta, Sequence[CSLArtistSample]], bool]
+
+
+def prompt_artist_handler(
+    track: CSLTrack, artist_to_meta: ArtistToMeta, unknown_artists: Sequence[CSLArtistSample]
+) -> bool:
+    _ = prompt(
+        track,
+        msg=f'Unidentified artists {", ".join(artist.name for artist in unknown_artists)}. Continue?',
+        continue_on_empty=True,
+    )
+    return False
+
+
 @define
 class QueueCharacterMetadataBundle(Bundle[None]):
     track: CSLTrack = field(validator=instance_of(CSLTrack))
@@ -324,7 +356,8 @@ class QueueCharacterMetadataBundle(Bundle[None]):
             value_validator=deep_iterable(instance_of(ExtraMetadata)),  # type: ignore[reportUnknownArgumentType]
         ),
     )
-    meta: CSLMetadata | None = field(default=None, validator=optional(instance_of(CSLMetadata)))
+    meta: CSLMetadata | None = field(validator=optional(instance_of(CSLMetadata)))
+    unknown_artist_handler: UnknownArtistHandler = field(default=prompt_artist_handler)
 
     unknown_artists: list[CSLArtistSample] = field(factory=list[CSLArtistSample], init=False)
     bundles: list[MetadataBundle] = field(factory=list[MetadataBundle], init=False)
@@ -341,12 +374,9 @@ class QueueCharacterMetadataBundle(Bundle[None]):
         bundle = TrackAddMetadataBundle(self.track, metas, existing_meta=self.meta)
         self.bundles.append(bundle)
         if self.unknown_artists:
-            _ = prompt(
-                self.track,
-                msg=f'Unidentified artists {", ".join(artist.name for artist in self.unknown_artists)}. Continue?',
-                continue_on_empty=True,
-            )
-            return
+            is_fixed = self.unknown_artist_handler(self.track, self.artist_to_meta, self.unknown_artists)
+            if not is_fixed:
+                return
 
         if self.meta is None:
             return
@@ -363,7 +393,10 @@ class QueueCharacterMetadataBundle(Bundle[None]):
         reqs = [next(vd) for vd in vendors]
         resps = yield reqs
         for res, vd in zip(resps, vendors):
-            vd.send(res)
+            try:
+                vd.send(res)
+            except StopIteration:
+                pass
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -374,7 +407,8 @@ def queue_character_metadata(
     client: DBClient | AsyncDBClient,
     track: CSLTrack,
     artist_to_meta: ArtistToMeta,
-    meta: CSLMetadata | None,
+    meta: CSLMetadata | None = None,
+    unknown_artist_handler: UnknownArtistHandler = prompt_artist_handler,
 ) -> None:
     """Queue character metadata changes
     This function will clear any existing character metadata (including any that are song metadata)
@@ -386,7 +420,9 @@ def queue_character_metadata(
         artist_to_meta: {artist: [metas]}
         meta: Existing metadata of the track
     """
-    bundle = QueueCharacterMetadataBundle(track, artist_to_meta, meta)
+    if track.type == 'OffVocal':
+        return
+    bundle = QueueCharacterMetadataBundle(track, artist_to_meta, meta, unknown_artist_handler)
     if not any(bundle.bundles):
         return
     client.enqueue(bundle)

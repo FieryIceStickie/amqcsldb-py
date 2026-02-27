@@ -55,3 +55,6 @@ reportUnusedCallResult = false
 reportUnusedVariable = false
 reportUnreachable = false
 reportUnnecessaryComparison = false
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"

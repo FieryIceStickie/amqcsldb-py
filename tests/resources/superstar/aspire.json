@@ -1,0 +1,624 @@
+[
+    {
+        "id": "mock-id-track-letsbeone",
+        "name": null,
+        "originalName": "Let's be ONE",
+        "originalSimpleArtist": "Liella!",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 1,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": null,
+        "artistCredits": [],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": null,
+        "audioName": null,
+        "disabled": false,
+        "type": 10,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:30:34.016651Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-aspire",
+        "name": "Aspire",
+        "originalName": "Aspire",
+        "originalSimpleArtist": "Liella!",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 2,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-aspire",
+            "name": "Aspire",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:22:45.084696Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Liella!",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-liella11",
+                    "name": "Liella!",
+                    "originalName": "Liella!",
+                    "disambiguation": "Love Live! Superstar!! (11 members)",
+                    "type": 3
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-aspire",
+        "audioName": "mock-id-audio-aspire.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:42:35.795763Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-overover",
+        "name": "Over Over",
+        "originalName": "Over Over",
+        "originalSimpleArtist": "Sayuri Date",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 3,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-overover",
+            "name": "Over Over",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:23:04.74392Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Sayuri Date",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-sayuridate",
+                    "name": "Sayuri Date",
+                    "originalName": "伊達さゆり",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-overover",
+        "audioName": "mock-id-audio-overover",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:52:32.942041Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-skylinker",
+        "name": "Sky Linker",
+        "originalName": "Sky Linker",
+        "originalSimpleArtist": "Akane Yabushima",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 4,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-skylinker",
+            "name": "Sky Linker",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:23:18.97885Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Akane Yabushima",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-akaneyabushima",
+                    "name": "Akane Yabushima",
+                    "originalName": "薮島朱音",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-skylinker",
+        "audioName": "mock-id-audio-skylinker.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:53:36.649544Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-wildcard",
+        "name": "Wildcard",
+        "originalName": "ワイルドカード",
+        "originalSimpleArtist": "Sakura Sakakura",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 5,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-wildcard",
+            "name": "Wildcard",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:23:44.786919Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Sakura Sakakura",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-sakurasakakura",
+                    "name": "Sakura Sakakura",
+                    "originalName": "坂倉花",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-wildcard",
+        "audioName": "mock-id-audio-wildcard.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:53:58.833731Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-justwoo",
+        "name": "Just woo!!",
+        "originalName": "Just woo!!",
+        "originalSimpleArtist": "Naomi Payton",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 6,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-justwoo",
+            "name": "Just woo!!",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:23:56.514101Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Naomi Payton",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-naomipayton",
+                    "name": "Naomi Payton",
+                    "originalName": "ペイトン尚未",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-justwoo",
+        "audioName": "mock-id-audio-justwoo.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:54:13.927121Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-pastelcollage",
+        "name": "Pastel Collage",
+        "originalName": "パステルコラージュ",
+        "originalSimpleArtist": "Aya Emori",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 7,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-pastelcollage",
+            "name": "Pastel Collage",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:24:17.135535Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Aya Emori",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-ayaemori",
+                    "name": "Aya Emori",
+                    "originalName": "絵森彩",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-pastelcollage",
+        "audioName": "mock-id-audio-pastelcollage.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:54:37.067162Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-rhythm",
+        "name": "Rhythm",
+        "originalName": "Rhythm",
+        "originalSimpleArtist": "Nako Misaki",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 8,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-rhythm",
+            "name": "Rhythm",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:24:31.699545Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Nako Misaki",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-nakomisaki",
+                    "name": "Nako Misaki",
+                    "originalName": "岬なこ",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-rhythm",
+        "audioName": "mock-id-audio-rhythm.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:54:52.013497Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-lilia",
+        "name": "LiLiA",
+        "originalName": "LiLiA",
+        "originalSimpleArtist": "Wakana Ookuma",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 9,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-lilia",
+            "name": "LiLiA",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:24:42.065555Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Wakana Ookuma",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-wakanaookuma",
+                    "name": "Wakana Ookuma",
+                    "originalName": "大熊和奏",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-lilia",
+        "audioName": "mock-id-audio-lilia.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:55:09.484753Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-fundamental",
+        "name": "Fundamental",
+        "originalName": "ファンダメンタル",
+        "originalSimpleArtist": "Liyuu",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 10,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-fundamental",
+            "name": "Fundamental",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:24:56.036035Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Liyuu",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-liyuu",
+                    "name": "Liyuu",
+                    "originalName": "Liyuu",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-fundamental",
+        "audioName": "mock-id-audio-fundamental.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:55:26.623899Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-musubiba",
+        "name": "Musubiba",
+        "originalName": "結び葉",
+        "originalSimpleArtist": "Nagisa Aoyama",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 11,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-musubiba",
+            "name": "Musubiba",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:25:06.134667Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Nagisa Aoyama",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-nagisaaoyama",
+                    "name": "Nagisa Aoyama",
+                    "originalName": "青山なぎさ",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-musubiba",
+        "audioName": "mock-id-audio-musubiba.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:55:42.768835Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-luca",
+        "name": "Luca",
+        "originalName": "ルカ",
+        "originalSimpleArtist": "Yuina",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 12,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-luca",
+            "name": "Luca",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:25:15.241198Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Yuina",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-yuina",
+                    "name": "Yuina",
+                    "originalName": "結那",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-luca",
+        "audioName": "mock-id-audio-luca.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:56:00.233557Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-tekutekubiyori",
+        "name": "Tekuteku Biyori",
+        "originalName": "てくてく日和",
+        "originalSimpleArtist": "Nozomi Suzuhara",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 13,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": {
+            "id": "mock-id-song-tekutekubiyori",
+            "name": "Tekuteku Biyori",
+            "disambiguation": "Love Live!",
+            "createdAt": "2025-06-03T13:25:27.068655Z"
+        },
+        "artistCredits": [
+            {
+                "name": "Nozomi Suzuhara",
+                "joinPhrase": "",
+                "position": 0,
+                "artist": {
+                    "id": "mock-id-artist-nozomisuzuhara",
+                    "name": "Nozomi Suzuhara",
+                    "originalName": "鈴原希実",
+                    "disambiguation": null,
+                    "type": 1
+                }
+            }
+        ],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": "mock-id-audio-tekutekubiyori",
+        "audioName": "mock-id-audio-tekutekubiyori.webm",
+        "disabled": false,
+        "type": 0,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:56:15.720856Z",
+        "inList": true,
+        "audioProcessingState": null
+    },
+    {
+        "id": "mock-id-track-daisukifullpower",
+        "name": null,
+        "originalName": "DAISUKI FULL POWER",
+        "originalSimpleArtist": "Liella!",
+        "originalAlbum": "Liella! 3rdアルバム「Aspire」",
+        "album": "Liella! 3rd Album「Aspire」",
+        "trackNumber": 14,
+        "trackTotal": 14,
+        "discNumber": 1,
+        "discTotal": 1,
+        "year": 2025,
+        "song": null,
+        "artistCredits": [],
+        "groups": [
+            {
+                "id": "mock-id-group-superstar",
+                "name": "Love Live! Superstar!!"
+            }
+        ],
+        "audioId": null,
+        "audioName": null,
+        "disabled": false,
+        "type": 10,
+        "createdAt": "2025-06-03T13:22:06.950911Z",
+        "updatedAt": "2025-06-03T13:30:26.762533Z",
+        "inList": true,
+        "audioProcessingState": null
+    }
+]

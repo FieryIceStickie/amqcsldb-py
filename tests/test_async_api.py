@@ -6,7 +6,7 @@ from httpx import Response
 from respx import Router
 
 from amqcsl import AsyncDBClient
-from amqcsl.objects import AlbumTrack, CSLArtist, CSLMetadata, CSLSong, ExtraMetadata
+from amqcsl.objects import AlbumTrack, ArtistCredit, CSLArtist, CSLArtistSample, CSLMetadata, CSLSong, ExtraMetadata
 
 
 @pytest.mark.asyncio
@@ -346,6 +346,57 @@ async def test_track_add_metadata(router: Router, aclient: AsyncDBClient):
         track,
         ExtraMetadata(True, 'Character', 'Chika Takami'),
         ExtraMetadata(True, 'Character', 'You Watanabe'),
+        existing_meta=meta,
+        override=False,
+    )
+    assert route.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_track_add_metadata_artist_credit(router: Router, aclient: AsyncDBClient):
+    target_id = 'mock-id-track-sukiforyou-you'
+    track_json = next(
+        track
+        for track in load('sunshine/tracks')  #
+        if track['id'] == target_id
+    )
+    meta_json = load('sunshine/metadata/sukiforyou')
+    artist_json = {
+        'id': 'mock-id-artist-aki-hata',
+        'name': 'Aki Hata',
+        'originalName': 'Aki Hata',
+        'disambiguation': None,
+        'type': 1,
+    }
+    artist = CSLArtistSample.from_json(artist_json)  # type: ignore[reportArgumentType]
+    meta_json['artistCredits'].append(
+        {
+            'id': 'mock-id-metadata-aki',
+            'type': 'Lyricist',
+            'artist': artist_json,
+        }
+    )
+    _ = router.post(
+        '/api/tracks',
+        name='iter_tracks',
+        json__searchTerm='SUKI for you',
+    ) % Response(200, json={'tracks': [track_json], 'count': 1})
+    _ = router.get(
+        f'/api/track/{target_id}/metadata',
+        name='get_meta',
+    ) % Response(200, json=meta_json)
+    route = router.post(
+        f'/api/track/{track_json["id"]}/metadata',
+        name='post_meta',
+        json__override=False,
+        json__artistCredits=[{'artistId': 'mock-id-artist-aki-hata', 'type': 'Composer', 'credit': None}],
+    ) % Response(200)
+    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    meta = await aclient.get_metadata(track)
+    await aclient.track_add_metadata(
+        track,
+        ArtistCredit(artist, 'Lyricist'),
+        ArtistCredit(artist, 'Composer'),
         existing_meta=meta,
         override=False,
     )
