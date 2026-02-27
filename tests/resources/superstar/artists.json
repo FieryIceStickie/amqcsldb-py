@@ -1,0 +1,79 @@
+[
+    {
+        "id": "mock-id-artist-sayuridate",
+        "name": "Sayuri Date",
+        "originalName": "伊達さゆり",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-akaneyabushima",
+        "name": "Akane Yabushima",
+        "originalName": "薮島朱音",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-sakurasakakura",
+        "name": "Sakura Sakakura",
+        "originalName": "坂倉花",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-naomipayton",
+        "name": "Naomi Payton",
+        "originalName": "ペイトン尚未",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-ayaemori",
+        "name": "Aya Emori",
+        "originalName": "絵森彩",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-nakomisaki",
+        "name": "Nako Misaki",
+        "originalName": "岬なこ",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-wakanaookuma",
+        "name": "Wakana Ookuma",
+        "originalName": "大熊和奏",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-liyuu",
+        "name": "Liyuu",
+        "originalName": "Liyuu",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-nagisaaoyama",
+        "name": "Nagisa Aoyama",
+        "originalName": "青山なぎさ",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-yuina",
+        "name": "Yuina",
+        "originalName": "結那",
+        "disambiguation": null,
+        "type": 1
+    },
+    {
+        "id": "mock-id-artist-nozomisuzuhara",
+        "name": "Nozomi Suzuhara",
+        "originalName": "鈴原希実",
+        "disambiguation": null,
+        "type": 1
+    }
+]

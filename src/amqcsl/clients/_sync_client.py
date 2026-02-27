@@ -561,7 +561,7 @@ class DBClient:
         name: str | None = None,
         original_artist: str | None = None,
         original_name: str | None = None,
-        song: NewSong | None = None,
+        song: NewSong | CSLSongSample | None = None,
         type: TrackType | None = None,
         queue: bool = False,
     ) -> None:

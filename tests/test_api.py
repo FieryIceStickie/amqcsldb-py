@@ -5,7 +5,8 @@ from httpx import Response
 from respx import Router
 
 from amqcsl import DBClient
-from amqcsl.objects import CSLArtist, CSLMetadata, CSLSong, ExtraMetadata, AlbumTrack
+from amqcsl.objects import AlbumTrack, CSLArtist, CSLMetadata, CSLSong, ExtraMetadata
+from amqcsl.objects._db_types import ArtistCredit, CSLArtistSample
 
 
 def test_list(router: Router, client: DBClient):
@@ -104,7 +105,7 @@ def test_artist_search(router: Router, client: DBClient):
         '/api/artists',
         name='artists',
         params={'searchTerm': 'IDOLY PRIDE'},
-    ) % Response(200, json={'artists': expected, 'count': len(expected)})
+    ) % Response(200, json={'arists': expected, 'count': len(expected)})
     assert {obj.id for obj in client.iter_artists('IDOLY PRIDE')} == {obj['id'] for obj in expected}
     assert route.call_count == 1
 
@@ -329,6 +330,56 @@ def test_track_add_metadata(router: Router, client: DBClient):
         track,
         ExtraMetadata(True, 'Character', 'Chika Takami'),
         ExtraMetadata(True, 'Character', 'You Watanabe'),
+        existing_meta=meta,
+        override=False,
+    )
+    assert route.call_count == 1
+
+
+def test_track_add_metadata_artist_credit(router: Router, client: DBClient):
+    target_id = 'mock-id-track-sukiforyou-you'
+    track_json = next(
+        track
+        for track in load('sunshine/tracks')  #
+        if track['id'] == target_id
+    )
+    meta_json = load('sunshine/metadata/sukiforyou')
+    artist_json = {
+        'id': 'mock-id-artist-aki-hata',
+        'name': 'Aki Hata',
+        'originalName': 'Aki Hata',
+        'disambiguation': None,
+        'type': 1,
+    }
+    artist = CSLArtistSample.from_json(artist_json)  # type: ignore[reportArgumentType]
+    meta_json['artistCredits'].append(
+        {
+            'id': 'mock-id-metadata-aki',
+            'type': 'Lyricist',
+            'artist': artist_json,
+        }
+    )
+    _ = router.post(
+        '/api/tracks',
+        name='iter_tracks',
+        json__searchTerm='SUKI for you',
+    ) % Response(200, json={'tracks': [track_json], 'count': 1})
+    _ = router.get(
+        f'/api/track/{target_id}/metadata',
+        name='get_meta',
+    ) % Response(200, json=meta_json)
+    route = router.post(
+        f'/api/track/{track_json["id"]}/metadata',
+        name='post_meta',
+        json__override=False,
+        json__artistCredits=[{'artistId': 'mock-id-artist-aki-hata', 'type': 'Composer', 'credit': None}],
+    ) % Response(200)
+    track = next(client.iter_tracks('SUKI for you'))
+    meta = client.get_metadata(track)
+    client.track_add_metadata(
+        track,
+        ArtistCredit(artist, 'Lyricist'),
+        ArtistCredit(artist, 'Composer'),
         existing_meta=meta,
         override=False,
     )

@@ -546,7 +546,10 @@ class TrackEditBundle(Bundle[None]):
     name: str | None = field(default=None, validator=optional(instance_of(str)))
     original_artist: str | None = field(default=None, validator=optional(instance_of(str)))
     original_name: str | None = field(default=None, validator=optional(instance_of(str)))
-    song: NewSong | None = field(default=None, validator=optional(instance_of(NewSong)))
+    song: NewSong | CSLSongSample | None = field(
+        default=None,
+        validator=optional(instance_of((NewSong, CSLSongSample))),
+    )
     type: TrackType | None = field(
         default=None,
         validator=optional(in_(REVERSE_TRACK_TYPE)),  # type: ignore[reportUnknownArgumentType]
@@ -556,6 +559,7 @@ class TrackEditBundle(Bundle[None]):
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
         track = self.track
         logger.info(f'Editing track {track.name}')
+
         body: TrackPutBody = {
             'artistCredits': None
             if self.artist_credits is None
@@ -564,12 +568,19 @@ class TrackEditBundle(Bundle[None]):
             'groupIds': None if self.groups is None else [group.id for group in self.groups],
             'id': EMPTY_ID,
             'name': self.name,
-            'newSong': None if self.song is None else self.song.to_json(),
+            'newSong': None,
             'originalArtist': self.original_artist,
             'originalName': self.original_name,
-            'songId': getattr(self.song, 'id', None),
+            'songId': None,
             'type': None if self.type is None else REVERSE_TRACK_TYPE[self.type],
         }
+        match self.song:
+            case NewSong():
+                body['newSong'] = self.song.to_json()
+            case CSLSongSample():
+                body['songId'] = self.song.id
+            case None:
+                pass
         yield client.build_request('PUT', f'/api/track/{track.id}', json=body)
 
     @override
