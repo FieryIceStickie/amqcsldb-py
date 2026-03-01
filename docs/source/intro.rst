@@ -16,6 +16,7 @@ editing track names.
 Features:
 
 - Database objects mirrored as Python objects
+- Asynchronous client for requests
 - Streamlined page iterators and request wrappers
 - CLI to help set up a script directory
 - Well-documented API

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -10,8 +11,8 @@ import amqcsl
 _ = load_dotenv()
 
 
-def main(logger: logging.Logger):
-    with amqcsl.DBClient(
+async def main(logger: logging.Logger):
+    async with amqcsl.AsyncDBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
     ) as client:
@@ -21,4 +22,4 @@ def main(logger: logging.Logger):
 if __name__ == '__main__':
     logger = logging.getLogger('TEMPLATE_SCRIPT_NAME')
     setup_logging()
-    main(logger)
+    asyncio.run(main(logger))

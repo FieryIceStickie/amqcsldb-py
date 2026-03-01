@@ -2,6 +2,7 @@ import datetime as dt
 import logging
 from operator import attrgetter
 from typing import cast, override
+import rich.repr
 
 from attrs import frozen
 
@@ -120,6 +121,12 @@ class CSLExtraMetadata:
     @override
     def __str__(self) -> str:
         return f'{self.type} {self.key} {self.value}'
+
+    def __rich_repr__(self) -> rich.repr.RichReprResult:
+        yield 'id', self.id
+        yield 'type', self.type
+        yield 'key', self.key
+        yield 'value', self.value
 
 
 @frozen
