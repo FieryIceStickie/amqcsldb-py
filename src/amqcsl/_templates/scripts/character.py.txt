@@ -1,11 +1,13 @@
+import asyncio
 import logging
 import os
 
-from dotenv import load_dotenv
-from log import setup_logging
-
 import amqcsl
+from amqcsl.objects import CSLTrack
 from amqcsl.workflows import character as cm
+from dotenv import load_dotenv
+
+from log import setup_logging
 
 _ = load_dotenv()
 
@@ -14,23 +16,36 @@ characters: cm.CharacterDict = {}
 artists: cm.ArtistDict = {}
 
 
-def main(logger: logging.Logger):
-    with amqcsl.DBClient(
+async def main(logger: logging.Logger):
+    async with amqcsl.AsyncDBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
     ) as client:
-        artist_to_meta = cm.make_artist_to_meta(client, characters, artists)
+        artist_to_meta = await cm.make_artist_to_meta(
+            client,
+            characters,
+            artists,
+            [],
+        )
         my_group = client.groups['INSERT GROUP NAME HERE']
-        for track in client.iter_tracks(groups=[my_group], batch_size=100):
-            meta = client.get_metadata(track)
-            if (artist := cm.queue_character_metadata(client, track, artist_to_meta, meta)) is not None:
-                cm.prompt(track, msg=f'Unidentified artist {artist.name}, continue?', continue_on_empty=True)
+        tracks = await client.iter_tracks(groups=[my_group], batch_size=100)
+        async with asyncio.TaskGroup() as tg:
+            _ = [tg.create_task(process_track(client, track, artist_to_meta)) for track in tracks]
 
         if cm.prompt(client.queue):
-            client.commit()
+            await client.commit()
+
+
+async def process_track(
+    client: amqcsl.AsyncDBClient,
+    track: CSLTrack,
+    artist_to_meta: cm.ArtistToMeta,
+) -> None:
+    meta = await client.get_metadata(track)
+    cm.queue_character_metadata(client, track, artist_to_meta, meta)
 
 
 if __name__ == '__main__':
-    logger = logging.getLogger('INSERT SCRIPT NAME HERE')
+    logger = logging.getLogger('TEMPLATE_SCRIPT_NAME')
     setup_logging()
-    main(logger)
+    asyncio.run(main(logger))

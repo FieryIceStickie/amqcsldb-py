@@ -9,7 +9,7 @@ from typing import Self, overload, override
 
 import rich.repr
 from attrs import define, field, frozen
-from attrs.validators import deep_iterable, deep_mapping, instance_of, optional
+from attrs.validators import instance_of, optional
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.clients.bundles._core import (
@@ -350,12 +350,7 @@ def prompt_artist_handler(
 @define
 class QueueCharacterMetadataBundle(Bundle[None]):
     track: CSLTrack = field(validator=instance_of(CSLTrack))
-    artist_to_meta: ArtistToMeta = field(
-        validator=deep_mapping(
-            key_validator=instance_of(CSLArtistSample),
-            value_validator=deep_iterable(instance_of(ExtraMetadata)),  # type: ignore[reportUnknownArgumentType]
-        ),
-    )
+    artist_to_meta: ArtistToMeta = field()
     meta: CSLMetadata | None = field(validator=optional(instance_of(CSLMetadata)))
     unknown_artist_handler: UnknownArtistHandler = field(default=prompt_artist_handler)
 

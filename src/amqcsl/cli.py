@@ -53,6 +53,7 @@ class Templates(StrEnum):
     simple = 'simple'
     character = 'character'
     character_compact = 'character_compact'
+    async_ = 'async'
 
 
 @app.command()
@@ -77,11 +78,13 @@ def make(
     Raises:
         FileExistsError: File already exists
     """
-    if (Path.cwd() / dest).exists():
-        raise FileExistsError(Path.cwd() / dest)
+    dest_path = Path.cwd() / dest
+    if dest_path.exists():
+        raise FileExistsError(dest_path)
+
     template_file = files('amqcsl') / f'_templates/scripts/{template}.py.txt'
-    with as_file(template_file) as file:
-        shutil.copy(file, dest)
+    with as_file(template_file) as path, open(path, 'r') as file, open(dest_path, 'w') as dest_file:
+        dest_file.write(file.read().replace('TEMPLATE_SCRIPT_NAME', dest))
 
 
 @app.callback()
