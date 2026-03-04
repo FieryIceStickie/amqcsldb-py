@@ -17,6 +17,7 @@ editing track names.
 Features:
 
 - Database objects mirrored as Python objects
+- Asynchronous client for requests
 - Streamlined page iterators and request wrappers
 - CLI to help set up a script directory
 - Well-documented API
@@ -29,3 +30,8 @@ Full documentation is available at:
 https://amqcsldb-py.readthedocs.io/en/latest/
 
 Ping/DM me on Discord (``fieryicestickie``) if you have questions or issues.
+
+Examples
+---------
+
+For some example code using the library, see my `scripts repo <https://github.com/FieryIceStickie/AMQCSLdb-scripts>`_.
