@@ -55,23 +55,22 @@ A CLI tool comes bundled with the library for this purpose. Inside your project,
 
       .. code-block:: zsh
 
-         python3 -m amqcsl init scripts
-         cd scripts
+         python3 -m amqcsl init
 
    .. tab-item:: With uv
 
       .. code-block:: zsh
 
-         uv run amqcsl init scripts
-         cd scripts
+         uv run amqcsl init
 
 It will prompt you for your username and password; this is your amqbot account username and password, not your AMQ account.
+For more details regarding the CLI, see :doc:`advanced/cli`.
 
 Making a script file
 --------------------
 
 You can choose to do this manually, but AMQCSLdb provides templates to help you skip the
-boilerplate. Make sure you're in the script directory, and run
+boilerplate. Run
 
 .. tab-set::
 
@@ -79,13 +78,13 @@ boilerplate. Make sure you're in the script directory, and run
 
       .. code-block:: zsh
 
-         python3 -m amqcsl make test.py
+         python3 -m amqcsl make scripts/test.py
 
    .. tab-item:: With uv
 
       .. code-block:: zsh
 
-         uv run amqcsl make test.py
+         uv run amqcsl make scripts/test.py
 
 Running the script
 ~~~~~~~~~~~~~~~~~~
@@ -98,13 +97,13 @@ There should now be a ``test.py`` file sitting in the scripts directory. To run 
 
       .. code-block:: zsh
 
-         python3 test.py
+         python3 -m scripts.test
 
    .. tab-item:: With uv
 
       .. code-block:: zsh
 
-         uv run test.py
+         uv run -m scripts.test
 
 You should see something like::
 
@@ -128,4 +127,5 @@ Next Steps
 
 You're all set up! 🎉
 
-Now head over to the :doc:`quickstart` guide to learn how to use the library.
+Now head over to the :doc:`quickstart` guide to learn how to use the library. Note that in the docs, the CLI commands
+are prefixed by just ``amqcsl``, but you should be doing ``python3 -m amqcsl`` or ``uv run amqcsl``.

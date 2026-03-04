@@ -6,11 +6,11 @@ Quickstart
 If you're just here to add character metadata, check out :doc:`workflows/character`.
 
 Firstly, open the ``scripts/test.py`` file you created in :doc:`installation`
-in whatever text editor you want. You should see the following line:
+in your desired text editor. You should see the following line:
 
 .. code-block:: python
 
-   logger.info('shiHib')
+   pprint('shiHib')
 
 This is a placeholder for the template, and we'll replace this with actual code.
 

@@ -1,8 +1,7 @@
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine, Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Sequence
 from functools import cached_property
-from itertools import chain
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
@@ -243,46 +242,39 @@ class AsyncDBClient:
         bundle = GroupBundle()
         self._groups = await self.process(bundle)
 
-    # The following 3 functions handle requesting pages
-    # Functions are written in CPS to allow for full asynchronicity
-    async def _process_pages[T, R](
+    async def _process_pages[T](
         self,
         bundle: PageBundle[T, PageMultiVendor],
-        func: ItemProcessor[T, R],
-    ) -> Iterable[R]:
+    ) -> AsyncIterator[T]:
         logger.debug(f'Processing {type(bundle)}')
         g = bundle.vendor(self.client)
+
+        # First page
         [req] = next(g)
         res = await self._send_request(req)
         raw_page = bundle.process_response(res)
         page = bundle.clean_raw_page(raw_page)
+        for item in page:
+            yield item
+
+        # Other pages
         reqs = g.send([raw_page])
         async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(self._process_page(page, func))]
-            for req in reqs:
-                tasks.append(tg.create_task(self._request_page_and_process(bundle, req, func)))
-        return chain.from_iterable(task.result() for task in tasks)
+            tasks = [tg.create_task(self._request_page_and_process(bundle, req)) for req in reqs]
+        for task in tasks:
+            for item in task.result():
+                yield item
 
     async def _request_page_and_process[T, R](
         self,
         bundle: PageBundle[T, PageMultiVendor],
         req: httpx.Request,
-        func: ItemProcessor[T, R],
-    ) -> Iterable[R]:
+    ) -> Iterable[T]:
         res = await self._send_request(req)
         raw_page = bundle.process_response(res)
-        return await self._process_page(bundle.clean_raw_page(raw_page), func)
+        return bundle.clean_raw_page(raw_page)
 
-    async def _process_page[T, R](
-        self,
-        page: Iterator[T],
-        func: ItemProcessor[T, R],
-    ) -> Iterable[R]:
-        async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(func(self, item)) for item in page]
-        return [task.result() for task in tasks]
-
-    async def iter_tracks[R](
+    async def iter_tracks(
         self,
         search_term: str = '',
         *,
@@ -292,8 +284,7 @@ class AsyncDBClient:
         missing_info: bool = False,
         from_active_list: bool | None = None,
         batch_size: int = 50,
-        func: ItemProcessor[CSLTrack, R] = default_func,
-    ) -> Iterable[R]:
+    ) -> AsyncIterator[CSLTrack]:
         """Gather tracks matching search term, optionally applying a continuation to each track
 
         Args:
@@ -304,7 +295,6 @@ class AsyncDBClient:
             missing_info: Restrict to songs missing info
             from_active_list: Restrict to songs from active list, defaults to True if active_list is given and False otherwise
             batch_size: How many tracks to query at once (page size)
-            func: Continuation
 
         Returns:
             Iterable of results from calling func on each track
@@ -319,21 +309,20 @@ class AsyncDBClient:
             from_active_list=from_active_list,
             batch_size=batch_size,
         )
-        return await self._process_pages(bundle, func)
+        async for item in self._process_pages(bundle):
+            yield item
 
-    async def iter_songs[R](
+    async def iter_songs(
         self,
         search_term: str,
         *,
         batch_size: int = 50,
-        func: ItemProcessor[CSLSongSample, R] = default_func,
-    ) -> Iterable[R]:
+    ) -> AsyncIterator[CSLSongSample]:
         """Gather songs matching search term, optionally applying a continuation to each song
 
         Args:
             search_term: Term to search for
             batch_size: Number of songs per page
-            func: Continuation
 
         Returns:
             Iterable of results from calling func on each song
@@ -343,21 +332,20 @@ class AsyncDBClient:
             search_term=search_term,
             batch_size=batch_size,
         )
-        return await self._process_pages(bundle, func)
+        async for item in self._process_pages(bundle):
+            yield item
 
-    async def iter_artists[R](
+    async def iter_artists(
         self,
         search_term: str,
         *,
         batch_size: int = 50,
-        func: ItemProcessor[CSLArtistSample, R] = default_func,
-    ) -> Iterable[R]:
+    ) -> AsyncIterator[CSLArtistSample]:
         """Gather artists matching search term, optionally applying a continuation to each artist
 
         Args:
             search_term: Term to search for
             batch_size: Number of artists per page
-            func: Continuation
 
         Returns:
             Iterable of results from calling func on each artist
@@ -367,7 +355,8 @@ class AsyncDBClient:
             search_term=search_term,
             batch_size=batch_size,
         )
-        return await self._process_pages(bundle, func)
+        async for item in self._process_pages(bundle):
+            yield item
 
     # --- Detailed DB reading ---
 
