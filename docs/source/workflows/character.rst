@@ -6,19 +6,12 @@ Creating the script
 
 To start, use the ``character`` template (or the ``character_compact`` template, see below) provided by the CLI:
 
-.. tab-set::
+.. code-block:: zsh
 
-   .. tab-item:: Normal
+    amqcsl make idoly_pride.py -t character
 
-      .. code-block:: zsh
-
-         python3 -m amqcsl make idoly_pride.py -t character
-
-   .. tab-item:: With uv
-
-      .. code-block:: zsh
-
-         uv run amqcsl make idoly_pride.py -t character
+.. tip::
+   Remember to prefix with either ``python3 -m amqcsl`` or ``uv run amqcsl``.
 
 Filling in the info
 --------------------

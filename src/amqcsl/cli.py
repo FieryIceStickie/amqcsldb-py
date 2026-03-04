@@ -21,17 +21,22 @@ def init(
         ),
     ],
 ):
-    """Initialize an empty directory with logs, an env file, and gitignore
-    Note: will override existing files if they exist
+    """Initialize an empty directory with logs, an env file, a gitignore, and a scripts directory.
+    If the directory log/ exists, it will error, but otherwise it will append.
 
     Args:
         dest: Path to script directory, defaults to cwd
+        force: Flag to overwrite existing files
     """
     dest.mkdir(parents=True, exist_ok=True)
     template_dir = files('amqcsl') / '_templates'
     with as_file(template_dir) as dir:
-        shutil.copytree(dir / 'log', dest / 'log', dirs_exist_ok=True)
-    with open(dest / '.env', 'w') as file:
+        try:
+            shutil.copytree(dir / 'log', dest / 'log')
+        except FileExistsError:
+            typer.echo(f'Error: {dest / "log"} already exists.', err=True)
+            raise typer.Exit(code=1)
+    with open(dest / '.env', 'a') as file:
         username = input('Enter AMQ bot username (for .env file): ')
         print(f'AMQ_USERNAME="{username}"', file=file)
         password = input('Enter AMQ bot password (for .env file): ')
@@ -43,10 +48,11 @@ def init(
             or 'amq_session.txt'
         )
         print(f'SESSION_PATH="{session_path}"', file=file)
-    with open(dest / '.gitignore', 'w') as file:
+    with open(dest / '.gitignore', 'a') as file:
         for name in (session_path, '.env', 'logs'):
             print(name, file=file)
     os.makedirs(dest / 'logs', exist_ok=True)
+    os.makedirs(dest / 'scripts', exist_ok=True)
 
 
 class Templates(StrEnum):

@@ -28,9 +28,9 @@ async def main(logger: logging.Logger):
             [],
         )
         my_group = client.groups['INSERT GROUP NAME HERE']
-        tracks = await client.iter_tracks(groups=[my_group], batch_size=100)
+        tracks = client.iter_tracks(groups=[my_group], batch_size=100)
         async with asyncio.TaskGroup() as tg:
-            _ = [tg.create_task(process_track(client, track, artist_to_meta)) for track in tracks]
+            _ = [tg.create_task(process_track(client, track, artist_to_meta)) async for track in tracks]
 
         if cm.prompt(client.queue):
             await client.commit()

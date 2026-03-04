@@ -42,7 +42,7 @@ async def test_track_by_list(router: Router, aclient: AsyncDBClient):
         json__quickFilters__0=3,
     ) % Response(200, json={'tracks': expected, 'count': len(expected)})
     mei_list = aclient.lists['MeiHayasaka']
-    tracks = {track.id for track in await aclient.iter_tracks(active_list=mei_list)}
+    tracks = {track.id async for track in aclient.iter_tracks(active_list=mei_list)}
     assert tracks == {track['id'] for track in expected}
     assert route.call_count == 1
 
@@ -56,7 +56,7 @@ async def test_track_by_group(router: Router, aclient: AsyncDBClient):
         json__groupFilters__0='mock-id-group-idolypride',
     ) % Response(200, json={'tracks': expected, 'count': len(expected)})
     idoly_pride_group = aclient.groups['IDOLY PRIDE']
-    tracks = {track.id for track in await aclient.iter_tracks(groups=[idoly_pride_group])}
+    tracks = {track.id async for track in aclient.iter_tracks(groups=[idoly_pride_group])}
     assert tracks == {track['id'] for track in expected}
     assert route.call_count == 1
 
@@ -80,7 +80,7 @@ async def test_track_with_pages(router: Router, aclient: AsyncDBClient):
         json__take=4,
     ) % Response(200, json={'tracks': expected[4:], 'count': len(expected)})
     idoly_pride_group = aclient.groups['IDOLY PRIDE']
-    tracks = {track.id for track in await aclient.iter_tracks(groups=[idoly_pride_group], batch_size=4)}
+    tracks = {track.id async for track in aclient.iter_tracks(groups=[idoly_pride_group], batch_size=4)}
     assert tracks == {track['id'] for track in expected}
     assert first_page.call_count == 1
     assert second_page.call_count == 1
@@ -96,7 +96,7 @@ async def test_track_search(router: Router, aclient: AsyncDBClient):
         name='tracks',
         json__searchTerm='Blue sky',
     ) % Response(200, json={'tracks': [expected_track], 'count': 1})
-    tracks = {track.id for track in await aclient.iter_tracks('Blue sky')}
+    tracks = {track.id async for track in aclient.iter_tracks('Blue sky')}
     assert tracks == {target_track_id}
     assert route.call_count == 1
 
@@ -113,7 +113,7 @@ async def test_artist_search(router: Router, aclient: AsyncDBClient):
         name='artists',
         params={'searchTerm': 'IDOLY PRIDE'},
     ) % Response(200, json={'artists': expected, 'count': len(expected)})
-    assert {obj.id for obj in await aclient.iter_artists('IDOLY PRIDE')} == {obj['id'] for obj in expected}
+    assert {obj.id async for obj in aclient.iter_artists('IDOLY PRIDE')} == {obj['id'] for obj in expected}
     assert route.call_count == 1
 
 
@@ -125,7 +125,7 @@ async def test_song_search(router: Router, aclient: AsyncDBClient):
         name='songs',
         params={'searchTerm': 'IDOLY PRIDE'},
     ) % Response(200, json={'songs': expected, 'count': len(expected)})
-    assert {obj.id for obj in await aclient.iter_songs('IDOLY PRIDE')} == {obj['id'] for obj in expected}
+    assert {obj.id async for obj in aclient.iter_songs('IDOLY PRIDE')} == {obj['id'] for obj in expected}
     assert route.call_count == 1
 
 
@@ -148,7 +148,7 @@ async def test_get_song(router: Router, aclient: AsyncDBClient):
         name='get_song',
     ) % Response(200, json=expected_song)
 
-    song_sample = next(iter(await aclient.iter_songs('Blue sky summer')))
+    song_sample = await anext(aiter(aclient.iter_songs('Blue sky summer')))
     song = await aclient.get_song(song_sample)
     assert song == CSLSong.from_json(expected_song)
     assert iter_route.call_count == 1
@@ -174,7 +174,7 @@ async def test_get_artist(router: Router, aclient: AsyncDBClient):
         name='get_artist',
     ) % Response(200, json=expected_artist)
 
-    artist_sample = next(iter(await aclient.iter_artists('Shuka Saitou')))
+    artist_sample = await anext(aiter(aclient.iter_artists('Shuka Saitou')))
     artist = await aclient.get_artist(artist_sample)
     assert artist == CSLArtist.from_json(expected_artist)
     assert iter_route.call_count == 1
@@ -200,7 +200,7 @@ async def test_get_metadata(router: Router, aclient: AsyncDBClient):
         name='get_meta',
     ) % Response(200, json=expected_meta)
 
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     meta = await aclient.get_metadata(track)
     assert meta == CSLMetadata.from_json(expected_meta)
     assert track_route.call_count == 1
@@ -225,7 +225,7 @@ async def test_get_no_metadata(router: Router, aclient: AsyncDBClient):
         name='get_meta',
     ) % Response(404, json=load('errors/no_meta'))
 
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     meta = await aclient.get_metadata(track)
     assert meta is None
     assert track_route.call_count == 1
@@ -291,8 +291,8 @@ async def test_list_edit(router: Router, aclient: AsyncDBClient):
         json__removeSongIds=[remove_track_json['id']],
     ) % Response(200)
 
-    add_track = next(iter(await aclient.iter_tracks('SUKI for you')))
-    remove_track = next(iter(await aclient.iter_tracks(active_list=mei_list)))
+    add_track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
+    remove_track = await anext(aiter(aclient.iter_tracks(active_list=mei_list)))
     await aclient.list_edit(
         mei_list,
         name='meichan',
@@ -340,7 +340,7 @@ async def test_track_add_metadata(router: Router, aclient: AsyncDBClient):
         json__override=False,
         json__extraMetadatas=[{'isArtist': True, 'type': 'Character', 'value': 'You Watanabe'}],
     ) % Response(200)
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     meta = await aclient.get_metadata(track)
     await aclient.track_add_metadata(
         track,
@@ -391,7 +391,7 @@ async def test_track_add_metadata_artist_credit(router: Router, aclient: AsyncDB
         json__override=False,
         json__artistCredits=[{'artistId': 'mock-id-artist-aki-hata', 'type': 'Composer', 'credit': None}],
     ) % Response(200)
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     meta = await aclient.get_metadata(track)
     await aclient.track_add_metadata(
         track,
@@ -425,7 +425,7 @@ async def test_track_remove_metadata(router: Router, aclient: AsyncDBClient):
         f'/api/track/{track_json["id"]}/metadata/{meta_json["extraMetas"][0]["id"]}',
         name='post_meta',
     ) % Response(200)
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     meta = await aclient.get_metadata(track)
     assert meta is not None
     assert len(meta.extra_metas) == 1
@@ -455,7 +455,7 @@ async def test_track_metadata_queue(router: Router, aclient: AsyncDBClient):
         f'/api/track/{track_json["id"]}/metadata/{meta_json["extraMetas"][0]["id"]}',
         name='post_meta',
     ) % Response(200)
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     meta = await aclient.get_metadata(track)
     assert meta is not None
     assert len(meta.extra_metas) == 1
@@ -483,7 +483,7 @@ async def test_track_edit(router: Router, aclient: AsyncDBClient):
         name='post_meta',
         json__name='SUKI for you, DREAM for you! (You Watanabe Solo ver.)',
     ) % Response(200)
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     await aclient.track_edit(track, name='SUKI for you, DREAM for you! (You Watanabe Solo ver.)')
     assert route.call_count == 1
 
@@ -544,7 +544,7 @@ async def test_add_audio(router: Router, aclient: AsyncDBClient, tmp_path: Path)
         params={'sessionId': 'mock-sessionid', 'key': 'mock-key'},
     ) % Response(200)
 
-    track = next(iter(await aclient.iter_tracks('SUKI for you')))
+    track = await anext(aiter(aclient.iter_tracks('SUKI for you')))
     await aclient.add_audio(track, audio_path)
     assert presign_route.call_count == 1
     assert upload_route.call_count == 1

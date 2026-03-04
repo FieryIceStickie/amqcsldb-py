@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from itertools import chain
 from typing import Self, overload, override
 
@@ -219,8 +219,16 @@ async def _async_conv_artists(
             res = g.send(phrase_to_artists)  # type: ignore[reportArgumentType]
         except StopIteration as e:
             return e.value
+
+        # Semaphore since pagination can take a while, and this prevents issues with timeouts
+        sem = asyncio.Semaphore(5)
+
+        async def drain(it: AsyncIterator[CSLArtistSample]) -> list[CSLArtistSample]:
+            async with sem:
+                return [item async for item in it]
+
         async with asyncio.TaskGroup() as tg:
-            tasks = {phrase: tg.create_task(client.iter_artists(phrase)) for phrase in res}
+            tasks = {phrase: tg.create_task(drain(client.iter_artists(phrase))) for phrase in res}
         phrase_to_artists = {phrase: task.result() for phrase, task in tasks.items()}
 
 

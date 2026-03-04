@@ -207,7 +207,7 @@ async def test_aspire_async(
     artist_handler: ArtistHandler,
 ):
     artist_to_meta = await cm.make_artist_to_meta(aclient, characters, artists, ['Liella!'])
-    for track in await aclient.iter_tracks('Aspire'):
+    async for track in aclient.iter_tracks('Aspire'):
         meta = await aclient.get_metadata(track)
         cm.queue_character_metadata(aclient, track, artist_to_meta, meta, artist_handler)
     assert not artist_handler.unknown_artists
@@ -227,7 +227,7 @@ async def test_aspire_async_compact(
     artist_handler: ArtistHandler,
 ):
     artist_to_meta = await cm.compact_make_artist_to_meta(aclient, compact_characters, ['Liella!'])
-    for track in await aclient.iter_tracks('Aspire'):
+    async for track in aclient.iter_tracks('Aspire'):
         meta = await aclient.get_metadata(track)
         cm.queue_character_metadata(aclient, track, artist_to_meta, meta, artist_handler)
     assert not artist_handler.unknown_artists
