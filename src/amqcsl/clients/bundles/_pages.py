@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Generic, Iterable, TypeVar, overload, override
 import httpx
 import rich.repr
 from attrs import Attribute, Converter, define, field, frozen
-from attrs.validators import deep_iterable, gt, instance_of
+from attrs.validators import gt
 
 from amqcsl.exceptions import QueryError
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
@@ -30,8 +30,8 @@ type PageVendor = PageSingleVendor | PageMultiVendor
 
 @frozen
 class PageBundle[R, Vd: PageVendor](ABC):
-    max_batch_size: int = field(validator=[instance_of(int), gt(0)])
-    max_query_size: int = field(validator=[instance_of(int), gt(0)])
+    max_batch_size: int = field(validator=gt(0))
+    max_query_size: int = field(validator=gt(0))
     batch_size: int = field()
     strategy: 'PageStrategy[R, Vd]' = field()
 
@@ -128,13 +128,12 @@ class AsyncPageStrategy[R](PageStrategy[R, PageMultiVendor], ABC):
 
 @frozen
 class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
-    search_term: str = field(validator=instance_of(str))
-    groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
-    active_list: CSLList | None = field(validator=instance_of((CSLList, type(None))))
-    missing_audio: bool = field(validator=instance_of(bool))
-    missing_info: bool = field(validator=instance_of(bool))
+    search_term: str
+    groups: Iterable[CSLGroup]
+    active_list: CSLList | None
+    missing_audio: bool
+    missing_info: bool
     from_active_list: bool | None = field(
-        validator=instance_of(bool),
         converter=Converter(
             lambda value, self_: bool(self_.active_list) if value is None else value,  # type: ignore
             takes_self=True,
@@ -250,7 +249,7 @@ class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
 
 @frozen
 class IterSongsBundle(PageBundle[CSLSongSample, Vd], Generic[Vd]):
-    search_term: str = field(validator=instance_of(str))
+    search_term: str
 
     @overload
     @classmethod
@@ -318,7 +317,7 @@ class IterSongsBundle(PageBundle[CSLSongSample, Vd], Generic[Vd]):
 
 @frozen
 class IterArtistsBundle(PageBundle[CSLArtistSample, Vd], Generic[Vd]):
-    search_term: str = field(validator=instance_of(str))
+    search_term: str
 
     @overload
     @classmethod

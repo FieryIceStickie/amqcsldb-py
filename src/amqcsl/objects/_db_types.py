@@ -2,8 +2,8 @@ import datetime as dt
 import logging
 from operator import attrgetter
 from typing import cast, override
-import rich.repr
 
+import rich.repr
 from attrs import frozen
 
 from amqcsl.exceptions import QueryError
@@ -188,6 +188,11 @@ class CSLSongRelation:
 
 
 @frozen
+class CSLTrackRef:
+    id: str
+
+
+@frozen
 class CSLTrackArtistCredit:
     artist: CSLArtistSample
     name: str
@@ -216,8 +221,7 @@ class CSLTrackArtistCredit:
 
 
 @frozen
-class CSLTrackLink:
-    id: str
+class CSLTrackLink(CSLTrackRef):
     name: str | None
     artists: list[CSLTrackArtistCredit]
 
@@ -238,6 +242,9 @@ class CSLTrackLink:
             case _:
                 logger.info('Invalid json when parsing CSLTrackLink', extra={'json': data})
                 raise QueryError('Invalid json when parsing CSLTrackLink')
+
+    def ref(self) -> CSLTrackRef:
+        return CSLTrackRef(self.id)
 
 
 @frozen
@@ -358,15 +365,13 @@ class CSLSong(CSLSongSample):
 
 
 @frozen
-class SimpleCSLTrack:
-    id: str
+class SimpleCSLTrack(CSLTrackRef):
     name: str | None
     original_simple_artist: str
 
 
 @frozen
-class CSLTrack:
-    id: str
+class CSLTrack(CSLTrackRef):
     name: str | None
     original_name: str
     original_simple_artist: str
@@ -403,6 +408,10 @@ class CSLTrack:
     @property
     def str_artist_credits(self) -> str:
         return ''.join([f'{credit.name}{credit.join_phrase}' for credit in self.artist_credits])
+
+    @property
+    def audio_url(self) -> str:
+        return f'https://amqbot.082640.xyz/files/{self.audio_name}'
 
     @property
     def simp(self) -> SimpleCSLTrack:

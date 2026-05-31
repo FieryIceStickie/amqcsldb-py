@@ -9,7 +9,7 @@ import httpx
 import rich.repr
 from attr.validators import optional
 from attrs import Attribute, field, frozen
-from attrs.validators import deep_iterable, gt, in_, instance_of, min_len
+from attrs.validators import gt, instance_of, min_len
 
 from amqcsl.exceptions import LoginError, QueryError
 from amqcsl.objects._db_types import (
@@ -25,6 +25,7 @@ from amqcsl.objects._db_types import (
     CSLSongArtistCredit,
     CSLSongSample,
     CSLTrack,
+    CSLTrackRef,
     ExtraMetadata,
     Metadata,
     NewSong,
@@ -40,9 +41,9 @@ logger = logging.getLogger('amqcsl.client')
 
 @frozen
 class AuthBundle(Bundle[None]):
-    username: str | None = field(validator=optional(instance_of(str)))
-    password: str | None = field(repr=False, validator=optional(instance_of(str)))
-    session_path: Path = field(validator=instance_of(Path))
+    username: str | None
+    password: str | None
+    session_path: Path
 
     def get_session_cookie(self) -> str:
         """Get the session cookie from the file
@@ -139,7 +140,7 @@ class AuthBundle(Bundle[None]):
 
 @frozen
 class LogoutBundle(Bundle[None]):
-    session_path: Path = field(validator=instance_of(Path))
+    session_path: Path
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -202,7 +203,7 @@ class GroupBundle(Bundle[CSLGroups]):
 
 @frozen
 class GetSongBundle(Bundle[CSLSong]):
-    song: CSLSongSample = field(validator=instance_of(CSLSongSample))
+    song: CSLSongSample
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[CSLSong]:
@@ -221,7 +222,7 @@ class GetSongBundle(Bundle[CSLSong]):
 
 @frozen
 class GetArtistBundle(Bundle[CSLArtist]):
-    artist: CSLArtistSample = field(validator=instance_of(CSLArtistSample))
+    artist: CSLArtistSample
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[CSLArtist]:
@@ -259,8 +260,8 @@ class GetMetadataBundle(Bundle[CSLMetadata | None]):
 
 @frozen
 class CreateListBundle(Bundle[None]):
-    name: str = field(validator=[instance_of(str), min_len(1)])
-    csl_lists: Iterable[CSLList] = field(default=(), validator=deep_iterable(instance_of(CSLList)))
+    name: str = field(validator=[min_len(1)])
+    csl_lists: Iterable[CSLList] = ()
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -281,10 +282,10 @@ class CreateListBundle(Bundle[None]):
 
 @frozen
 class ListEditBundle(Bundle[None]):
-    csl_list: CSLList = field(validator=instance_of(CSLList))
-    name: str | None = field(default=None, validator=optional([instance_of(str), min_len(1)]))
-    add: Iterable[CSLTrack] = field(default=(), validator=deep_iterable(instance_of(CSLTrack)))
-    remove: Iterable[CSLTrack] = field(default=(), validator=deep_iterable(instance_of(CSLTrack)))
+    csl_list: CSLList
+    name: str | None = field(default=None, validator=optional(min_len(1)))
+    add: Iterable[CSLTrackRef] = ()
+    remove: Iterable[CSLTrackRef] = ()
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -307,7 +308,7 @@ class ListEditBundle(Bundle[None]):
 
 @frozen
 class CreateGroupBundle(Bundle[CSLGroup]):
-    name: str = field(validator=[instance_of(str), min_len(1)])
+    name: str = field(validator=min_len(1))
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[CSLGroup]:
@@ -323,8 +324,8 @@ class CreateGroupBundle(Bundle[CSLGroup]):
 
 @frozen
 class GroupEditBundle(Bundle[None]):
-    group: CSLGroup = field(validator=instance_of(CSLGroup))
-    name: str = field(validator=[instance_of(str), min_len(1)])
+    group: CSLGroup
+    name: str = field(validator=min_len(1))
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -344,7 +345,7 @@ class GroupEditBundle(Bundle[None]):
 
 @frozen
 class GroupDeleteBundle(Bundle[None]):
-    group: CSLGroup = field(validator=instance_of(CSLGroup))
+    group: CSLGroup
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -359,9 +360,9 @@ class GroupDeleteBundle(Bundle[None]):
 
 @frozen
 class SongEditBundle(Bundle[None]):
-    song: CSLSong = field(validator=instance_of(CSLSong))
-    name: str | None = field(validator=optional(instance_of(str)))
-    disambiguation: str | None = field(validator=optional(instance_of(str)))
+    song: CSLSong
+    name: str | None
+    disambiguation: str | None
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -383,7 +384,7 @@ class SongEditBundle(Bundle[None]):
 
 @frozen
 class SongDeleteBundle(Bundle[None]):
-    song: CSLSong = field(validator=instance_of(CSLSong))
+    song: CSLSong
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -398,8 +399,8 @@ class SongDeleteBundle(Bundle[None]):
 
 @frozen
 class SongAddMetadataBundle(Bundle[None]):
-    song: CSLSong = field(validator=instance_of(CSLSong))
-    metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
+    song: CSLSong
+    metas: Iterable[Metadata]
 
     @cached_property
     def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
@@ -437,8 +438,8 @@ class SongAddMetadataBundle(Bundle[None]):
 
 @frozen
 class SongDeleteMetadataBundle(Bundle[None]):
-    song: CSLSong = field(validator=instance_of(CSLSong))
-    meta: CSLSongArtistCredit | CSLExtraMetadata = field(validator=instance_of((CSLSongArtistCredit, CSLExtraMetadata)))
+    song: CSLSong
+    meta: CSLSongArtistCredit | CSLExtraMetadata
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -454,10 +455,10 @@ class SongDeleteMetadataBundle(Bundle[None]):
 
 @frozen
 class TrackAddMetadataBundle(Bundle[None]):
-    track: CSLTrack = field(validator=instance_of(CSLTrack))
-    metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
-    _override: bool | None = field(default=None, validator=optional(instance_of(bool)))
-    existing_meta: CSLMetadata | None = field(default=None, validator=optional(instance_of(CSLMetadata)))
+    track: CSLTrack
+    metas: Iterable[Metadata]
+    _override: bool | None = None
+    existing_meta: CSLMetadata | None = None
 
     @cached_property
     def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
@@ -520,8 +521,8 @@ class TrackAddMetadataBundle(Bundle[None]):
 
 @frozen
 class TrackDeleteMetadataBundle(Bundle[None]):
-    track: CSLTrack = field(validator=instance_of(CSLTrack))
-    meta: CSLSongArtistCredit | CSLExtraMetadata = field(validator=instance_of((CSLSongArtistCredit, CSLExtraMetadata)))
+    track: CSLTrack
+    meta: CSLSongArtistCredit | CSLExtraMetadata
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -537,23 +538,14 @@ class TrackDeleteMetadataBundle(Bundle[None]):
 
 @frozen
 class TrackEditBundle(Bundle[None]):
-    track: CSLTrack = field(validator=instance_of(CSLTrack))
-    artist_credits: Sequence[TrackPutArtistCredit] | None = field(  # type: ignore[reportUnknownArgumentType]
-        default=None,
-        validator=optional(deep_iterable(instance_of(TrackPutArtistCredit))),  # type: ignore[reportUnknownArgumentType]
-    )
-    groups: Sequence[CSLGroup] | None = field(default=None, validator=optional(deep_iterable(instance_of(CSLGroup))))  # type: ignore[reportUnknownArgumentType]
-    name: str | None = field(default=None, validator=optional(instance_of(str)))
-    original_artist: str | None = field(default=None, validator=optional(instance_of(str)))
-    original_name: str | None = field(default=None, validator=optional(instance_of(str)))
-    song: NewSong | CSLSongSample | None = field(
-        default=None,
-        validator=optional(instance_of((NewSong, CSLSongSample))),
-    )
-    type: TrackType | None = field(
-        default=None,
-        validator=optional(in_(REVERSE_TRACK_TYPE)),  # type: ignore[reportUnknownArgumentType]
-    )
+    track: CSLTrack
+    artist_credits: Sequence[TrackPutArtistCredit] | None = None
+    groups: Sequence[CSLGroup] | None = None
+    name: str | None = None
+    original_artist: str | None = None
+    original_name: str | None = None
+    song: NewSong | CSLSongSample | None = None
+    type: TrackType | None = None
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -597,11 +589,11 @@ class TrackEditBundle(Bundle[None]):
 
 @frozen
 class CreateAlbumBundle(Bundle[None]):
-    name: str = field(validator=[instance_of(str), min_len(1)])
-    original_name: str = field(validator=[instance_of(str), min_len(1)])
-    year: int = field(validator=[instance_of(int), gt(0)])
-    groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
-    tracks: Sequence[Sequence[AlbumTrack]] = field(validator=deep_iterable(deep_iterable(instance_of(AlbumTrack))))  # type: ignore[reportUnknownArgumentType]
+    name: str = field(validator=min_len(1))
+    original_name: str = field(validator=min_len(1))
+    year: int = field(validator=gt(0))
+    groups: Iterable[CSLGroup] = field()
+    tracks: Sequence[Sequence[AlbumTrack]] = field()
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -633,7 +625,7 @@ class CreateAlbumBundle(Bundle[None]):
 
 @frozen
 class AddAudioBundle(Bundle[None]):
-    track: CSLTrack = field(validator=instance_of(CSLTrack))
+    track: CSLTrack
     audio_path: Path = field(converter=Path)
 
     @audio_path.validator  # type: ignore
@@ -681,3 +673,28 @@ class AddAudioBundle(Bundle[None]):
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'track', self.track.simp
         yield 'audio_path', self.audio_path.resolve()
+
+
+@frozen
+class ImportAudioBundle(Bundle[None]):
+    track: CSLTrack
+    track_to_import_from: CSLTrack
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        track = self.track
+        logger.info(f'Importing audio of {track.name}')
+        res = yield client.build_request(
+            'POST',
+            f'/api/track/{track.id}/audio-import',
+            json={
+                'id': track.id,
+                'url': self.track_to_import_from.audio_url,
+            },
+        )
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
+        yield 'track_to_import_from', self.track_to_import_from.simp

@@ -24,6 +24,7 @@ from amqcsl.clients.bundles._misc import (
     GroupBundle,
     GroupDeleteBundle,
     GroupEditBundle,
+    ImportAudioBundle,
     ListBundle,
     ListEditBundle,
     LogoutBundle,
@@ -56,6 +57,7 @@ from amqcsl.objects._db_types import (
     CSLSongArtistCredit,
     CSLSongSample,
     CSLTrack,
+    CSLTrackRef,
     Metadata,
     NewSong,
     TrackPutArtistCredit,
@@ -85,9 +87,9 @@ class DBClient:
     _client: httpx.Client | None = field(default=None, init=False, repr=False)
 
     #: Maximum batch size when querying db
-    max_batch_size: int = field(default=100, validator=[instance_of(int), gt(0)])
+    max_batch_size: int = field(default=100, validator=[gt(0)])
     #: Maximum number of queries when iterating
-    max_query_size: int = field(default=1500, validator=[instance_of(int), gt(0)])
+    max_query_size: int = field(default=1500, validator=[gt(0)])
 
     _lists: CSLLists | None = None
     _groups: CSLGroups | None = None
@@ -382,8 +384,8 @@ class DBClient:
         csl_list: CSLList,
         *,
         name: str | None = None,
-        add: Iterable[CSLTrack] = (),
-        remove: Iterable[CSLTrack] = (),
+        add: Iterable[CSLTrackRef] = (),
+        remove: Iterable[CSLTrackRef] = (),
     ) -> None:
         """Edit a list
 
@@ -636,6 +638,26 @@ class DBClient:
             QueryError: Audio path is invalid
         """
         bundle = AddAudioBundle(track, audio_path)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self.process(bundle)
+
+    def import_audio(
+        self,
+        track: CSLTrack,
+        track_to_import_from: CSLTrack,
+        *,
+        queue: bool = False,
+    ) -> None:
+        """Import audio from an existing track
+
+        Args:
+            track: CSLTrack
+            track_to_import_from: Other track to import audio from
+            queue: Whether to queue the request, defaults to False
+        """
+        bundle = ImportAudioBundle(track, track_to_import_from)
         if queue:
             self.enqueue(bundle)
         else:
