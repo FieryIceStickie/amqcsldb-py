@@ -241,6 +241,7 @@ def compact_make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ', ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> ArtistToMeta: ...
 @overload
 def compact_make_artist_to_meta(
@@ -248,6 +249,7 @@ def compact_make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ', ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> Awaitable[ArtistToMeta]: ...
 
 
@@ -256,6 +258,7 @@ def compact_make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ', ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> ArtistToMeta | Awaitable[ArtistToMeta]:
     """Make the artist to metadata dict with a compact artist dict
 
@@ -264,25 +267,26 @@ def compact_make_artist_to_meta(
         artists: ArtistDict, values should be character names separated by sep
         search_phrases: List of search phrases to be passed to iter_artists
         sep: Separator for artist values
+        exclude: Artists to ignore
 
     Returns:
         ArtistToMeta
     """
     match client:
         case DBClient():
-            artist_objs = _sync_conv_artists(client, artists, search_phrases)
+            artist_objs = _sync_conv_artists(client, chain(artists, exclude), search_phrases)
             return {
                 artist_objs[k]: [ExtraMetadata(True, 'Character', c) for c in v.split(sep)]  #
                 for k, v in artists.items()
-            }
+            } | {artist_objs[k]: [] for k in exclude}
         case AsyncDBClient():
 
             async def rtn():
-                artist_objs = await _async_conv_artists(client, artists, search_phrases)
+                artist_objs = await _async_conv_artists(client, chain(artists, exclude), search_phrases)
                 return {
                     artist_objs[k]: [ExtraMetadata(True, 'Character', c) for c in v.split(sep)]  #
                     for k, v in artists.items()
-                }
+                } | {artist_objs[k]: [] for k in exclude}
 
             return rtn()
 
@@ -294,6 +298,7 @@ def make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ' ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> ArtistToMeta: ...
 @overload
 def make_artist_to_meta(
@@ -302,6 +307,7 @@ def make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ' ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> Awaitable[ArtistToMeta]: ...
 
 
@@ -311,6 +317,7 @@ def make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ' ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> ArtistToMeta | Awaitable[ArtistToMeta]:
     """Make the artist to metadata dict
 
@@ -320,6 +327,7 @@ def make_artist_to_meta(
         artists: ArtistDict, values should be keys of characters separated by sep
         search_phrases: List of search phrases to be passed to iter_artists
         sep: Separator for artist values
+        exclude: Artists to ignore
 
     Returns:
         ArtistToMeta
@@ -327,13 +335,19 @@ def make_artist_to_meta(
     metas = {k: ExtraMetadata(True, 'Character', v) for k, v in characters.items()}
     match client:
         case DBClient():
-            artist_objs = _sync_conv_artists(client, artists, search_phrases)
-            return {artist_objs[k]: [metas[c] for c in v.split(sep)] for k, v in artists.items()}
+            artist_objs = _sync_conv_artists(client, chain(artists, exclude), search_phrases)
+            return (
+                {artist_objs[k]: [metas[c] for c in v.split(sep)] for k, v in artists.items()}  #
+                | {artist_objs[k]: [] for k in exclude}
+            )
         case AsyncDBClient():
 
             async def rtn():
-                artist_objs = await _async_conv_artists(client, artists, search_phrases)
-                return {artist_objs[k]: [metas[c] for c in v.split(sep)] for k, v in artists.items()}
+                artist_objs = await _async_conv_artists(client, chain(artists, exclude), search_phrases)
+                return (
+                    {artist_objs[k]: [metas[c] for c in v.split(sep)] for k, v in artists.items()}  #
+                    | {artist_objs[k]: [] for k in exclude}
+                )
 
             return rtn()
 
@@ -374,12 +388,12 @@ class QueueCharacterMetadataBundle(Bundle[None]):
                 self.unknown_artists.append(cred.artist)
             else:
                 metas.update(new_metas)
-        bundle = TrackAddMetadataBundle(self.track, metas, existing_meta=self.meta)
-        self.bundles.append(bundle)
         if self.unknown_artists:
             is_fixed = self.unknown_artist_handler(self.track, self.artist_to_meta, self.unknown_artists)
             if not is_fixed:
                 return
+        bundle = TrackAddMetadataBundle(self.track, metas, existing_meta=self.meta)
+        self.bundles.append(bundle)
 
         if self.meta is None:
             return
