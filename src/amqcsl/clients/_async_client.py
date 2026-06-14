@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from functools import cached_property
 from os import PathLike
 from pathlib import Path
@@ -28,6 +28,7 @@ from amqcsl.clients.bundles._misc import (
     GroupEditBundle,
     ImportAudioBundle,
     ListBundle,
+    ListDeleteBundle,
     ListEditBundle,
     LogoutBundle,
     SongAddMetadataBundle,
@@ -71,12 +72,6 @@ from ._client_consts import (
 )
 
 logger = logging.getLogger('amqcsl.client')
-
-type ItemProcessor[T, R] = Callable[[AsyncDBClient, T], Coroutine[None, None, R]]
-
-
-async def default_func[T](_: 'AsyncDBClient', item: T) -> T:
-    return item
 
 
 @define
@@ -436,6 +431,16 @@ class AsyncDBClient:
         """
         bundle = ListEditBundle(csl_list, name, add, remove)
         await self.process(bundle)
+
+    async def list_delete(self, csl_list: CSLList) -> None:
+        """Delete a list
+
+        Args:
+            csl_list: List to delete
+        """
+        bundle = ListDeleteBundle(csl_list)
+        await self.process(bundle)
+        await self.refresh_lists()
 
     # --- General Editing ---
 

@@ -7,9 +7,8 @@ from typing import override
 
 import httpx
 import rich.repr
-from attr.validators import optional
 from attrs import Attribute, field, frozen
-from attrs.validators import gt, instance_of, min_len
+from attrs.validators import gt, instance_of, min_len, optional
 
 from amqcsl.exceptions import LoginError, QueryError
 from amqcsl.objects._db_types import (
@@ -304,6 +303,22 @@ class ListEditBundle(Bundle[None]):
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'list', self.csl_list
         yield 'new_name', self.name, None
+
+
+@frozen
+class ListDeleteBundle(Bundle[None]):
+    csl_list: CSLList
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        csl_list = self.csl_list
+        logger.info(f'Deleting list {csl_list.name}')
+        res = yield client.build_request('DELETE', f'/api/list/{csl_list.id}')
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'list', self.csl_list
 
 
 @frozen

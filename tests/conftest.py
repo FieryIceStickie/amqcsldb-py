@@ -62,7 +62,7 @@ def router(
 ) -> Iterator[Router]:
     with respx.mock(base_url=DB_URL, assert_all_called=False) as router:
         add_login(router, username, password, mock_id, cookies)
-        add_lists_and_groups(router, cookies)
+        add_lists_and_groups(router)
         yield router
 
 
@@ -104,6 +104,6 @@ def add_login(
     router.get('/api/auth/me', name='auth_none') % 401
 
 
-def add_lists_and_groups(router: Router, cookies: Cookie):
-    router.get('/api/lists', name='lists', cookies=cookies) % Response(200, json=load('lists'))
-    router.get('/api/groups', name='groups', cookies=cookies) % Response(200, json=load('groups'))
+def add_lists_and_groups(router: Router):
+    router.get('/api/lists', name='lists') % Response(200, json=load('lists'))
+    router.get('/api/groups', name='groups') % Response(200, json=load('groups'))

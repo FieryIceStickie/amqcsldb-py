@@ -26,6 +26,7 @@ from amqcsl.clients.bundles._misc import (
     GroupEditBundle,
     ImportAudioBundle,
     ListBundle,
+    ListDeleteBundle,
     ListEditBundle,
     LogoutBundle,
     SongAddMetadataBundle,
@@ -397,6 +398,16 @@ class DBClient:
         """
         bundle = ListEditBundle(csl_list, name, add, remove)
         self.process(bundle)
+
+    def list_delete(self, csl_list: CSLList) -> None:
+        """Delete a list
+
+        Args:
+            csl_list: List to delete
+        """
+        bundle = ListDeleteBundle(csl_list)
+        self.process(bundle)
+        self._lists = None
 
     # --- General Editing ---
 

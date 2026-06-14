@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from helpers import load
-from httpx import Response
+from httpx import Request, Response
 from respx import Router
 
 from amqcsl import DBClient
@@ -286,6 +286,29 @@ def test_list_edit(router: Router, client: DBClient):
         remove=[remove_track],
     )
     assert route.call_count == 1
+
+
+def test_list_delete(router: Router, client: DBClient):
+    mei_list = client.lists['MeiHayasaka']
+
+    def update_list_route(req: Request) -> Response:
+        _ = router.get(
+            '/api/lists',
+            name='lists',
+        ) % Response(
+            200,
+            json=[clist for clist in load('lists') if clist['name'] != 'MeiHayasaka'],
+        )
+        return Response(200)
+
+    route = router.delete(
+        f'/api/list/{mei_list.id}',
+        name='list_delete',
+    ).mock(side_effect=update_list_route)
+
+    client.list_delete(mei_list)
+    assert route.call_count == 1
+    assert 'MeiHayasaka' not in client.lists
 
 
 def test_add_group(router: Router, client: DBClient):
