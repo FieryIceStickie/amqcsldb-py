@@ -2,6 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Generator, Iterator, Sequence
 from functools import cached_property
+from itertools import chain
 from typing import TYPE_CHECKING, Generic, Iterable, TypeVar, overload, override
 
 import httpx
@@ -13,7 +14,7 @@ from amqcsl.exceptions import QueryError
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from ._core import httpxClient
+from ._core import Bundle, MultiVendor, httpxClient
 
 if TYPE_CHECKING:
     from amqcsl import AsyncDBClient, DBClient
@@ -45,23 +46,40 @@ class PageBundle[R, Vd: PageVendor](ABC):
             raise QueryError(f'Batch size {value} is larger than the max batch size of {self.max_batch_size}')
 
     def vendor(self, client: httpxClient) -> Vd:
+        """Create the strategy's request generator, which receives processed raw pages."""
         return self.strategy.vendor(self, client)
 
     def process_response(self, res: httpx.Response) -> RawPage:
+        """Validate an HTTP response and query limits, then extract its raw page."""
         return self.strategy.process(self, res)
 
     def clean_raw_page(self, item: RawPage) -> Iterator[R]:
+        """Lazily convert a raw page's JSON items into typed results."""
         count, key, page = item
         yield from map(self.process_item, page)
 
-    @abstractmethod
-    def page_request(self, client: httpxClient, skip: int) -> httpx.Request: ...
+    def stream(self) -> 'StreamPagesBundle[R]':
+        """Adapt page responses to HTTP responses while retaining incremental item delivery."""
+        return StreamPagesBundle(self)
+
+    def collect(self) -> 'CollectPagesBundle[R]':
+        """Collect this query through the ordinary bundle interface rather than streaming it."""
+        return CollectPagesBundle(self)
 
     @abstractmethod
-    def process_item(self, item: JSONType) -> R: ...
+    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+        """Build a request for up to batch_size items, starting at the given offset."""
+        ...
 
     @abstractmethod
-    def __rich_repr__(self) -> rich.repr.Result: ...
+    def process_item(self, item: JSONType) -> R:
+        """Convert one JSON item from a query response into a typed result."""
+        ...
+
+    @abstractmethod
+    def __rich_repr__(self) -> rich.repr.Result:
+        """Yield the query details used by Rich to display this bundle."""
+        ...
 
 
 R = TypeVar('R')
@@ -382,3 +400,65 @@ class IterArtistsBundle(PageBundle[CSLArtistSample, Vd], Generic[Vd]):
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'search_term', self.search_term
         yield 'batch_size', self.batch_size
+
+
+@define
+class StreamPagesBundle[R](Bundle[None]):
+    """Bridge page vendors to HTTP vendors, buffering only the current request round.
+
+    After advancing ``vendor``, consume ``take_items()`` before sending its next requests.
+    Drain once more when the vendor finishes: its final responses may contain items.
+    """
+
+    pages: PageBundle[R, PageVendor]
+    _items: list[Iterator[R]] = field(factory=list[Iterator[R]], init=False, repr=False)
+
+    def take_items(self) -> Iterator[R]:
+        """Take the completed pages without retaining items already handed to the caller."""
+        pages, self._items = self._items, []
+        return chain.from_iterable(pages)
+
+    @override
+    def vendor(self, client: httpxClient) -> MultiVendor[None]:
+        vendor = self.pages.vendor(client)
+        reply: RawPage | list[RawPage] | None = None
+        while True:
+            try:
+                outgoing = vendor.send(reply)  # type: ignore[reportArgumentType]
+            except StopIteration:
+                return
+            requests = [outgoing] if isinstance(outgoing, httpx.Request) else outgoing
+            responses = yield requests
+            raw_pages = [self.pages.process_response(response) for response in responses]
+            self._items.extend(self.pages.clean_raw_page(raw_page) for raw_page in raw_pages)
+            reply = raw_pages[0] if isinstance(outgoing, httpx.Request) else raw_pages
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'pages', self.pages
+
+
+@frozen
+class CollectPagesBundle[R](Bundle[list[R]]):
+    """Collect the streaming adapter's items through the ordinary bundle interface."""
+
+    pages: PageBundle[R, PageVendor]
+
+    @override
+    def vendor(self, client: httpxClient) -> MultiVendor[list[R]]:
+        stream = self.pages.stream()
+        vendor = stream.vendor(client)
+        items: list[R] = []
+        responses: Iterable[httpx.Response] | None = None
+        while True:
+            try:
+                requests = vendor.send(responses)  # type: ignore[reportArgumentType]
+            except StopIteration:
+                items.extend(stream.take_items())
+                return items
+            items.extend(stream.take_items())
+            responses = yield requests
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'pages', self.pages

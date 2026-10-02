@@ -41,7 +41,6 @@ from amqcsl.clients.bundles._pages import (
     IterTracksBundle,
     PageBundle,
     PageSingleVendor,
-    RawPage,
 )
 from amqcsl.exceptions import ClientDoesNotExistError
 from amqcsl.objects._db_types import (
@@ -222,31 +221,19 @@ class DBClient:
         return self._groups
 
     def _process_pages[R](self, bundle: PageBundle[R, PageSingleVendor]) -> Iterator[R]:
-        """Processes a page bundle by lazily yielding results
-
-        Args:
-            bundle: LazyBundle
-
-        Yields:
-            Output of the bundle
-        """
+        """Send streaming bundle requests, yielding completed pages before fetching more."""
         logger.debug(f'Processing {type(bundle)}')
-        client = self.client
-        g = bundle.vendor(client)
-        raw_page: RawPage | None = None
+        stream = bundle.stream()
+        vendor = stream.vendor(self.client)
+        responses: list[httpx.Response] | None = None
         while True:
             try:
-                req = g.send(raw_page)  # type: ignore[reportArgumentType]
+                requests = vendor.send(responses)  # type: ignore[reportArgumentType]
             except StopIteration:
-                break
-            match req:
-                case httpx.Request():
-                    resps = [client.send(req)]
-                case reqs:
-                    resps = [client.send(req) for req in reqs]
-            for res in resps:
-                raw_page = bundle.process_response(res)
-                yield from bundle.clean_raw_page(raw_page)
+                yield from stream.take_items()
+                return
+            yield from stream.take_items()
+            responses = [self.client.send(request) for request in requests]
 
     def iter_tracks(
         self,

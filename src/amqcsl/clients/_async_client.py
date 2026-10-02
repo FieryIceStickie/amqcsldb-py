@@ -242,37 +242,24 @@ class AsyncDBClient:
         bundle = GroupBundle()
         self._groups = await self.process(bundle)
 
-    async def _process_pages[T](
-        self,
-        bundle: PageBundle[T, PageMultiVendor],
-    ) -> AsyncIterator[T]:
+    async def _process_pages[T](self, bundle: PageBundle[T, PageMultiVendor]) -> AsyncIterator[T]:
+        """Send streaming bundle requests concurrently, yielding completed pages in order."""
         logger.debug(f'Processing {type(bundle)}')
-        g = bundle.vendor(self.client)
-
-        # First page
-        [req] = next(g)
-        res = await self._send_request(req)
-        raw_page = bundle.process_response(res)
-        page = bundle.clean_raw_page(raw_page)
-        for item in page:
-            yield item
-
-        # Other pages
-        reqs = g.send([raw_page])
-        async with asyncio.TaskGroup() as tg:
-            tasks = [tg.create_task(self._request_page_and_process(bundle, req)) for req in reqs]
-        for task in tasks:
-            for item in task.result():
+        stream = bundle.stream()
+        vendor = stream.vendor(self.client)
+        responses: Sequence[httpx.Response] | None = None
+        while True:
+            try:
+                requests = vendor.send(responses)  # type: ignore[reportArgumentType]
+            except StopIteration:
+                for item in stream.take_items():
+                    yield item
+                return
+            for item in stream.take_items():
                 yield item
-
-    async def _request_page_and_process[T, R](
-        self,
-        bundle: PageBundle[T, PageMultiVendor],
-        req: httpx.Request,
-    ) -> Iterable[T]:
-        res = await self._send_request(req)
-        raw_page = bundle.process_response(res)
-        return bundle.clean_raw_page(raw_page)
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(self._send_request(request)) for request in requests]
+            responses = [task.result() for task in tasks]
 
     async def iter_tracks(
         self,
@@ -285,7 +272,7 @@ class AsyncDBClient:
         from_active_list: bool | None = None,
         batch_size: int = 50,
     ) -> AsyncIterator[CSLTrack]:
-        """Gather tracks matching search term, optionally applying a continuation to each track
+        """Iterate over tracks matching the search parameters
 
         Args:
             search_term: Search term
@@ -296,8 +283,8 @@ class AsyncDBClient:
             from_active_list: Restrict to songs from active list, defaults to True if active_list is given and False otherwise
             batch_size: How many tracks to query at once (page size)
 
-        Returns:
-            Iterable of results from calling func on each track
+        Yields:
+            CSLTrack
         """
         bundle = IterTracksBundle.from_client(
             self,
@@ -318,14 +305,14 @@ class AsyncDBClient:
         *,
         batch_size: int = 50,
     ) -> AsyncIterator[CSLSongSample]:
-        """Gather songs matching search term, optionally applying a continuation to each song
+        """Iterate over songs matching the search term
 
         Args:
             search_term: Term to search for
             batch_size: Number of songs per page
 
-        Returns:
-            Iterable of results from calling func on each song
+        Yields:
+            CSLSongSample
         """
         bundle = IterSongsBundle.from_client(
             self,
@@ -341,14 +328,14 @@ class AsyncDBClient:
         *,
         batch_size: int = 50,
     ) -> AsyncIterator[CSLArtistSample]:
-        """Gather artists matching search term, optionally applying a continuation to each artist
+        """Iterate over artists matching the search term
 
         Args:
             search_term: Term to search for
             batch_size: Number of artists per page
 
-        Returns:
-            Iterable of results from calling func on each artist
+        Yields:
+            CSLArtistSample
         """
         bundle = IterArtistsBundle.from_client(
             self,

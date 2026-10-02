@@ -8,7 +8,8 @@ type httpxClient = httpx.Client | httpx.AsyncClient
 
 type SingleVendor[R] = Generator[httpx.Request, httpx.Response, R]
 type MultiVendor[R] = Generator[Iterable[httpx.Request], Iterable[httpx.Response], R]
-type Vendor[R] = SingleVendor[R] | MultiVendor[R]
+type MixedVendor[R] = Generator[httpx.Request | Iterable[httpx.Request], httpx.Response | Iterable[httpx.Response], R]
+type Vendor[R] = SingleVendor[R] | MultiVendor[R] | MixedVendor[R]
 
 
 class Bundle[R](Protocol):
