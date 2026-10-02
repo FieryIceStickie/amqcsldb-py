@@ -1,5 +1,5 @@
 # pyright: reportUnusedExpression=false
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
@@ -107,3 +107,21 @@ def add_login(
 def add_lists_and_groups(router: Router, cookies: Cookie):
     router.get('/api/lists', name='lists', cookies=cookies) % Response(200, json=load('lists'))
     router.get('/api/groups', name='groups', cookies=cookies) % Response(200, json=load('groups'))
+
+
+@pytest_asyncio.fixture(params=['sync', 'async'])
+async def db(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    router: Router,
+    mock_id: str,
+) -> AsyncIterator[amqcsl.DBClient | amqcsl.AsyncDBClient]:
+    """Enter only the selected client, preserving its initialization behavior."""
+    session_path = tmp_path / 'amq_session.txt'
+    session_path.write_text(mock_id)
+    if request.param == 'sync':
+        with amqcsl.DBClient(session_path=session_path) as client:
+            yield client
+    else:
+        async with amqcsl.AsyncDBClient(session_path=session_path) as client:
+            yield client
