@@ -13,7 +13,7 @@ from amqcsl.workflows import character as cm
 
 compact_characters: cm.ArtistDict = {
     ('Liella!', 'Love Live! Superstar!! (11 members)'): (
-        'Kanon Shibuya, Keke Tang, Sumire Heanna, Chisato Arashi, Ren Hazuki, '  #
+        'Kanon Shibuya, Keke Tang, Sumire Heanna, Chisato Arashi, Ren Hazuki, '  # :)
         'Kinako Sakurakouji, Natsumi Onitsuka, Shiki Wakana, Mei Yoneme, Margarete Wien, Tomari Onitsuka'
     ),
     'Sayuri Date': 'Kanon Shibuya',
@@ -95,7 +95,7 @@ expected_track_names = {
 class AspireFixture:
     route: Route
     num_tracks: int
-    calls: dict[str, bytes] = field(factory=lambda: {})
+    calls: dict[str, bytes] = field(factory=dict[str, bytes])
 
 
 @pytest.fixture
@@ -129,7 +129,7 @@ def aspire_fixture(router: Router) -> AspireFixture:
 
 @define
 class ArtistHandler:
-    unknown_artists: dict[str, list[str]] = field(factory=lambda: {})
+    unknown_artists: dict[str, list[str]] = field(factory=dict[str, list[str]])
 
     def __call__(
         self,

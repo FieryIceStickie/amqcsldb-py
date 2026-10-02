@@ -2,14 +2,12 @@
 # pyright: reportPrivateUsage=false
 from collections.abc import Iterator
 
-from helpers import collect, finish, first
-
-import rich.repr
-from respx import Router
-
 import httpx
 import pytest
+import rich.repr
 from attrs import frozen
+from helpers import collect, finish, first
+from respx import Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.clients.bundles import Items, ParallelBundle, StreamingBundle, StreamingVendor

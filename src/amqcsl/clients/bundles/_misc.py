@@ -33,7 +33,7 @@ from amqcsl.objects._db_types import (
 from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, SongMetadataPostBody, TrackPutBody
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
 
-from ._core import Bundle, SingleVendor, materialize, httpxClient
+from ._core import Bundle, SingleVendor, httpxClient, materialize
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -114,14 +114,14 @@ class AuthBundle(Bundle[None]):
             if res is None:
                 raise RuntimeError('Unexpected branch')
             res.raise_for_status()
-        except httpx.RequestError as e:
-            logger.exception(f'Bad request during auth: {e}')
+        except httpx.RequestError:
+            logger.exception('Bad request during auth')
             raise
         except httpx.HTTPStatusError as e:
             logger.exception(f'Bad response during auth: {e.response.status_code}')
             raise
-        except LoginError as e:
-            logger.exception(f'Error during login of user {self.username}: {e}')
+        except LoginError:
+            logger.exception(f'Error during login of user {self.username}')
             raise
         except Exception:
             logger.exception('Unexpected error during auth')
@@ -260,7 +260,7 @@ class GetMetadataBundle(Bundle[CSLMetadata | None]):
 @frozen
 class CreateListBundle(Bundle[None]):
     name: str = field(validator=min_len(1))
-    csl_lists: list[CSLList] = field(factory=lambda: [], converter=materialize)
+    csl_lists: list[CSLList] = field(factory=list[CSLList], converter=materialize)
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -283,8 +283,8 @@ class CreateListBundle(Bundle[None]):
 class ListEditBundle(Bundle[None]):
     csl_list: CSLList
     name: str | None = field(default=None, validator=optional(min_len(1)))
-    add: list[CSLTrackRef] = field(factory=lambda: [], converter=materialize)
-    remove: list[CSLTrackRef] = field(factory=lambda: [], converter=materialize)
+    add: list[CSLTrackRef] = field(factory=list[CSLTrackRef], converter=materialize)
+    remove: list[CSLTrackRef] = field(factory=list[CSLTrackRef], converter=materialize)
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:

@@ -1,6 +1,3 @@
-from amqcsl.objects import CSLArtist, CSLArtistSample, CSLExtraMetadata, CSLSongRelation
-
-
 from collections.abc import Callable
 from datetime import datetime
 
@@ -9,11 +6,15 @@ from helpers import load
 
 from amqcsl.exceptions import QueryError
 from amqcsl.objects import (
+    CSLArtist,
+    CSLArtistSample,
+    CSLExtraMetadata,
     CSLGroup,
     CSLList,
     CSLMetadata,
     CSLSong,
     CSLSongArtistCredit,
+    CSLSongRelation,
     CSLSongSample,
     CSLTrack,
     CSLTrackArtistCredit,

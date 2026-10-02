@@ -36,21 +36,21 @@ from amqcsl.objects._db_types import (
 from ._workflow_utils import prompt
 
 __all__ = [
-    'ArtistName',
-    'ArtistKey',
-    'CharacterDict',
+    'INCOMPLETE_GROUP',
+    'UNKNOWN_ARTIST',
     'ArtistDict',
+    'ArtistKey',
+    'ArtistName',
     'ArtistToMeta',
+    'AsyncArtistToMeta',
+    'CharacterDict',
+    'Reason',
+    'ShouldExclude',
+    'SyncArtistToMeta',
     'compact_make_artist_to_meta',
     'make_artist_to_meta',
-    'SyncArtistToMeta',
-    'AsyncArtistToMeta',
-    'Reason',
-    'UNKNOWN_ARTIST',
-    'INCOMPLETE_GROUP',
-    'ShouldExclude',
-    'prompt_should_exclude',
     'prompt',
+    'prompt_should_exclude',
 ]
 
 logger = logging.getLogger('amqcsl.workflows.character_metadata')

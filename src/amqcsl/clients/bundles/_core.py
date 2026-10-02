@@ -1,11 +1,11 @@
-from collections.abc import Generator
-from typing import Iterable, Protocol, override
+from collections.abc import Generator, Iterable
+from typing import Protocol, override
 
 import httpx
 import rich.repr
 from attrs import frozen
 
-type httpxClient = httpx.Client | httpx.AsyncClient
+type httpxClient = httpx.Client | httpx.AsyncClient  # noqa: PYI042 -- retain the existing exported alias
 
 type SingleVendor[R] = Generator[httpx.Request, httpx.Response, R]
 type MultiVendor[R] = Generator[Iterable[httpx.Request], Iterable[httpx.Response], R]

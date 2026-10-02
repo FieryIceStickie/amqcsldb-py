@@ -1,8 +1,7 @@
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterable, Iterator
-from typing import cast
-
-from pathlib import Path
 import json
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterable, Iterator
+from pathlib import Path
+from typing import cast
 
 resources = Path(__file__).parent / 'resources'
 

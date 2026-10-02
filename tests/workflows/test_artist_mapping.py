@@ -11,10 +11,12 @@ from respx import Route, Router
 from respx.models import Call
 
 from amqcsl import AsyncDBClient, DBClient
+from amqcsl.clients.bundles._parallel import (
+    _ParallelActionsBundle,  # pyright: ignore[reportPrivateUsage] -- inspect queued actions
+)
 from amqcsl.exceptions import AMQCSLError, QueryError
 from amqcsl.objects import CSLArtist, CSLArtistSample, CSLTrack, ExtraMetadata
 from amqcsl.objects._json_types import JSONType
-from amqcsl.clients.bundles._parallel import _ParallelActionsBundle  # pyright: ignore[reportPrivateUsage] -- inspect queued actions
 from amqcsl.workflows import character as cm
 
 pytestmark = pytest.mark.asyncio

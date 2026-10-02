@@ -5,8 +5,7 @@ import httpx
 import rich.repr
 from attrs import field, frozen
 
-from ._core import Bundle, MultiVendor, Vendor, materialize, httpxClient
-
+from ._core import Bundle, MultiVendor, Vendor, httpxClient, materialize
 
 type Replies = dict[int, httpx.Response | list[httpx.Response] | None]
 type RequestSpans = dict[int, tuple[int, int, bool]]

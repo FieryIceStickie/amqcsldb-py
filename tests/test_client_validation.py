@@ -1,9 +1,10 @@
+import logging
 from pathlib import Path
 from typing import Any
 
 import pytest
 from helpers import finish
-from httpx import Response
+from httpx import HTTPStatusError, Response
 from respx import Router
 
 from amqcsl import AsyncDBClient, DBClient
@@ -114,3 +115,68 @@ async def test_async_login_fallback_and_logout(
         assert path.read_text() == ''
     assert router.routes['auth_none'].call_count == router.routes['login_you'].call_count == 1
     assert router.routes['auth_you'].call_count == router.routes['logout_you'].call_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('json_response', [False, True])
+async def test_http_error_closes_client_with_or_without_json(
+    client_class: type[DBClient] | type[AsyncDBClient],
+    router: Router,
+    tmp_path: Path,
+    mock_id: str,
+    json_response: bool,
+) -> None:
+    path = tmp_path / 'session.txt'
+    path.write_text(mock_id)
+    response = Response(500, json={'error': 'failed'}) if json_response else Response(500, text='Not JSON')
+    route = router.get('/test-error') % response
+    client = client_class(session_path=path)
+    with pytest.raises(HTTPStatusError) as error:
+        match client:
+            case DBClient():
+                with client:
+                    client.client.get('/test-error').raise_for_status()
+            case AsyncDBClient():
+                async with client:
+                    (await client.client.get('/test-error')).raise_for_status()
+    assert error.value.response.status_code == 500
+    assert route.call_count == 1
+    assert client.client.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('http_error', [False, True])
+async def test_exit_closes_client_when_logging_fails(
+    client_class: type[DBClient] | type[AsyncDBClient],
+    router: Router,
+    tmp_path: Path,
+    mock_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    http_error: bool,
+) -> None:
+    path = tmp_path / 'session.txt'
+    path.write_text(mock_id)
+    route = router.get('/test-error') % Response(500, json={'error': 'failed'})
+    client = client_class(session_path=path)
+
+    def fail_logging(*args: object, **kwargs: object) -> None:
+        raise RuntimeError('Logging failed')
+
+    def break_logging() -> None:
+        logger = logging.getLogger('amqcsl.client')
+        monkeypatch.setattr(logger, 'error' if http_error else 'info', fail_logging)
+
+    with pytest.raises(RuntimeError, match='Logging failed'):
+        match client:
+            case DBClient():
+                with client:
+                    break_logging()
+                    if http_error:
+                        client.client.get('/test-error').raise_for_status()
+            case AsyncDBClient():
+                async with client:
+                    break_logging()
+                    if http_error:
+                        (await client.client.get('/test-error')).raise_for_status()
+    assert route.call_count == int(http_error)
+    assert client.client.is_closed

@@ -1,5 +1,7 @@
 from typing import Any
+
 from rich.pretty import pprint
+
 from amqcsl.exceptions import QuitError
 
 

@@ -25,6 +25,7 @@ from ._obj_consts import ArtistType, ExtraMetadataType, SongRelationType, TrackT
 __all__ = [
     'AlbumTrack',
     'ArtistCredit',
+    'ArtistType',
     'CSLArtist',
     'CSLArtistSample',
     'CSLExtraMetadata',
@@ -40,11 +41,10 @@ __all__ = [
     'CSLTrackLink',
     'CSLTrackRef',
     'ExtraMetadata',
+    'ExtraMetadataType',
     'Metadata',
     'NewSong',
-    'TrackPutArtistCredit',
-    'ArtistType',
-    'ExtraMetadataType',
     'SongRelationType',
+    'TrackPutArtistCredit',
     'TrackType',
 ]

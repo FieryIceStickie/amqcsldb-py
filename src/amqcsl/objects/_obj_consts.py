@@ -1,6 +1,5 @@
 from typing import Literal
 
-
 type ArtistType = Literal['Other', 'Person', 'Character', 'Group', 'Orchestra', 'Choir']
 
 ARTIST_TYPE: dict[int, ArtistType] = {

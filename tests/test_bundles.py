@@ -1,20 +1,19 @@
 from collections.abc import Generator
 
-from helpers import finish
-
 import httpx
 import pytest
 import rich.repr
-from respx import Router
 from attrs import frozen
+from helpers import finish
+from respx import Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.clients.bundles import (
     AsyncPageStrategy,
     IterArtistsBundle,
     MixedVendor,
-    ParallelBundle,
     PageStrategy,
+    ParallelBundle,
     SyncPageStrategy,
 )
 from amqcsl.clients.bundles._core import httpxClient

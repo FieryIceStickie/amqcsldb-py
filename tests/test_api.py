@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from helpers import collect, finish, first, load
 from httpx import Request, Response
 from respx import Router
@@ -9,7 +8,6 @@ from respx import Router
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.objects import AlbumTrack, CSLArtist, CSLMetadata, CSLSong, ExtraMetadata
 from amqcsl.objects._db_types import ArtistCredit, CSLArtistSample
-
 
 pytestmark = pytest.mark.asyncio
 
@@ -124,7 +122,7 @@ async def test_artist_search(
 ) -> None:
     expected = [
         track
-        for track in load('idolypride/artists')  #
+        for track in load('idolypride/artists')  # :)
         if 'idoly pride' in (track['disambiguation'] or '').lower()
     ]
     route = router.get(
@@ -157,7 +155,7 @@ async def test_get_song(
     target_id = 'mock-id-song-blueskysummer'
     expected_song_sample = next(
         song
-        for song in load('idolypride/songs')  #
+        for song in load('idolypride/songs')  # :)
         if song['id'] == target_id
     )
     expected_song = load('idolypride/songs/blueskysummer')
@@ -185,7 +183,7 @@ async def test_get_artist(
     target_id = 'mock-id-artist-shukasaitou'
     expected_artist_sample = next(
         artist
-        for artist in load('sunshine/artists')  #
+        for artist in load('sunshine/artists')  # :)
         if artist['id'] == target_id
     )
     expected_artist = load('sunshine/artists/shukasaitou')
@@ -213,7 +211,7 @@ async def test_get_metadata(
     target_id = 'mock-id-track-sukiforyou-you'
     expected_track = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     expected_meta = load('sunshine/metadata/sukiforyou')
@@ -241,7 +239,7 @@ async def test_get_no_metadata(
     target_id = 'mock-id-track-sukiforyou-you'
     expected_track = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     track_route = router.post(
@@ -310,7 +308,7 @@ async def test_list_edit(
     target_id = 'mock-id-track-sukiforyou-you'
     add_track_json = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     _ = router.post(
@@ -382,7 +380,7 @@ async def test_track_add_metadata(
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     meta_json = load('sunshine/metadata/sukiforyou')
@@ -423,7 +421,7 @@ async def test_track_add_metadata_artist_credit(
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     meta_json = load('sunshine/metadata/sukiforyou')
@@ -478,7 +476,7 @@ async def test_track_remove_metadata(
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     meta_json = load('sunshine/metadata/sukiforyou')
@@ -510,7 +508,7 @@ async def test_track_metadata_queue(
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     meta_json = load('sunshine/metadata/sukiforyou')
@@ -544,7 +542,7 @@ async def test_track_edit(
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     _ = router.post(
@@ -597,7 +595,7 @@ async def test_add_audio(
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
         track
-        for track in load('sunshine/tracks')  #
+        for track in load('sunshine/tracks')  # :)
         if track['id'] == target_id
     )
     _ = router.post(

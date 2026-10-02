@@ -13,7 +13,7 @@ from amqcsl.exceptions import QueryError
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from ._core import Items, StreamingBundle, StreamingVendor, materialize, httpxClient
+from ._core import Items, StreamingBundle, StreamingVendor, httpxClient, materialize
 
 if TYPE_CHECKING:
     from amqcsl import AsyncDBClient, DBClient
@@ -134,7 +134,7 @@ class PageBundle[R](StreamingBundle[R], ABC):
 
     def clean_raw_page(self, item: RawPage) -> Iterator[R]:
         """Lazily convert a raw page's JSON items into typed results."""
-        count, key, page = item
+        _count, _key, page = item
         yield from map(self.process_item, page)
 
     @abstractmethod

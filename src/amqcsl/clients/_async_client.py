@@ -207,19 +207,21 @@ class AsyncDBClient:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ):
-        if exc_type is None:
-            logger.info('Closing client')
-        else:
-            if isinstance(exc_val, httpx.HTTPStatusError):
-                try:
-                    error_data = exc_val.response.json()
-                    logger.error('JSON given with error, check logs', extra={'data': error_data})
-                except Exception:
-                    logger.error('No JSON given with error')
-            logger.error('Exception encountered, closing client')
+        try:
+            if exc_type is None:
+                logger.info('Closing client')
+            else:
+                if isinstance(exc_val, httpx.HTTPStatusError):
+                    try:
+                        error_data = exc_val.response.json()
+                        logger.error('JSON given with error, check logs', extra={'data': error_data})
+                    except ValueError:
+                        logger.error('No JSON given with error')
+                logger.error('Exception encountered, closing client')
 
-        if self._client:
-            await self._client.aclose()
+        finally:
+            if self._client:
+                await self._client.aclose()
 
     async def logout(self):
         """Logout the client

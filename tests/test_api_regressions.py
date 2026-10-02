@@ -144,6 +144,7 @@ async def test_async_commit_finishes_siblings_before_raising(
 ) -> None:
     assert isinstance(client, AsyncDBClient)
     import asyncio
+
     from httpx import Request
 
     track = CSLTrack.from_json(load('sunshine/tracks')[0])

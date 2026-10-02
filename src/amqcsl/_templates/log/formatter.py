@@ -49,7 +49,7 @@ class JSONFormatter(logging.Formatter):
     def _prepare_log_dict(self, record: logging.LogRecord):
         log = {
             'message': record.getMessage(),
-            'timestamp': dt.datetime.fromtimestamp(record.created, tz=dt.timezone.utc).isoformat(),
+            'timestamp': dt.datetime.fromtimestamp(record.created, tz=dt.UTC).isoformat(),
         }
         if record.exc_info is not None:
             log['exc_info'] = self.formatException(record.exc_info)
