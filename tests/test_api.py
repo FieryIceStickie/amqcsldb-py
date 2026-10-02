@@ -16,11 +16,11 @@ pytestmark = pytest.mark.asyncio
 
 async def test_list(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     data = load('lists')
     for list_json in data:
-        csl_list = db.lists[list_json['name']]
+        csl_list = client.lists[list_json['name']]
         assert list_json['id'] == csl_list.id
         assert list_json['name'] == csl_list.name
         assert list_json['count'] == csl_list.count
@@ -30,11 +30,11 @@ async def test_list(
 
 async def test_group(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     data = load('groups')
     for group_json in data:
-        group = db.groups[group_json['name']]
+        group = client.groups[group_json['name']]
         assert group_json['id'] == group.id
         assert group_json['name'] == group.name
 
@@ -43,7 +43,7 @@ async def test_group(
 
 async def test_track_by_list(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     expected = load('idolypride/tracks')
     route = router.post(
@@ -52,15 +52,15 @@ async def test_track_by_list(
         json__activeListId='mock-id-list-meihayasaka',
         json__quickFilters__0=3,
     ) % Response(200, json={'tracks': expected, 'count': len(expected)})
-    mei_list = db.lists['MeiHayasaka']
-    tracks = {track.id for track in await collect(db.iter_tracks(active_list=mei_list))}
+    mei_list = client.lists['MeiHayasaka']
+    tracks = {track.id for track in await collect(client.iter_tracks(active_list=mei_list))}
     assert tracks == {track['id'] for track in expected}
     assert route.call_count == 1
 
 
 async def test_track_by_group(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     expected = load('idolypride/tracks')
     route = router.post(
@@ -68,15 +68,15 @@ async def test_track_by_group(
         name='tracks',
         json__groupFilters__0='mock-id-group-idolypride',
     ) % Response(200, json={'tracks': expected, 'count': len(expected)})
-    idoly_pride_group = db.groups['IDOLY PRIDE']
-    tracks = {track.id for track in await collect(db.iter_tracks(groups=[idoly_pride_group]))}
+    idoly_pride_group = client.groups['IDOLY PRIDE']
+    tracks = {track.id for track in await collect(client.iter_tracks(groups=[idoly_pride_group]))}
     assert tracks == {track['id'] for track in expected}
     assert route.call_count == 1
 
 
 async def test_track_with_pages(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     expected = load('idolypride/tracks')
     assert len(expected) == 8
@@ -94,8 +94,8 @@ async def test_track_with_pages(
         json__skip=4,
         json__take=4,
     ) % Response(200, json={'tracks': expected[4:], 'count': len(expected)})
-    idoly_pride_group = db.groups['IDOLY PRIDE']
-    tracks = {track.id for track in await collect(db.iter_tracks(groups=[idoly_pride_group], batch_size=4))}
+    idoly_pride_group = client.groups['IDOLY PRIDE']
+    tracks = {track.id for track in await collect(client.iter_tracks(groups=[idoly_pride_group], batch_size=4))}
     assert tracks == {track['id'] for track in expected}
     assert first_page.call_count == 1
     assert second_page.call_count == 1
@@ -103,7 +103,7 @@ async def test_track_with_pages(
 
 async def test_track_search(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     expected = load('idolypride/tracks')
     target_track_id = 'mock-id-track-blueskysummer'
@@ -113,14 +113,14 @@ async def test_track_search(
         name='tracks',
         json__searchTerm='Blue sky',
     ) % Response(200, json={'tracks': [expected_track], 'count': 1})
-    tracks = {track.id for track in await collect(db.iter_tracks('Blue sky'))}
+    tracks = {track.id for track in await collect(client.iter_tracks('Blue sky'))}
     assert tracks == {target_track_id}
     assert route.call_count == 1
 
 
 async def test_artist_search(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     expected = [
         track
@@ -131,14 +131,14 @@ async def test_artist_search(
         '/api/artists',
         name='artists',
         params={'searchTerm': 'IDOLY PRIDE'},
-    ) % Response(200, json={'arists' if isinstance(db, DBClient) else 'artists': expected, 'count': len(expected)})
-    assert {obj.id for obj in await collect(db.iter_artists('IDOLY PRIDE'))} == {obj['id'] for obj in expected}
+    ) % Response(200, json={'arists' if isinstance(client, DBClient) else 'artists': expected, 'count': len(expected)})
+    assert {obj.id for obj in await collect(client.iter_artists('IDOLY PRIDE'))} == {obj['id'] for obj in expected}
     assert route.call_count == 1
 
 
 async def test_song_search(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     expected = load('idolypride/songs')
     route = router.get(
@@ -146,13 +146,13 @@ async def test_song_search(
         name='songs',
         params={'searchTerm': 'IDOLY PRIDE'},
     ) % Response(200, json={'songs': expected, 'count': len(expected)})
-    assert {obj.id for obj in await collect(db.iter_songs('IDOLY PRIDE'))} == {obj['id'] for obj in expected}
+    assert {obj.id for obj in await collect(client.iter_songs('IDOLY PRIDE'))} == {obj['id'] for obj in expected}
     assert route.call_count == 1
 
 
 async def test_get_song(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-song-blueskysummer'
     expected_song_sample = next(
@@ -171,8 +171,8 @@ async def test_get_song(
         name='get_song',
     ) % Response(200, json=expected_song)
 
-    song_sample = await first(db.iter_songs('Blue sky summer'))
-    song = await finish(db.get_song(song_sample))
+    song_sample = await first(client.iter_songs('Blue sky summer'))
+    song = await finish(client.get_song(song_sample))
     assert song == CSLSong.from_json(expected_song)
     assert iter_route.call_count == 1
     assert song_route.call_count == 1
@@ -180,7 +180,7 @@ async def test_get_song(
 
 async def test_get_artist(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-artist-shukasaitou'
     expected_artist_sample = next(
@@ -199,8 +199,8 @@ async def test_get_artist(
         name='get_artist',
     ) % Response(200, json=expected_artist)
 
-    artist_sample = await first(db.iter_artists('Shuka Saitou'))
-    artist = await finish(db.get_artist(artist_sample))
+    artist_sample = await first(client.iter_artists('Shuka Saitou'))
+    artist = await finish(client.get_artist(artist_sample))
     assert artist == CSLArtist.from_json(expected_artist)
     assert iter_route.call_count == 1
     assert artist_route.call_count == 1
@@ -208,7 +208,7 @@ async def test_get_artist(
 
 async def test_get_metadata(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-track-sukiforyou-you'
     expected_track = next(
@@ -227,8 +227,8 @@ async def test_get_metadata(
         name='get_meta',
     ) % Response(200, json=expected_meta)
 
-    track = await first(db.iter_tracks('SUKI for you'))
-    meta = await finish(db.get_metadata(track))
+    track = await first(client.iter_tracks('SUKI for you'))
+    meta = await finish(client.get_metadata(track))
     assert meta == CSLMetadata.from_json(expected_meta)
     assert track_route.call_count == 1
     assert meta_route.call_count == 1
@@ -236,7 +236,7 @@ async def test_get_metadata(
 
 async def test_get_no_metadata(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-track-sukiforyou-you'
     expected_track = next(
@@ -254,8 +254,8 @@ async def test_get_no_metadata(
         name='get_meta',
     ) % Response(404, json=load('errors/no_meta'))
 
-    track = await first(db.iter_tracks('SUKI for you'))
-    meta = await finish(db.get_metadata(track))
+    track = await first(client.iter_tracks('SUKI for you'))
+    meta = await finish(client.get_metadata(track))
     assert meta is None
     assert track_route.call_count == 1
     assert meta_route.call_count == 1
@@ -263,12 +263,12 @@ async def test_get_no_metadata(
 
 async def test_create_list(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     cookies: dict[str, str],
 ) -> None:
     lists = load('lists')
     mock_list = {'id': 'mock-id-list-youmei', 'name': 'youmei', 'count': 16}
-    if isinstance(db, DBClient):
+    if isinstance(client, DBClient):
         lists_route = router.get('/api/lists', name='lists', cookies=cookies)
         lists_route.side_effect = [
             Response(200, json=lists),
@@ -277,8 +277,8 @@ async def test_create_list(
     else:
         lists_route = router.get('/api/lists', name='lists', cookies=cookies) % Response(200, json=lists + [mock_list])
 
-    mei_list = db.lists['MeiHayasaka']
-    you_list = db.lists['yousoro']
+    mei_list = client.lists['MeiHayasaka']
+    you_list = client.lists['yousoro']
     assert lists_route.call_count == 1
 
     add_route = router.post(
@@ -287,7 +287,7 @@ async def test_create_list(
         json={'importListIds': [mei_list.id, you_list.id], 'name': 'youmei'},
     ) % Response(200, json={'ok': True})
 
-    youmei_list = await finish(db.create_list('youmei', mei_list, you_list))
+    youmei_list = await finish(client.create_list('youmei', mei_list, you_list))
     assert youmei_list.id == mock_list['id']
     assert lists_route.call_count == 2
     assert add_route.call_count == 1
@@ -295,7 +295,7 @@ async def test_create_list(
 
 async def test_list_edit(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     tracks = load('idolypride/tracks')
     assert tracks
@@ -319,7 +319,7 @@ async def test_list_edit(
         json__searchTerm='SUKI for you',
     ) % Response(200, json={'tracks': [add_track_json], 'count': 1})
 
-    mei_list = db.lists['MeiHayasaka']
+    mei_list = client.lists['MeiHayasaka']
     route = router.put(
         f'/api/list/{mei_list.id}',
         name='list_edit',
@@ -328,17 +328,17 @@ async def test_list_edit(
         json__removeSongIds=[remove_track_json['id']],
     ) % Response(200)
 
-    add_track = await first(db.iter_tracks('SUKI for you'))
-    remove_track = await first(db.iter_tracks(active_list=mei_list))
-    await finish(db.list_edit(mei_list, name='meichan', add=[add_track], remove=[remove_track]))
+    add_track = await first(client.iter_tracks('SUKI for you'))
+    remove_track = await first(client.iter_tracks(active_list=mei_list))
+    await finish(client.list_edit(mei_list, name='meichan', add=[add_track], remove=[remove_track]))
     assert route.call_count == 1
 
 
 async def test_list_delete(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
-    mei_list = db.lists['MeiHayasaka']
+    mei_list = client.lists['MeiHayasaka']
 
     def update_list_route(req: Request) -> Response:
         _ = router.get(
@@ -355,21 +355,21 @@ async def test_list_delete(
         name='list_delete',
     ).mock(side_effect=update_list_route)
 
-    await finish(db.list_delete(mei_list))
+    await finish(client.list_delete(mei_list))
     assert route.call_count == 1
-    assert 'MeiHayasaka' not in db.lists
+    assert 'MeiHayasaka' not in client.lists
 
 
 async def test_add_group(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     route = router.post(
         '/api/group',
         name='add_group',
         json={'name': 'Genshin Impact'},
     ) % Response(200, json={'id': 'mock-id-group-genshinimpact', 'name': 'Genshin Impact'})
-    group = await finish(db.create_group('Genshin Impact'))
+    group = await finish(client.create_group('Genshin Impact'))
     assert group.id == 'mock-id-group-genshinimpact'
     assert group.name == 'Genshin Impact'
     assert route.call_count == 1
@@ -377,7 +377,7 @@ async def test_add_group(
 
 async def test_track_add_metadata(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
@@ -402,10 +402,10 @@ async def test_track_add_metadata(
         json__override=False,
         json__extraMetadatas=[{'isArtist': True, 'type': 'Character', 'value': 'You Watanabe'}],
     ) % Response(200)
-    track = await first(db.iter_tracks('SUKI for you'))
-    meta = await finish(db.get_metadata(track))
+    track = await first(client.iter_tracks('SUKI for you'))
+    meta = await finish(client.get_metadata(track))
     await finish(
-        db.track_add_metadata(
+        client.track_add_metadata(
             track,
             ExtraMetadata(True, 'Character', 'Chika Takami'),
             ExtraMetadata(True, 'Character', 'You Watanabe'),
@@ -418,7 +418,7 @@ async def test_track_add_metadata(
 
 async def test_track_add_metadata_artist_credit(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
@@ -457,10 +457,10 @@ async def test_track_add_metadata_artist_credit(
         json__override=False,
         json__artistCredits=[{'artistId': 'mock-id-artist-aki-hata', 'type': 'Composer', 'credit': None}],
     ) % Response(200)
-    track = await first(db.iter_tracks('SUKI for you'))
-    meta = await finish(db.get_metadata(track))
+    track = await first(client.iter_tracks('SUKI for you'))
+    meta = await finish(client.get_metadata(track))
     await finish(
-        db.track_add_metadata(
+        client.track_add_metadata(
             track,
             ArtistCredit(artist, 'Lyricist'),
             ArtistCredit(artist, 'Composer'),
@@ -473,7 +473,7 @@ async def test_track_add_metadata_artist_credit(
 
 async def test_track_remove_metadata(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
@@ -495,17 +495,17 @@ async def test_track_remove_metadata(
         f'/api/track/{track_json["id"]}/metadata/{meta_json["extraMetas"][0]["id"]}',
         name='post_meta',
     ) % Response(200)
-    track = await first(db.iter_tracks('SUKI for you'))
-    meta = await finish(db.get_metadata(track))
+    track = await first(client.iter_tracks('SUKI for you'))
+    meta = await finish(client.get_metadata(track))
     assert meta is not None
     assert len(meta.extra_metas) == 1
-    await finish(db.track_remove_metadata(track, meta.extra_metas[0]))
+    await finish(client.track_remove_metadata(track, meta.extra_metas[0]))
     assert route.call_count == 1
 
 
 async def test_track_metadata_queue(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
@@ -527,19 +527,19 @@ async def test_track_metadata_queue(
         f'/api/track/{track_json["id"]}/metadata/{meta_json["extraMetas"][0]["id"]}',
         name='post_meta',
     ) % Response(200)
-    track = await first(db.iter_tracks('SUKI for you'))
-    meta = await finish(db.get_metadata(track))
+    track = await first(client.iter_tracks('SUKI for you'))
+    meta = await finish(client.get_metadata(track))
     assert meta is not None
     assert len(meta.extra_metas) == 1
-    await finish(db.track_remove_metadata(track, meta.extra_metas[0], queue=True))
+    await finish(client.track_remove_metadata(track, meta.extra_metas[0], queue=True))
     assert route.call_count == 0
-    await finish(db.commit())
+    await finish(client.commit())
     assert route.call_count == 1
 
 
 async def test_track_edit(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     target_id = 'mock-id-track-sukiforyou-you'
     track_json = next(
@@ -557,21 +557,21 @@ async def test_track_edit(
         name='post_meta',
         json__name='SUKI for you, DREAM for you! (You Watanabe Solo ver.)',
     ) % Response(200)
-    track = await first(db.iter_tracks('SUKI for you'))
-    await finish(db.track_edit(track, name='SUKI for you, DREAM for you! (You Watanabe Solo ver.)'))
+    track = await first(client.iter_tracks('SUKI for you'))
+    await finish(client.track_edit(track, name='SUKI for you, DREAM for you! (You Watanabe Solo ver.)'))
     assert route.call_count == 1
 
 
 async def test_add_album(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     album_name = 'Love Live! Sunshine!! Duo & Trio Collection CD Vol. 2 Winter Vacation'
     original_album_name = 'Duo & Trio Collection CD Vol. 2 Winter Vacation'
     year = 2024
     album_track = AlbumTrack('Misty Frosty Love', 'Misty frosty love', 'Shuka Saitou, Rikako Aida')
     track = album_track.to_json(1, 1, 1)
-    group = db.groups['Love Live! Sunshine!!']
+    group = client.groups['Love Live! Sunshine!!']
     route = router.post(
         '/api/album',
         name='album',
@@ -582,13 +582,13 @@ async def test_add_album(
         json__year=year,
         json__tracks=[track],
     ) % Response(200)
-    await finish(db.create_album(album_name, original_album_name, year, [group], [[album_track]]))
+    await finish(client.create_album(album_name, original_album_name, year, [group], [[album_track]]))
     assert route.call_count == 1
 
 
 async def test_add_audio(
     router: Router,
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     tmp_path: Path,
 ) -> None:
     audio_name = 'mock_audio.flac'
@@ -623,7 +623,7 @@ async def test_add_audio(
         params={'sessionId': 'mock-sessionid', 'key': 'mock-key'},
     ) % Response(200)
 
-    track = await first(db.iter_tracks('SUKI for you'))
-    await finish(db.add_audio(track, audio_path))
+    track = await first(client.iter_tracks('SUKI for you'))
+    await finish(client.add_audio(track, audio_path))
     assert presign_route.call_count == 1
     assert upload_route.call_count == 1

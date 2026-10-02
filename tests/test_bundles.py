@@ -1,5 +1,7 @@
 from collections.abc import Generator
 
+from helpers import finish
+
 import httpx
 import pytest
 import rich.repr
@@ -43,11 +45,8 @@ class RoundBundle:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['sync', 'async'])
 async def test_parallel_iterable_inputs_preserve_result_order(
-    mode: str,
-    client: DBClient,
-    aclient: AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
     for idx, rounds in [(10, 3), (20, 0), (30, 1), (40, 2)]:
@@ -62,10 +61,7 @@ async def test_parallel_iterable_inputs_preserve_result_order(
 
     bundle = ParallelBundle(bundles())
     assert consumed == [10, 20, 30, 40]
-    if mode == 'sync':
-        assert client.process(bundle) == [10, 20, 30, 40]
-    else:
-        assert await aclient.process(bundle) == [10, 20, 30, 40]
+    assert await finish(client.process(bundle)) == [10, 20, 30, 40]
     assert consumed == [10, 20, 30, 40]
 
 
@@ -78,9 +74,10 @@ def test_parallel_response_count_mismatch():
 
 
 @pytest.mark.parametrize('strategy', [SyncPageStrategy, AsyncPageStrategy])
-def test_page_collection_supports_both_scheduling_strategies(
+@pytest.mark.asyncio
+async def test_page_collection_supports_both_scheduling_strategies(
     strategy: type[PageStrategy],
-    client: DBClient,
+    client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
     samples: list[dict[str, JSONType]] = [
@@ -93,4 +90,4 @@ def test_page_collection_supports_both_scheduling_strategies(
             json={'count': 3, 'artists': [sample]},
         )
     query = IterArtistsBundle(1, 10, 1, strategy(), 'test')
-    assert client.process(query.collect()) == [CSLArtistSample.from_json(sample) for sample in samples]
+    assert await finish(client.process(query.collect())) == [CSLArtistSample.from_json(sample) for sample in samples]

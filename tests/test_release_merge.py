@@ -17,7 +17,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.mark.parametrize('queue', [False, True])
 @pytest.mark.parametrize('status', [200, 500])
 async def test_import_audio(
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     router: Router,
     queue: bool,
     status: int,
@@ -27,23 +27,23 @@ async def test_import_audio(
     route = router.post(f'/api/track/{target.id}/audio-import') % Response(status)
     before = router.calls.call_count
     if queue:
-        await finish(db.import_audio(target, source, queue=True))
+        await finish(client.import_audio(target, source, queue=True))
         assert router.calls.call_count == before
-        assert len(db.queue) == 1
+        assert len(client.queue) == 1
 
     async def operation() -> None:
         if queue:
-            await finish(db.commit())
+            await finish(client.commit())
         else:
-            await finish(db.import_audio(target, source))
+            await finish(client.import_audio(target, source))
 
     if status == 500:
         with pytest.raises(HTTPStatusError):
             await operation()
-        assert len(db.queue) == int(queue)
+        assert len(client.queue) == int(queue)
     else:
         await operation()
-        assert not db.queue
+        assert not client.queue
     assert route.call_count == 1
     assert json.loads(route.calls.last.request.content) == {
         'id': target.id,
@@ -53,29 +53,29 @@ async def test_import_audio(
 
 
 async def test_failed_list_deletion_keeps_cached_lists(
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
-    lists = db.lists
+    lists = client.lists
     target = lists['MeiHayasaka']
     route = router.delete(f'/api/list/{target.id}') % Response(500)
     before = router.routes['lists'].call_count
     with pytest.raises(HTTPStatusError):
-        await finish(db.list_delete(target))
+        await finish(client.list_delete(target))
     assert route.call_count == 1
-    assert db.lists is lists
+    assert client.lists is lists
     assert router.routes['lists'].call_count == before
 
 
 @pytest.mark.parametrize('kind', ['ref', 'link', 'simple', 'track'])
 @pytest.mark.parametrize('container', ['list', 'tuple', 'generator'])
 async def test_list_edit_accepts_track_references(
-    db: DBClient | AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     router: Router,
     kind: str,
     container: str,
 ) -> None:
-    target = db.lists['MeiHayasaka']
+    target = client.lists['MeiHayasaka']
     track = CSLTrack.from_json(load('sunshine/tracks')[0])
     link = CSLTrackLink(track.id, track.name, track.artist_credits)
     references = {'ref': CSLTrackRef(track.id), 'link': link, 'simple': track.simp, 'track': track}
@@ -85,7 +85,7 @@ async def test_list_edit_accepts_track_references(
     remove = [reference] if container == 'list' else (reference,) if container == 'tuple' else iter([reference])
     route = router.put(f'/api/list/{target.id}') % Response(200)
     before = router.calls.call_count
-    await finish(db.list_edit(target, add=add, remove=remove))
+    await finish(client.list_edit(target, add=add, remove=remove))
     assert route.call_count == 1
     payload = json.loads(route.calls.last.request.content)
     assert payload['addSongIds'] == payload['removeSongIds'] == [track.id]

@@ -2,6 +2,8 @@
 # pyright: reportPrivateUsage=false
 from collections.abc import Iterator
 
+from helpers import collect, finish, first
+
 import rich.repr
 from respx import Router
 
@@ -50,95 +52,68 @@ def routes(router: Router) -> None:
         _ = router.get(f'/stream/{name}') % httpx.Response(200, json=value)
 
 
-def test_sync_stream_handles_items_single_requests_batches_and_tail(
-    client: DBClient,
+pytestmark = pytest.mark.asyncio
+
+
+async def test_stream_handles_items_single_requests_batches_and_tail(
+    client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
     routes(router)
     trace: list[str] = []
     items = client._process_stream(NumberStream(trace))
     assert not trace
-    assert next(items) == 1
+    assert await first(items) == 1
     assert trace == ['started', 'converted']
-    assert [*items] == [2, 3, 4, 5]
+    assert await collect(items) == [2, 3, 4, 5]
     assert trace[-1] == 'closed'
 
 
-@pytest.mark.asyncio
-async def test_async_stream_handles_items_single_requests_batches_and_tail(
-    aclient: AsyncDBClient,
-    router: Router,
-) -> None:
-    routes(router)
-    trace: list[str] = []
-    items = aclient._process_stream(NumberStream(trace))
-    assert not trace
-    assert await anext(items) == 1
-    assert trace == ['started', 'converted']
-    assert [item async for item in items] == [2, 3, 4, 5]
-    assert trace[-1] == 'closed'
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['sync', 'async'])
 async def test_any_stream_can_be_collected_in_parallel(
-    mode: str,
-    client: DBClient,
-    aclient: AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
     routes(router)
     streams = [NumberStream([]), NumberStream([])]
     bundle = ParallelBundle(stream.collect() for stream in streams)
-    results = client.process(bundle) if mode == 'sync' else await aclient.process(bundle)
-    assert results == [[1, 2, 3, 4, 5], [1, 2, 3, 4, 5]]
+    assert await finish(client.process(bundle)) == [[1, 2, 3, 4, 5], [1, 2, 3, 4, 5]]
     assert all(stream.trace[-1] == 'closed' for stream in streams)
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['sync', 'async'])
 async def test_early_stream_close_does_not_request_more(
-    mode: str,
-    client: DBClient,
-    aclient: AsyncDBClient,
+    client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
     route = router.get('/stream/one') % httpx.Response(500)
     trace: list[str] = []
-    if mode == 'sync':
-        items = client._process_stream(NumberStream(trace))
-        assert next(items) == 1
-        items.close()
-    else:
-        items = aclient._process_stream(NumberStream(trace))
-        assert await anext(items) == 1
-        await items.aclose()
+    match client:
+        case DBClient():
+            items = client._process_stream(NumberStream(trace))
+            assert next(items) == 1
+            items.close()
+        case AsyncDBClient():
+            async_items = client._process_stream(NumberStream(trace))
+            assert await anext(async_items) == 1
+            await async_items.aclose()
     assert trace[-1] == 'closed'
     assert not route.called
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['sync', 'async'])
 async def test_ordinary_process_rejects_item_events(
-    mode: str,
-    client: DBClient,
-    aclient: AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     stream = NumberStream([])
     with pytest.raises(TypeError, match='collect'):
-        if mode == 'sync':
-            client.process(stream)  # pyright: ignore[reportArgumentType] -- exercise runtime misuse guard
-        else:
-            await aclient.process(stream)  # pyright: ignore[reportArgumentType] -- exercise runtime misuse guard
+        match client:
+            case DBClient():
+                client.process(stream)  # pyright: ignore[reportArgumentType] -- exercise runtime misuse guard
+            case AsyncDBClient():
+                await client.process(stream)  # pyright: ignore[reportArgumentType] -- exercise runtime misuse guard
     assert stream.trace[-1] == 'closed'
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize('mode', ['sync', 'async'])
 async def test_collection_closes_stream_when_item_conversion_fails(
-    mode: str,
-    client: DBClient,
-    aclient: AsyncDBClient,
+    client: DBClient | AsyncDBClient,
 ) -> None:
     class BrokenStream(NumberStream):
         def vendor(self, client: httpxClient) -> StreamingVendor[int]:
@@ -154,8 +129,5 @@ async def test_collection_closes_stream_when_item_conversion_fails(
 
     stream = BrokenStream([])
     with pytest.raises(QueryError, match='Bad item'):
-        if mode == 'sync':
-            client.process(stream.collect())
-        else:
-            await aclient.process(stream.collect())
+        await finish(client.process(stream.collect()))
     assert stream.trace[-1] == 'closed'

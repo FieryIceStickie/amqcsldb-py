@@ -3,7 +3,7 @@ from collections.abc import Sequence
 
 import pytest
 from attrs import define, field
-from helpers import load
+from helpers import finish, load
 from httpx import Request, Response
 from respx import Route, Router
 
@@ -161,81 +161,42 @@ def assert_metadatas(req_content: bytes, expected_names: set[str]):
     assert names == expected_names
 
 
-def test_aspire_sync(
+pytestmark = pytest.mark.asyncio
+
+
+@pytest.mark.parametrize('compact', [False, True])
+async def test_aspire(
     aspire_fixture: AspireFixture,
-    client: DBClient,
+    client: DBClient | AsyncDBClient,
     artist_handler: ArtistHandler,
-):
-    artist_to_meta = cm.make_artist_to_meta(client, characters, artists, ['Liella!'])
-    for track in client.iter_tracks('Aspire'):
-        artist_to_meta.apply(track, artist_handler)
+    compact: bool,
+) -> None:
+    artist_to_meta = await finish(
+        cm.compact_make_artist_to_meta(client, compact_characters, ['Liella!'])
+        if compact
+        else cm.make_artist_to_meta(client, characters, artists, ['Liella!'])
+    )
+    match client:
+        case DBClient():
+            for track in client.iter_tracks('Aspire'):
+                await finish(artist_to_meta.apply(track, artist_handler))
+        case AsyncDBClient():
+            async for track in client.iter_tracks('Aspire'):
+                await finish(artist_to_meta.apply(track, artist_handler))
     assert not artist_handler.unknown_artists
     assert len(client.queue) == aspire_fixture.num_tracks - 2
 
-    client.commit()
+    await finish(client.commit())
 
     for track_id, req_content in aspire_fixture.calls.items():
         assert track_id in expected_track_names
         assert_metadatas(req_content, expected_track_names[track_id])
 
 
-def test_aspire_sync_compact(
-    aspire_fixture: AspireFixture,
-    client: DBClient,
-    artist_handler: ArtistHandler,
-):
-    artist_to_meta = cm.compact_make_artist_to_meta(client, compact_characters, ['Liella!'])
-    for track in client.iter_tracks('Aspire'):
-        artist_to_meta.apply(track, artist_handler)
-    assert not artist_handler.unknown_artists
-    assert len(client.queue) == aspire_fixture.num_tracks - 2
-
-    client.commit()
-
-    for track_id, req_content in aspire_fixture.calls.items():
-        assert track_id in expected_track_names
-        assert_metadatas(req_content, expected_track_names[track_id])
-
-
-@pytest.mark.asyncio
-async def test_aspire_async(
-    aspire_fixture: AspireFixture,
-    aclient: AsyncDBClient,
-    artist_handler: ArtistHandler,
-):
-    artist_to_meta = await cm.make_artist_to_meta(aclient, characters, artists, ['Liella!'])
-    async for track in aclient.iter_tracks('Aspire'):
-        await artist_to_meta.apply(track, artist_handler)
-    assert not artist_handler.unknown_artists
-    assert len(aclient.queue) == aspire_fixture.num_tracks - 2
-
-    await aclient.commit()
-
-    for track_id, req_content in aspire_fixture.calls.items():
-        assert track_id in expected_track_names
-        assert_metadatas(req_content, expected_track_names[track_id])
-
-
-@pytest.mark.asyncio
-async def test_aspire_async_compact(
-    aspire_fixture: AspireFixture,
-    aclient: AsyncDBClient,
-    artist_handler: ArtistHandler,
-):
-    artist_to_meta = await cm.compact_make_artist_to_meta(aclient, compact_characters, ['Liella!'])
-    async for track in aclient.iter_tracks('Aspire'):
-        await artist_to_meta.apply(track, artist_handler)
-    assert not artist_handler.unknown_artists
-    assert len(aclient.queue) == aspire_fixture.num_tracks - 2
-
-    await aclient.commit()
-
-    for track_id, req_content in aspire_fixture.calls.items():
-        assert track_id in expected_track_names
-        assert_metadatas(req_content, expected_track_names[track_id])
-
-
-def test_artist_to_meta_sync(router: Router, client: DBClient):
+async def test_artist_to_meta(
+    router: Router,
+    client: DBClient | AsyncDBClient,
+) -> None:
     artist_data = load('superstar/liella')
 
     def artist_route(req: Request):
@@ -253,35 +214,8 @@ def test_artist_to_meta_sync(router: Router, client: DBClient):
         name='artists',
     ).mock(side_effect=artist_route)
 
-    artist_to_meta = cm.make_artist_to_meta(client, characters, artists)
-    expected_artist_to_meta = cm.make_artist_to_meta(client, characters, artists, ['Liella!'])
-    assert artist_to_meta.metadata == expected_artist_to_meta.metadata
-
-    assert route.call_count == 11
-    assert liella_route.call_count == 2
-
-
-@pytest.mark.asyncio
-async def test_artist_to_meta_async(router: Router, aclient: AsyncDBClient):
-    artist_data = load('superstar/liella')
-
-    def artist_route(req: Request):
-        search_term = req.url.params['searchTerm']
-        artists = [artist for artist in artist_data if search_term in artist['name']]
-        return Response(200, json={'artists': artists, 'count': len(artists)})
-
-    liella_route = router.get(
-        '/api/artists',
-        name='artists_liella',
-        params={'searchTerm': 'Liella!'},
-    ) % Response(200, json={'artists': artist_data, 'count': len(artist_data)})
-    route = router.get(
-        '/api/artists',
-        name='artists',
-    ).mock(side_effect=artist_route)
-
-    artist_to_meta = await cm.make_artist_to_meta(aclient, characters, artists)
-    expected_artist_to_meta = await cm.make_artist_to_meta(aclient, characters, artists, ['Liella!'])
+    artist_to_meta = await finish(cm.make_artist_to_meta(client, characters, artists))
+    expected_artist_to_meta = await finish(cm.make_artist_to_meta(client, characters, artists, ['Liella!']))
     assert artist_to_meta.metadata == expected_artist_to_meta.metadata
 
     assert route.call_count == 11

@@ -36,23 +36,6 @@ def password() -> str:
     return 'Yousoro'
 
 
-# Don't remove router, necessary for fixture dependency
-@pytest.fixture
-def client(tmp_path: Path, router: Router, mock_id: str):
-    session_path = tmp_path / 'amq_session.txt'
-    session_path.write_text(mock_id)
-    with amqcsl.DBClient(session_path=session_path) as client:
-        yield client
-
-
-@pytest_asyncio.fixture
-async def aclient(tmp_path: Path, router: Router, mock_id: str):
-    session_path = tmp_path / 'amq_session.txt'
-    session_path.write_text(mock_id)
-    async with amqcsl.AsyncDBClient(session_path=session_path) as client:
-        yield client
-
-
 @pytest.fixture
 def router(
     username: str,
@@ -110,7 +93,7 @@ def add_lists_and_groups(router: Router):
 
 
 @pytest_asyncio.fixture(params=['sync', 'async'])
-async def db(
+async def client(
     request: pytest.FixtureRequest,
     tmp_path: Path,
     router: Router,
