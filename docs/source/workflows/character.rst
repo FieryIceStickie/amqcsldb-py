@@ -112,70 +112,78 @@ After processing all the tracks, it'll prompt you with all the queued metadata. 
 and if it's fine then type `y` and enter to make the changes, or type `n` to not commit the changes
 (or press ``q`` to quit, that works too).
 
-Final notes
------------
+Search phrases
+--------------
 
-By default,
-:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>` and 
+When creating the mapping,
+:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>` and
 :py:func:`compact_make_artist_to_meta <amqcsl.workflows.character.compact_make_artist_to_meta>`
-return mapping objects. Initialization searches the supplied phrases in parallel, then searches
-for unmatched artist names. Often, you can make fewer requests by
-searching for a group like ``Hoshimi Production``, since the search result includes all the artists
-inside that group. You can pass in a list of search phrases to both functions like this:
+need to search the database to find your artists. Searching for a group like ``Hoshimi Production``
+can get a lot of them in one go, which is faster than searching for each name individually.
+You can pass in a list of search phrases to both functions like this:
 
 .. code-block:: python
 
     artist_to_meta = cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
 
-It's fine if the search phrase doesn't cover all artists, it'll go back to the default after exhausting
-the list of search phrases. This isn't necessary, but it'll just speed things up if you're working with
-large groups of artists.
+It's fine if the search phrases don't cover all artists; it'll search for any remaining names
+individually afterwards. If you pass in multiple phrases, it'll search them in parallel. You don't
+need to provide any, but it'll speed things up if you're working with large groups of artists.
 
 
 Applying the mapping
--------------------
+--------------------
 
-Groups can be omitted from the input dictionary when their members have metadata entries.
-When a group appears on a track, the mapping fetches its forward ``GroupMember`` relations
-and combines the members' metadata. Explicit group entries take precedence. Other relation
-types and reverse relations are ignored. Successful group inference is cached across tracks.
-A member that is itself a group is looked up in the mapping; membership queries do not recurse.
+If you've filled in the members of a group, you can leave the group itself out of the dictionary.
+When it shows up on a track, the mapping will fetch its members from the database and combine
+their character metadata. For example, if you've filled in all five members of ``Tsuki no Tempest``,
+you don't need to write out their characters again for the group. It'll remember the result for
+later tracks too.
 
-Use the public helper to apply the mapping and queue all necessary additions and deletions:
+If you do provide an entry for the group, it'll just use that. Only forward relations of type
+``GroupMember`` are used to find members; other relations are ignored. If a member is itself a
+group, that group needs to already be in the mapping, since it won't go and fetch another set of members.
+
+To use the mapping, call ``artist_to_meta.apply(track)`` for each track. It'll fetch the existing metadata
+and queue any additions and deletions necessary:
 
 .. code-block:: python
 
     artist_to_meta = cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
     for track in client.iter_tracks('My album'):
-        cm.apply_artist_to_meta(client, artist_to_meta, track)
+        artist_to_meta.apply(track)
     client.commit()
 
-With ``AsyncDBClient``, await creation, application, and commit:
+If you're using ``AsyncDBClient``, you'll need to await these calls:
 
 .. code-block:: python
 
     artist_to_meta = await cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
     async for track in client.iter_tracks('My album'):
-        await cm.apply_artist_to_meta(client, artist_to_meta, track)
+        await artist_to_meta.apply(track)
     await client.commit()
 
-The mapping also has an ``apply(track, should_exclude)`` method using the client supplied at
-creation. It stores resolved metadata in ``metadata`` and excluded artist IDs in
-``excluded_artists``. Dictionary operations such as ``artist_to_meta[artist]``,
-``artist_to_meta.get(artist)``, iteration, and ``keys()``, ``values()``, and ``items()`` delegate
-to the cached metadata. Full artist objects are converted to samples for lookup.
-Search phrases are only used during creation. The former
-``queue_character_metadata`` function is replaced by ``apply_artist_to_meta``; callers no
-longer need to fetch existing track metadata themselves.
+The mapping uses the client that created it. It also works like a dictionary for reading metadata,
+so you can do things like
+``artist_to_meta[artist]`` or ``artist_to_meta.get(artist)``, or use ``keys()``, ``values()``, and ``items()``.
+It's fine to pass in either an artist sample or a full artist object.
 
-To control exclusions, supply a ``should_exclude(track, artists) -> bool`` callback:
+The metadata is stored in ``artist_to_meta.metadata``, and excluded artist IDs are stored in
+``artist_to_meta.excluded_artists``. Search phrases are only needed when creating the mapping.
+If you're updating an older script, replace ``queue_character_metadata`` with ``artist_to_meta.apply(track)``;
+you no longer need to fetch the track's metadata yourself.
+
+If you want to handle unrecognized artists yourself, you can pass in a ``should_exclude`` function:
 
 .. code-block:: python
 
     from collections.abc import Sequence
     from amqcsl.objects import CSLTrack
 
-    def should_exclude(track: CSLTrack, artists: Sequence[cm.Reason]) -> bool:
+    def should_exclude(
+        track: CSLTrack,
+        artists: Sequence[cm.Reason],
+    ) -> bool:
         for failure in artists:
             print(failure.artist.name)
             if failure.reason is cm.UNKNOWN_ARTIST:
@@ -184,15 +192,21 @@ To control exclusions, supply a ``should_exclude(track, artists) -> bool`` callb
                 print('Missing members:', [member.name for member in failure.reason.artists])
         return True
 
-    cm.apply_artist_to_meta(client, artist_to_meta, track, should_exclude)
+    artist_to_meta.apply(track, should_exclude)
 
-Each ``Reason.artist`` identifies an artist credited on the track; a fetched ``CSLArtist``
-is used when available. Its ``reason`` is either the ``UNKNOWN_ARTIST`` singleton or an
-``INCOMPLETE_GROUP`` containing every member without metadata. An incomplete group with no
-members contains an empty list. The callback runs once per track after all failures have been
-collected. Returning ``True`` excludes every listed artist across subsequent tracks; returning
-``False`` raises ``AMQCSLError`` and queues no changes for that track.
+The function gets the track and a list of ``Reason`` objects. For each one, ``artist`` is the artist
+on the track (for an incomplete group, this is the group, not the missing member). If the full artist
+was fetched, you'll get that instead of a sample. The ``reason`` tells you what went wrong:
 
-Excluded artists contribute no metadata. The remaining artists still determine additions
-and stale character metadata deletions. Incomplete groups contribute no partial metadata.
-Unrelated metadata is preserved, unchanged tracks queue nothing, and off-vocal tracks are skipped.
+* ``UNKNOWN_ARTIST`` means there's no character metadata for that artist.
+* ``INCOMPLETE_GROUP`` has an ``artists`` list containing all the members without metadata.
+  If the group has no members in the database, this list will be empty.
+
+It'll call your function once per track, after collecting all the artists it couldn't fill in.
+Return ``True`` to exclude all of them, or ``False`` to raise an ``AMQCSLError``. If it raises,
+no changes are queued for that track.
+
+An excluded artist is treated as if they weren't on the track, so the other artists are processed
+as usual. If a group is incomplete, none of its metadata is used; it won't just add the characters
+it knows about. Stale character metadata will still be removed, but unrelated metadata is left alone.
+If everything is already correct, nothing is queued. Off-vocal tracks are skipped.

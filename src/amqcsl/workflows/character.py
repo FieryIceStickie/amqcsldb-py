@@ -49,7 +49,6 @@ __all__ = [
     'UNKNOWN_ARTIST',
     'INCOMPLETE_GROUP',
     'ShouldExclude',
-    'apply_artist_to_meta',
     'prompt_should_exclude',
     'prompt',
 ]
@@ -198,7 +197,17 @@ class ArtistToMeta[R](Protocol):
         self,
         track: CSLTrack,
         should_exclude: ShouldExclude = prompt_should_exclude,
-    ) -> R: ...
+    ) -> R:
+        """Infer character metadata and queue additions and deletions for a track.
+
+        Args:
+            track: Track whose character metadata should be updated.
+            should_exclude: Called once with all unresolved artists. True caches their
+                exclusions; False raises AMQCSLError without queueing track changes.
+
+        Commit queued changes through the client used to create this mapping.
+        """
+        ...
 
 
 def _match_artist(
@@ -544,40 +553,3 @@ def make_artist_to_meta(
     if isinstance(client, DBClient):
         return SyncArtistToMeta.create(client, artists, search_phrases, characters, sep)
     return AsyncArtistToMeta.create(client, artists, search_phrases, characters, sep)
-
-
-@overload
-def apply_artist_to_meta(
-    client: DBClient,
-    artist_to_meta: ArtistToMeta[None],
-    track: CSLTrack,
-    should_exclude: ShouldExclude = prompt_should_exclude,
-) -> None: ...
-@overload
-def apply_artist_to_meta(
-    client: AsyncDBClient,
-    artist_to_meta: ArtistToMeta[Awaitable[None]],
-    track: CSLTrack,
-    should_exclude: ShouldExclude = prompt_should_exclude,
-) -> Awaitable[None]: ...
-
-
-def apply_artist_to_meta(
-    client: DBClient | AsyncDBClient,
-    artist_to_meta: ArtistToMeta[None] | ArtistToMeta[Awaitable[None]],
-    track: CSLTrack,
-    should_exclude: ShouldExclude = prompt_should_exclude,
-) -> None | Awaitable[None]:
-    """Infer character metadata and queue additions/deletions. Commit through the client.
-
-    Args:
-        client: The client used when creating the mapping.
-        artist_to_meta: A sync or async artist mapping matching the client.
-        track: Track whose character metadata should be updated.
-        should_exclude: Called once with all unresolved artists. True caches their
-            exclusions; False raises AMQCSLError without queueing track changes.
-
-    Returns:
-        None for sync mappings; an awaitable for async mappings.
-    """
-    return artist_to_meta.apply(track, should_exclude)

@@ -10,7 +10,7 @@ from typing import Any, Self
 
 import httpx
 from attrs import define, field
-from attrs.validators import gt, instance_of, le, optional
+from attrs.validators import gt, le
 
 from amqcsl.clients.bundles._core import Items, StreamingBundle
 from amqcsl.clients.bundles._misc import (
@@ -84,19 +84,19 @@ class AsyncDBClient:
     """
 
     #: DB username
-    username: str | None = field(default=None, validator=optional(instance_of(str)))
+    username: str | None = None
     #: DB password
-    password: str | None = field(default=None, validator=optional(instance_of(str)))
+    password: str | None = None
     #: Filepath to look for/store session cookie in, defaults to amq_session.txt
     session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
     _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
 
     #: Maximum batch size when querying db
-    max_batch_size: int = field(default=100, validator=[instance_of(int), gt(0)])
+    max_batch_size: int = field(default=100, validator=gt(0))
     #: Maximum number of queries when iterating
-    max_query_size: int = field(default=1500, validator=[instance_of(int), gt(0)])
+    max_query_size: int = field(default=1500, validator=gt(0))
     #: Maximum number of concurrent requests
-    max_request_count: int = field(default=15, validator=[instance_of(int), gt(0), le(50)])
+    max_request_count: int = field(default=15, validator=[gt(0), le(50)])
 
     _lists: CSLLists = field(factory=dict)
     _groups: CSLGroups = field(factory=dict)

@@ -7,7 +7,7 @@ from typing import Any, Self
 
 import httpx
 from attrs import define, field
-from attrs.validators import gt, instance_of, optional
+from attrs.validators import gt
 
 from amqcsl.clients.bundles._core import Items, StreamingBundle
 from amqcsl.clients.bundles._misc import (
@@ -75,17 +75,17 @@ class DBClient:
     """
 
     #: DB username
-    username: str | None = field(default=None, validator=optional(instance_of(str)))
+    username: str | None = None
     #: DB password
-    password: str | None = field(default=None, validator=optional(instance_of(str)))
+    password: str | None = None
     #: Filepath to look for/store session cookie in, defaults to amq_session.txt
     session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
     _client: httpx.Client | None = field(default=None, init=False, repr=False)
 
     #: Maximum batch size when querying db
-    max_batch_size: int = field(default=100, validator=[instance_of(int), gt(0)])
+    max_batch_size: int = field(default=100, validator=gt(0))
     #: Maximum number of queries when iterating
-    max_query_size: int = field(default=1500, validator=[instance_of(int), gt(0)])
+    max_query_size: int = field(default=1500, validator=gt(0))
 
     _lists: CSLLists | None = None
     _groups: CSLGroups | None = None
@@ -576,9 +576,6 @@ class DBClient:
             song: New song
             type: New track type
             queue: Whether to queue the request, defaults to False
-
-        Raises:
-            ValueError: New track type is not a valid track type
 
         Returns:
             Newly edited track

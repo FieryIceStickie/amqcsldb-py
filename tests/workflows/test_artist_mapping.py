@@ -98,20 +98,6 @@ async def finish[T](result: T | Awaitable[T]) -> T:
     return await cast(Awaitable[T], result) if isinstance(result, Awaitable) else cast(T, result)
 
 
-def apply_with_client(
-    client: DBClient | AsyncDBClient,
-    mapping: cm.SyncArtistToMeta | cm.AsyncArtistToMeta,
-    track: CSLTrack,
-    should_exclude: cm.ShouldExclude = cm.prompt_should_exclude,
-) -> None | Awaitable[None]:
-    # Parametrization guarantees matching clients and mappings; narrow both for the overloads.
-    if isinstance(client, DBClient):
-        assert isinstance(mapping, cm.SyncArtistToMeta)
-        return cm.apply_artist_to_meta(client, mapping, track, should_exclude)
-    assert isinstance(mapping, cm.AsyncArtistToMeta)
-    return cm.apply_artist_to_meta(client, mapping, track, should_exclude)
-
-
 @pytest.fixture(params=['sync', 'async'])
 def db(
     request: pytest.FixtureRequest,
@@ -135,7 +121,7 @@ async def test_infer_group_and_cache(
     assert len(mapping.metadata) == 2  # Discovered groups are not inferred until credited.
     assert search.call_count == 1
     for t in [track(g, a), track(g, track_id='second')]:
-        await finish(apply_with_client(db, mapping, t, lambda _track, _reasons: pytest.fail('Unexpected failure')))
+        await finish(mapping.apply(t, lambda _track, _reasons: pytest.fail('Unexpected failure')))
     assert get_group.call_count == 1
     assert search.call_count == 1
     assert mapping.metadata[CSLArtistSample.from_json(g)] == [
@@ -157,7 +143,7 @@ async def test_explicit_group_overrides_members(
     get_group = router.get('/api/artist/Group') % Response(500)
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Group': 'Override'}, ['all']))
-    await finish(apply_with_client(db, mapping, track(g)))
+    await finish(mapping.apply(track(g)))
     assert not get_group.called
     assert len(db.queue) == 1
 
@@ -179,8 +165,8 @@ async def test_callback_collates_failures_and_caches_exclusions(
 
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}, ['all']))
     first = track(g, unknown, unknown, a)
-    await finish(apply_with_client(db, mapping, first, should_exclude))
-    await finish(apply_with_client(db, mapping, track(unknown, g, a, track_id='second'), should_exclude))
+    await finish(mapping.apply(first, should_exclude))
+    await finish(mapping.apply(track(unknown, g, a, track_id='second'), should_exclude))
     assert len(calls) == 1
     assert calls[0][0] is first
     reasons = calls[0][1]
@@ -203,7 +189,7 @@ async def test_rejected_exclusion_raises_without_queueing(
     mapping = await finish(cm.compact_make_artist_to_meta(db, {}))
     for _ in range(2):
         with pytest.raises(AMQCSLError, match='Cannot infer'):
-            await finish(apply_with_client(db, mapping, track(unknown), lambda _track, _reasons: False))
+            await finish(mapping.apply(track(unknown), lambda _track, _reasons: False))
     assert not mapping.excluded_artists
     assert not db.queue
     assert not get_meta.called
@@ -226,7 +212,7 @@ async def test_missing_or_nested_members_do_not_recurse(
         failures.extend(reasons)
         return True
 
-    await finish(apply_with_client(db, mapping, track(g), should_exclude))
+    await finish(mapping.apply(track(g), should_exclude))
     assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
     assert [*failures[0].reason.artists] == [CSLArtistSample.from_json(m) for m in members]
     assert get_group.called and not nested.called
@@ -243,7 +229,7 @@ async def test_nested_group_with_explicit_metadata(
     nested_query = router.get('/api/artist/Nested') % Response(500)
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Nested': 'Character'}))
-    await finish(apply_with_client(db, mapping, track(g)))
+    await finish(mapping.apply(track(g)))
     assert not nested_query.called
     assert mapping.metadata[CSLArtistSample.from_json(g)] == mapping.metadata[CSLArtistSample.from_json(nested)]
 
@@ -265,7 +251,7 @@ async def test_exclusion_keeps_additions_and_all_stale_deletions(
     delete2 = router.delete('/api/track/test-track/metadata/stale2') % Response(200)
     unrelated = router.delete('/api/track/test-track/metadata/unrelated') % Response(500)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'New'}))
-    await finish(apply_with_client(db, mapping, track(a, unknown), lambda _track, _reasons: True))
+    await finish(mapping.apply(track(a, unknown), lambda _track, _reasons: True))
     assert len(db.queue) == 1
     assert isinstance(db.queue[0], _ParallelActionsBundle)
     assert len(db.queue[0].bundles) == 3
@@ -284,9 +270,9 @@ async def test_only_deletions_and_no_changes(
     mock_metadata(router, [{'id': 'stale', 'type': 2, 'key': 'Character', 'value': 'Old'}])
     delete = router.delete('/api/track/test-track/metadata/stale') % Response(200)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'Old'}))
-    await finish(apply_with_client(db, mapping, track(a)))
+    await finish(mapping.apply(track(a)))
     assert not db.queue
-    await finish(apply_with_client(db, mapping, track(unknown), lambda _track, _reasons: True))
+    await finish(mapping.apply(track(unknown), lambda _track, _reasons: True))
     assert isinstance(db.queue[0], _ParallelActionsBundle)
     assert len(db.queue[0].bundles) == 1
     await finish(db.commit())
@@ -299,11 +285,7 @@ async def test_off_vocal_skips_queries_and_callback(
 ) -> None:
     mapping = await finish(cm.compact_make_artist_to_meta(db, {}))
     get_meta = mock_metadata(router)
-    await finish(
-        apply_with_client(
-            db, mapping, evolve(track(artist('Unknown')), type_id=1), lambda _track, _reasons: pytest.fail()
-        )
-    )
+    await finish(mapping.apply(evolve(track(artist('Unknown')), type_id=1), lambda _track, _reasons: pytest.fail()))
     assert not get_meta.called and not db.queue
 
 
@@ -381,12 +363,7 @@ async def test_concurrent_apply_shares_exclusion(
         calls.append(t.id)
         return True
 
-    await asyncio.gather(
-        *(
-            cm.apply_artist_to_meta(aclient, mapping, track(artist('Unknown'), track_id=str(i)), should_exclude)
-            for i in range(3)
-        )
-    )
+    await asyncio.gather(*(mapping.apply(track(artist('Unknown'), track_id=str(i)), should_exclude) for i in range(3)))
     assert len(calls) == 1
 
 
@@ -400,8 +377,8 @@ async def test_cached_group_can_be_used_as_member_without_recursion(
     parent_query = router.get('/api/artist/Parent') % Response(200, json=group_details(parent, [nested]))
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}))
-    await finish(apply_with_client(db, mapping, track(nested)))
-    await finish(apply_with_client(db, mapping, track(parent, track_id='parent-track')))
+    await finish(mapping.apply(track(nested)))
+    await finish(mapping.apply(track(parent, track_id='parent-track')))
     assert nested_query.call_count == 1 and parent_query.call_count == 1
     assert mapping.metadata[CSLArtistSample.from_json(parent)] == mapping.metadata[CSLArtistSample.from_json(a)]
 
@@ -417,7 +394,7 @@ async def test_full_artist_credit_uses_existing_group_details(
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}))
     t = track(g)
     credit = evolve(t.artist_credits[0], artist=CSLArtist.from_json(group_details(g, [a])))
-    await finish(apply_with_client(db, mapping, evolve(t, artist_credits=[credit])))
+    await finish(mapping.apply(evolve(t, artist_credits=[credit])))
     assert not get_group.called
     assert CSLArtistSample.from_json(g) in mapping.metadata
 
@@ -442,7 +419,7 @@ async def test_group_queries_for_one_track_run_in_parallel(
     router.get(url__regex=r'/api/artist/[^/]+').mock(side_effect=get_group)
     mock_metadata(router)
     mapping = await cm.compact_make_artist_to_meta(aclient, {'Alice': 'A'})
-    await cm.apply_artist_to_meta(aclient, mapping, track(g, h))
+    await mapping.apply(track(g, h))
     assert len(mapping.metadata) == 3
 
 

@@ -14,7 +14,7 @@ type Vendor[R] = SingleVendor[R] | MultiVendor[R] | MixedVendor[R]
 
 
 def materialize[T](items: Iterable[T]) -> list[T]:
-    """Snapshot iterable inputs before validators and request builders traverse them."""
+    """Snapshot iterable inputs that request builders may read more than once."""
     return [*items]
 
 

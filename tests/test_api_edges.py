@@ -320,7 +320,7 @@ async def test_unrecognized_metadata_errors_propagate(
 @pytest.mark.parametrize('kind', ['tracks', 'songs', 'artists'])
 @pytest.mark.parametrize(
     'batch_size, error',
-    [(0, 'positive'), (-1, 'positive'), ('2', 'integer'), (1.5, 'integer'), (None, 'integer'), (101, 'max batch size')],
+    [(0, 'positive'), (-1, 'positive'), (101, 'max batch size')],
 )
 async def test_invalid_query_batch_sizes_fail_before_requests(
     db: DBClient | AsyncDBClient,
@@ -336,47 +336,13 @@ async def test_invalid_query_batch_sizes_fail_before_requests(
 
 
 @pytest.mark.parametrize(
-    'kwargs',
-    [
-        {'search_term': 1},
-        {'groups': ['invalid']},
-        {'active_list': 'invalid'},
-        {'missing_audio': 1},
-        {'missing_info': 'yes'},
-        {'from_active_list': 'yes'},
-    ],
-)
-async def test_invalid_track_search_arguments_fail_before_requests(
-    db: DBClient | AsyncDBClient,
-    router: Router,
-    kwargs: dict[str, Any],
-) -> None:
-    before = router.calls.call_count
-    with pytest.raises(TypeError):
-        await collect(db.iter_tracks(**kwargs))
-    assert router.calls.call_count == before
-
-
-@pytest.mark.parametrize(
     'operation, kwargs, error',
     [
-        ('create_group', {'name': 1}, TypeError),
         ('create_group', {'name': ''}, ValueError),
-        ('create_list', {'name': 1}, TypeError),
         ('create_list', {'name': ''}, ValueError),
-        ('get_artist', {'artist': 'invalid'}, TypeError),
-        ('get_song', {'song': 'invalid'}, TypeError),
-        ('get_metadata', {'track': 'invalid'}, TypeError),
-        ('group_edit', {'group': 'invalid', 'name': 'Name'}, TypeError),
-        ('group_delete', {'group': 'invalid'}, TypeError),
-        ('song_delete', {'song': 'invalid'}, TypeError),
-        ('song_add_metadata', {'song': 'invalid'}, TypeError),
-        ('track_edit', {'track': 'invalid'}, TypeError),
-        ('track_add_metadata', {'track': 'invalid'}, TypeError),
-        ('track_remove_metadata', {'track': 'invalid', 'meta': 'invalid'}, TypeError),
     ],
 )
-async def test_invalid_primary_inputs_fail_before_requests(
+async def test_empty_names_fail_before_requests(
     db: DBClient | AsyncDBClient,
     router: Router,
     operation: str,
@@ -392,66 +358,10 @@ async def test_invalid_primary_inputs_fail_before_requests(
 @pytest.mark.parametrize(
     'kwargs, error',
     [
-        ({'type': 'Unknown'}, ValueError),
-        ({'song': 'invalid'}, TypeError),
-        ({'artist_credits': ['invalid']}, TypeError),
-        ({'groups': ['invalid']}, TypeError),
-        ({'name': 42}, TypeError),
-        ({'original_artist': 42}, TypeError),
-        ({'original_name': 42}, TypeError),
-    ],
-)
-async def test_invalid_track_edit_fields_fail_before_queueing(
-    db: DBClient | AsyncDBClient,
-    router: Router,
-    track: CSLTrack,
-    kwargs: dict[str, Any],
-    error: type[Exception],
-) -> None:
-    before = router.calls.call_count
-    with pytest.raises(error):
-        await finish(db.track_edit(track, queue=True, **kwargs))
-    assert not db.queue and router.calls.call_count == before
-
-
-@pytest.mark.parametrize('kwargs', [{'override': 'yes'}, {'existing_meta': 'invalid'}])
-async def test_invalid_metadata_options_fail_before_queueing(
-    db: DBClient | AsyncDBClient,
-    router: Router,
-    track: CSLTrack,
-    kwargs: dict[str, Any],
-) -> None:
-    before = router.calls.call_count
-    with pytest.raises(TypeError):
-        await finish(db.track_add_metadata(track, queue=True, **kwargs))
-    assert not db.queue and router.calls.call_count == before
-
-
-async def test_invalid_metadata_member_is_rejected(
-    db: DBClient | AsyncDBClient,
-    router: Router,
-    track: CSLTrack,
-    song: CSLSong,
-) -> None:
-    invalid: Any = 'not metadata'
-    before = router.calls.call_count
-    with pytest.raises(TypeError):
-        await finish(db.track_add_metadata(track, invalid))
-    with pytest.raises(TypeError):
-        await finish(db.song_add_metadata(song, invalid))
-    assert router.calls.call_count == before
-
-
-@pytest.mark.parametrize(
-    'kwargs, error',
-    [
         ({'name': ''}, ValueError),
         ({'original_name': ''}, ValueError),
         ({'year': 0}, ValueError),
         ({'year': -1}, ValueError),
-        ({'year': '2025'}, TypeError),
-        ({'groups': ['invalid']}, TypeError),
-        ({'tracks': [['invalid']]}, TypeError),
     ],
 )
 async def test_invalid_album_inputs_fail_before_requests(

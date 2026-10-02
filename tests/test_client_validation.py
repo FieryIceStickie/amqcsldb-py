@@ -18,19 +18,13 @@ def client_class(request: pytest.FixtureRequest) -> type[DBClient] | type[AsyncD
 @pytest.mark.parametrize(
     'kwargs, error',
     [
-        ({'username': 1}, TypeError),
-        ({'password': 1}, TypeError),
         ({'max_batch_size': 0}, ValueError),
         ({'max_batch_size': -1}, ValueError),
-        ({'max_batch_size': '10'}, TypeError),
-        ({'max_batch_size': 1.5}, TypeError),
         ({'max_query_size': 0}, ValueError),
         ({'max_query_size': -1}, ValueError),
-        ({'max_query_size': '10'}, TypeError),
-        ({'max_query_size': 1.5}, TypeError),
     ],
 )
-def test_constructor_rejects_invalid_limits_and_credentials(
+def test_constructor_rejects_nonpositive_limits(
     client_class: type[DBClient] | type[AsyncDBClient],
     kwargs: dict[str, Any],
     error: type[Exception],
@@ -39,9 +33,7 @@ def test_constructor_rejects_invalid_limits_and_credentials(
         client_class(**kwargs)
 
 
-@pytest.mark.parametrize(
-    'value, error', [(0, ValueError), (-1, ValueError), (51, ValueError), ('5', TypeError), (1.5, TypeError)]
-)
+@pytest.mark.parametrize('value, error', [(0, ValueError), (-1, ValueError), (51, ValueError)])
 def test_async_request_limit_validation(value: Any, error: type[Exception]) -> None:
     with pytest.raises(error):
         AsyncDBClient(max_request_count=value)
