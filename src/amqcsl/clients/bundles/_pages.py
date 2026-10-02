@@ -13,7 +13,7 @@ from amqcsl.exceptions import QueryError
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from ._core import Items, StreamingBundle, StreamingVendor, httpxClient
+from ._core import Items, StreamingBundle, StreamingVendor, materialize, httpxClient
 
 if TYPE_CHECKING:
     from amqcsl import AsyncDBClient, DBClient
@@ -158,7 +158,7 @@ class PageBundle[R](StreamingBundle[R], ABC):
 @frozen
 class IterTracksBundle(PageBundle[CSLTrack]):
     search_term: str = field(validator=instance_of(str))
-    groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
+    groups: list[CSLGroup] = field(converter=materialize, validator=deep_iterable(instance_of(CSLGroup)))
     active_list: CSLList | None = field(validator=instance_of((CSLList, type(None))))
     missing_audio: bool = field(validator=instance_of(bool))
     missing_info: bool = field(validator=instance_of(bool))

@@ -1,6 +1,6 @@
 import logging
 import mimetypes
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from functools import cached_property
 from pathlib import Path
 from typing import override
@@ -33,7 +33,7 @@ from amqcsl.objects._db_types import (
 from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, SongMetadataPostBody, TrackPutBody
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
 
-from ._core import Bundle, SingleVendor, httpxClient
+from ._core import Bundle, SingleVendor, materialize, httpxClient
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -260,7 +260,9 @@ class GetMetadataBundle(Bundle[CSLMetadata | None]):
 @frozen
 class CreateListBundle(Bundle[None]):
     name: str = field(validator=[instance_of(str), min_len(1)])
-    csl_lists: Iterable[CSLList] = field(default=(), validator=deep_iterable(instance_of(CSLList)))
+    csl_lists: list[CSLList] = field(
+        factory=lambda: [], converter=materialize, validator=deep_iterable(instance_of(CSLList))
+    )
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -283,8 +285,12 @@ class CreateListBundle(Bundle[None]):
 class ListEditBundle(Bundle[None]):
     csl_list: CSLList = field(validator=instance_of(CSLList))
     name: str | None = field(default=None, validator=optional([instance_of(str), min_len(1)]))
-    add: Iterable[CSLTrack] = field(default=(), validator=deep_iterable(instance_of(CSLTrack)))
-    remove: Iterable[CSLTrack] = field(default=(), validator=deep_iterable(instance_of(CSLTrack)))
+    add: list[CSLTrack] = field(
+        factory=lambda: [], converter=materialize, validator=deep_iterable(instance_of(CSLTrack))
+    )
+    remove: list[CSLTrack] = field(
+        factory=lambda: [], converter=materialize, validator=deep_iterable(instance_of(CSLTrack))
+    )
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -371,7 +377,7 @@ class SongEditBundle(Bundle[None]):
             'name': self.name if self.name else self.song.name,
             'disambiguation': self.disambiguation if self.disambiguation else self.song.disambiguation,
         }
-        res = yield client.build_request('PUT', f'/api/group/{self.song.id}', json=body)
+        res = yield client.build_request('PUT', f'/api/song/{self.song.id}', json=body)
         res.raise_for_status()
 
     @override
@@ -399,7 +405,9 @@ class SongDeleteBundle(Bundle[None]):
 @frozen
 class SongAddMetadataBundle(Bundle[None]):
     song: CSLSong = field(validator=instance_of(CSLSong))
-    metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
+    metas: list[Metadata] = field(
+        converter=materialize, validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata)))
+    )
 
     @cached_property
     def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
@@ -443,7 +451,7 @@ class SongDeleteMetadataBundle(Bundle[None]):
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
         logger.info(f'Removing metadata {self.meta} from song {self.song.name}')
-        res = yield client.build_request('DELETE', f'/api/track/{self.song.id}/metadata/{self.meta.id}')
+        res = yield client.build_request('DELETE', f'/api/song/{self.song.id}/metadata/{self.meta.id}')
         res.raise_for_status()
 
     @override
@@ -455,7 +463,9 @@ class SongDeleteMetadataBundle(Bundle[None]):
 @frozen
 class TrackAddMetadataBundle(Bundle[None]):
     track: CSLTrack = field(validator=instance_of(CSLTrack))
-    metas: Iterable[Metadata] = field(validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata))))
+    metas: list[Metadata] = field(
+        converter=materialize, validator=deep_iterable(instance_of((ArtistCredit, ExtraMetadata)))
+    )
     _override: bool | None = field(default=None, validator=optional(instance_of(bool)))
     existing_meta: CSLMetadata | None = field(default=None, validator=optional(instance_of(CSLMetadata)))
 
@@ -581,7 +591,8 @@ class TrackEditBundle(Bundle[None]):
                 body['songId'] = self.song.id
             case None:
                 pass
-        yield client.build_request('PUT', f'/api/track/{track.id}', json=body)
+        res = yield client.build_request('PUT', f'/api/track/{track.id}', json=body)
+        res.raise_for_status()
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -600,7 +611,7 @@ class CreateAlbumBundle(Bundle[None]):
     name: str = field(validator=[instance_of(str), min_len(1)])
     original_name: str = field(validator=[instance_of(str), min_len(1)])
     year: int = field(validator=[instance_of(int), gt(0)])
-    groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
+    groups: list[CSLGroup] = field(converter=materialize, validator=deep_iterable(instance_of(CSLGroup)))
     tracks: Sequence[Sequence[AlbumTrack]] = field(validator=deep_iterable(deep_iterable(instance_of(AlbumTrack))))  # type: ignore[reportUnknownArgumentType]
 
     @override

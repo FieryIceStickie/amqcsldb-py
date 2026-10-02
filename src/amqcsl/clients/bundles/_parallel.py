@@ -5,22 +5,18 @@ import httpx
 import rich.repr
 from attrs import field, frozen
 
-from ._core import Bundle, MultiVendor, Vendor, httpxClient
+from ._core import Bundle, MultiVendor, Vendor, materialize, httpxClient
 
 
 type Replies = dict[int, httpx.Response | list[httpx.Response] | None]
 type RequestSpans = dict[int, tuple[int, int, bool]]
 
 
-def _materialize[R](bundles: Iterable[Bundle[R]]) -> list[Bundle[R]]:
-    return [*bundles]
-
-
 @frozen
 class ParallelBundle[R](Bundle[list[R]]):
     """Run child vendors together, including vendors with multiple request rounds."""
 
-    bundles: list[Bundle[R]] = field(converter=_materialize)
+    bundles: list[Bundle[R]] = field(converter=materialize)
 
     @staticmethod
     def _batch(

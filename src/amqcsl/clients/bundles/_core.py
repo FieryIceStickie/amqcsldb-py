@@ -13,6 +13,11 @@ type MixedVendor[R] = Generator[httpx.Request | Iterable[httpx.Request], httpx.R
 type Vendor[R] = SingleVendor[R] | MultiVendor[R] | MixedVendor[R]
 
 
+def materialize[T](items: Iterable[T]) -> list[T]:
+    """Snapshot iterable inputs before validators and request builders traverse them."""
+    return [*items]
+
+
 class Bundle[R](Protocol):
     # httpxClient is used for build_request and other client methods
     # Do not use to send actual requests, since it should work for both sync

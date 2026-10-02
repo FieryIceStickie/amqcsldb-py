@@ -168,13 +168,23 @@ class AsyncDBClient:
         """Commit changes in the queue
 
         Args:
-            stop_if_err: Stop sending requests if one of them errors
+            stop_if_err: Propagate HTTP errors after concurrent work finishes; otherwise log and ignore them.
+
+        Queued bundles run concurrently. The queue is retained when an error is propagated.
+        Errors other than HTTP errors always propagate.
         """
         logger.info(f'Commiting {len(self.queue)} changes')
-        results = await asyncio.gather(*map(self.process, self.queue), return_exceptions=stop_if_err)
-        for task, r in zip(self.queue, results):
-            if isinstance(r, Exception):
-                logger.error(f'{task} failed: {r!r}')
+        results = await asyncio.gather(*map(self.process, self.queue), return_exceptions=True)
+        for task, result in zip(self.queue, results):
+            match result:
+                case httpx.HTTPError():
+                    logger.error(f'{task} failed: {result!r}')
+                    if stop_if_err:
+                        raise result
+                case BaseException():
+                    raise result
+                case _:
+                    pass
         self.queue.clear()
 
     # --- Initialization ---
