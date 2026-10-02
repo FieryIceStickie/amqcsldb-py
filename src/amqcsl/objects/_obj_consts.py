@@ -1,7 +1,9 @@
 from typing import Literal
 
 
-ARTIST_TYPE = {
+type ArtistType = Literal['Other', 'Person', 'Character', 'Group', 'Orchestra', 'Choir']
+
+ARTIST_TYPE: dict[int, ArtistType] = {
     0: 'Other',
     1: 'Person',
     2: 'Character',
@@ -22,13 +24,17 @@ TRACK_TYPE: dict[int, TrackType] = {
 }
 REVERSE_TRACK_TYPE: dict[TrackType, int] = {v: k for k, v in TRACK_TYPE.items()}
 
-EXTRA_METADATA_TYPE = {
+type ExtraMetadataType = Literal['Song', 'Artist']
+
+EXTRA_METADATA_TYPE: dict[int, ExtraMetadataType] = {
     1: 'Song',
     2: 'Artist',
 }
 REVERSE_EXTRA_METADATA_TYPE = {v: k for k, v in EXTRA_METADATA_TYPE.items()}
 
-SONG_RELATION_TYPE = {
+type SongRelationType = Literal['Other', 'GroupMember', 'VoiceActor', 'Person']
+
+SONG_RELATION_TYPE: dict[int, SongRelationType] = {
     0: 'Other',
     1: 'GroupMember',
     2: 'VoiceActor',

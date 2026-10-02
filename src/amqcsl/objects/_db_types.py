@@ -16,7 +16,16 @@ from ._json_types import (
     MetadataPostExtraMetadata,
     TrackNewSong,
 )
-from ._obj_consts import ARTIST_TYPE, EXTRA_METADATA_TYPE, SONG_RELATION_TYPE, TRACK_TYPE, TrackType
+from ._obj_consts import (
+    ARTIST_TYPE,
+    EXTRA_METADATA_TYPE,
+    SONG_RELATION_TYPE,
+    TRACK_TYPE,
+    ArtistType,
+    ExtraMetadataType,
+    SongRelationType,
+    TrackType,
+)
 
 logger = logging.getLogger('amqcsl.object')
 
@@ -63,8 +72,12 @@ class CSLArtistSample:
     type_id: int
 
     @property
-    def type(self) -> str:
+    def type(self) -> ArtistType:
         return ARTIST_TYPE[self.type_id]
+
+    def to_sample(self) -> 'CSLArtistSample':
+        """Return a hashable sample, stripping full artist relations when called on CSLArtist."""
+        return CSLArtistSample(self.id, self.name, self.original_name, self.disambiguation, self.type_id)
 
     @classmethod
     def from_json(cls, data: JSONType):
@@ -96,7 +109,7 @@ class CSLExtraMetadata:
     value: str
 
     @property
-    def type(self) -> str:
+    def type(self) -> ExtraMetadataType:
         return EXTRA_METADATA_TYPE[self.type_id]
 
     @classmethod
@@ -165,7 +178,7 @@ class CSLSongRelation:
     artist: CSLArtistSample
 
     @property
-    def type(self):
+    def type(self) -> SongRelationType:
         return SONG_RELATION_TYPE[self.type_id]
 
     @classmethod

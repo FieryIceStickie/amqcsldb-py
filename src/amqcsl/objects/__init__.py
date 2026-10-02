@@ -19,7 +19,7 @@ from ._db_types import (
     NewSong,
     TrackPutArtistCredit,
 )
-from ._obj_consts import TrackType
+from ._obj_consts import ArtistType, ExtraMetadataType, SongRelationType, TrackType
 
 __all__ = [
     'AlbumTrack',
@@ -41,5 +41,8 @@ __all__ = [
     'Metadata',
     'NewSong',
     'TrackPutArtistCredit',
+    'ArtistType',
+    'ExtraMetadataType',
+    'SongRelationType',
     'TrackType',
 ]
