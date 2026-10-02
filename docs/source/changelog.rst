@@ -33,6 +33,7 @@ Unreleased
 #. Page queries provide ``collect()`` to compose full-list queries without a separate artist
    listing implementation. ``ParallelBundle`` accepts iterable inputs and preserves result order.
 #. Added ``ArtistType``, ``ExtraMetadataType``, and ``SongRelationType`` literal types.
-#. Client pagination uses the shared streaming page adapter. Sync queries remain lazy;
-   async queries yield the first page before requesting remaining pages concurrently.
-   Full-list collection reuses the same adapter.
+#. Streaming bundles yield HTTP requests and explicit ``Items`` events. Page queries receive
+   HTTP responses directly, and stateless strategies select the next request offsets.
+   Sync queries remain lazy; async queries yield the first page before fetching remaining pages
+   concurrently. A generic collection adapter composes any stream with ordinary bundles.

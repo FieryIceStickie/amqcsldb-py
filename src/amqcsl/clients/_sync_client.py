@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
@@ -9,6 +9,7 @@ import httpx
 from attrs import define, field
 from attrs.validators import gt, instance_of, optional
 
+from amqcsl.clients.bundles._core import Items, StreamingBundle
 from amqcsl.clients.bundles._misc import (
     AddAudioBundle,
     AuthBundle,
@@ -39,8 +40,6 @@ from amqcsl.clients.bundles._pages import (
     IterArtistsBundle,
     IterSongsBundle,
     IterTracksBundle,
-    PageBundle,
-    PageSingleVendor,
 )
 from amqcsl.exceptions import ClientDoesNotExistError
 from amqcsl.objects._db_types import (
@@ -130,6 +129,9 @@ class DBClient:
             except StopIteration as e:
                 return e.value
             match req:
+                case Items():
+                    g.close()
+                    raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
                 case httpx.Request():
                     res = client.send(req)
                 case reqs:
@@ -220,20 +222,30 @@ class DBClient:
             self._groups = self.process(bundle)
         return self._groups
 
-    def _process_pages[R](self, bundle: PageBundle[R, PageSingleVendor]) -> Iterator[R]:
-        """Send streaming bundle requests, yielding completed pages before fetching more."""
+    def _process_stream[R](
+        self,
+        bundle: StreamingBundle[R],
+    ) -> Generator[R, None, None]:
+        """Execute HTTP events and expose item events without buffering query results."""
         logger.debug(f'Processing {type(bundle)}')
-        stream = bundle.stream()
-        vendor = stream.vendor(self.client)
-        responses: list[httpx.Response] | None = None
-        while True:
-            try:
-                requests = vendor.send(responses)  # type: ignore[reportArgumentType]
-            except StopIteration:
-                yield from stream.take_items()
-                return
-            yield from stream.take_items()
-            responses = [self.client.send(request) for request in requests]
+        vendor = bundle.vendor(self.client)
+        reply: httpx.Response | list[httpx.Response] | None = None
+        try:
+            while True:
+                try:
+                    event = vendor.send(reply)
+                except StopIteration:
+                    return
+                match event:
+                    case Items(values=values):
+                        yield from values
+                        reply = None
+                    case httpx.Request():
+                        reply = self.client.send(event)
+                    case _:
+                        reply = [self.client.send(request) for request in event]
+        finally:
+            vendor.close()
 
     def iter_tracks(
         self,
@@ -270,7 +282,7 @@ class DBClient:
             from_active_list=from_active_list,
             batch_size=batch_size,
         )
-        yield from self._process_pages(bundle)
+        yield from self._process_stream(bundle)
 
     def iter_songs(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLSongSample]:
         """Iterate over songs matching search_term
@@ -287,7 +299,7 @@ class DBClient:
             search_term=search_term,
             batch_size=batch_size,
         )
-        yield from self._process_pages(bundle)
+        yield from self._process_stream(bundle)
 
     def iter_artists(self, search_term: str, *, batch_size: int = 50) -> Iterator[CSLArtistSample]:
         """Iterator over artists matching search_term
@@ -304,7 +316,7 @@ class DBClient:
             search_term=search_term,
             batch_size=batch_size,
         )
-        yield from self._process_pages(bundle)
+        yield from self._process_stream(bundle)
 
     # --- Detailed DB reading ---
 

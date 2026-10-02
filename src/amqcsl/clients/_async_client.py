@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Callable, Coroutine, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Coroutine, Iterable, Sequence
+from contextlib import aclosing
 from functools import cached_property
 from os import PathLike
 from pathlib import Path
@@ -11,6 +12,7 @@ import httpx
 from attrs import define, field
 from attrs.validators import gt, instance_of, le, optional
 
+from amqcsl.clients.bundles._core import Items, StreamingBundle
 from amqcsl.clients.bundles._misc import (
     AddAudioBundle,
     AuthBundle,
@@ -41,8 +43,6 @@ from amqcsl.clients.bundles._pages import (
     IterArtistsBundle,
     IterSongsBundle,
     IterTracksBundle,
-    PageBundle,
-    PageMultiVendor,
 )
 from amqcsl.exceptions import ClientDoesNotExistError
 from amqcsl.objects._db_types import (
@@ -148,6 +148,9 @@ class AsyncDBClient:
             except StopIteration as e:
                 return e.value
             match req:
+                case Items():
+                    g.close()
+                    raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
                 case httpx.Request():
                     res = await self._send_request(req)
                 case reqs:
@@ -242,24 +245,33 @@ class AsyncDBClient:
         bundle = GroupBundle()
         self._groups = await self.process(bundle)
 
-    async def _process_pages[T](self, bundle: PageBundle[T, PageMultiVendor]) -> AsyncIterator[T]:
-        """Send streaming bundle requests concurrently, yielding completed pages in order."""
+    async def _process_stream[T](
+        self,
+        bundle: StreamingBundle[T],
+    ) -> AsyncGenerator[T, None]:
+        """Execute HTTP events concurrently and expose item events in stream order."""
         logger.debug(f'Processing {type(bundle)}')
-        stream = bundle.stream()
-        vendor = stream.vendor(self.client)
-        responses: Sequence[httpx.Response] | None = None
-        while True:
-            try:
-                requests = vendor.send(responses)  # type: ignore[reportArgumentType]
-            except StopIteration:
-                for item in stream.take_items():
-                    yield item
-                return
-            for item in stream.take_items():
-                yield item
-            async with asyncio.TaskGroup() as tg:
-                tasks = [tg.create_task(self._send_request(request)) for request in requests]
-            responses = [task.result() for task in tasks]
+        vendor = bundle.vendor(self.client)
+        reply: httpx.Response | Sequence[httpx.Response] | None = None
+        try:
+            while True:
+                try:
+                    event = vendor.send(reply)
+                except StopIteration:
+                    return
+                match event:
+                    case Items(values=values):
+                        for item in values:
+                            yield item
+                        reply = None
+                    case httpx.Request():
+                        reply = await self._send_request(event)
+                    case _:
+                        async with asyncio.TaskGroup() as tg:
+                            tasks = [tg.create_task(self._send_request(request)) for request in event]
+                        reply = [task.result() for task in tasks]
+        finally:
+            vendor.close()
 
     async def iter_tracks(
         self,
@@ -296,8 +308,9 @@ class AsyncDBClient:
             from_active_list=from_active_list,
             batch_size=batch_size,
         )
-        async for item in self._process_pages(bundle):
-            yield item
+        async with aclosing(self._process_stream(bundle)) as items:
+            async for item in items:
+                yield item
 
     async def iter_songs(
         self,
@@ -319,8 +332,9 @@ class AsyncDBClient:
             search_term=search_term,
             batch_size=batch_size,
         )
-        async for item in self._process_pages(bundle):
-            yield item
+        async with aclosing(self._process_stream(bundle)) as items:
+            async for item in items:
+                yield item
 
     async def iter_artists(
         self,
@@ -342,8 +356,9 @@ class AsyncDBClient:
             search_term=search_term,
             batch_size=batch_size,
         )
-        async for item in self._process_pages(bundle):
-            yield item
+        async with aclosing(self._process_stream(bundle)) as items:
+            async for item in items:
+                yield item
 
     # --- Detailed DB reading ---
 

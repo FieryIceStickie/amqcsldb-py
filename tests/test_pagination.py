@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import cast
 
 import pytest
 from helpers import load
@@ -8,18 +9,25 @@ from respx import Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.exceptions import QueryError
+from amqcsl.objects._json_types import JSONType
+
+type Query = tuple[str, list[dict[str, JSONType]]]
 
 
 @pytest.fixture(params=['tracks', 'songs', 'artists'])
-def query(request):
+def query(request: pytest.FixtureRequest) -> Query:
     kind = request.param
-    return kind, load(f'idolypride/{kind}')[:5]
+    return kind, cast(list[dict[str, JSONType]], load(f'idolypride/{kind}'))[:5]
 
 
-def mock_pages(router: Router, kind: str, samples: list):
-    calls = []
+def mock_pages(
+    router: Router,
+    kind: str,
+    samples: list[dict[str, JSONType]],
+) -> list[int]:
+    calls: list[int] = []
 
-    def page(req: Request):
+    def page(req: Request) -> Response:
         params = json.loads(req.content) if kind == 'tracks' else req.url.params
         skip, take = int(params['skip']), int(params['take'])
         calls.append(skip)
@@ -30,7 +38,11 @@ def mock_pages(router: Router, kind: str, samples: list):
     return calls
 
 
-def test_sync_pagination_stays_lazy_and_yields_final_page(client: DBClient, router: Router, query):
+def test_sync_pagination_stays_lazy_and_yields_final_page(
+    client: DBClient,
+    router: Router,
+    query: Query,
+) -> None:
     kind, samples = query
     calls = mock_pages(router, kind, samples)
     items = getattr(client, f'iter_{kind}')('test', batch_size=2)
@@ -43,7 +55,11 @@ def test_sync_pagination_stays_lazy_and_yields_final_page(client: DBClient, rout
     assert calls == [0, 2, 4]
 
 
-def test_sync_pagination_can_stop_after_first_item(client: DBClient, router: Router, query):
+def test_sync_pagination_can_stop_after_first_item(
+    client: DBClient,
+    router: Router,
+    query: Query,
+) -> None:
     kind, samples = query
     calls = mock_pages(router, kind, samples)
     items = getattr(client, f'iter_{kind}')('test', batch_size=2)
@@ -56,14 +72,14 @@ def test_sync_pagination_can_stop_after_first_item(client: DBClient, router: Rou
 async def test_async_pagination_first_page_then_parallel_ordered_pages(
     aclient: AsyncDBClient,
     router: Router,
-    query,
-):
+    query: Query,
+) -> None:
     kind, samples = query
-    calls = []
+    calls: list[int] = []
     both_started = asyncio.Event()
     last_finished = asyncio.Event()
 
-    async def page(req: Request):
+    async def page(req: Request) -> Response:
         params = json.loads(req.content) if kind == 'tracks' else req.url.params
         skip, take = int(params['skip']), int(params['take'])
         calls.append(skip)
@@ -89,7 +105,11 @@ async def test_async_pagination_first_page_then_parallel_ordered_pages(
 
 
 @pytest.mark.asyncio
-async def test_async_pagination_can_stop_after_first_item(aclient: AsyncDBClient, router: Router, query):
+async def test_async_pagination_can_stop_after_first_item(
+    aclient: AsyncDBClient,
+    router: Router,
+    query: Query,
+) -> None:
     kind, samples = query
     calls = mock_pages(router, kind, samples)
     items = getattr(aclient, f'iter_{kind}')('test', batch_size=2)
@@ -98,7 +118,11 @@ async def test_async_pagination_can_stop_after_first_item(aclient: AsyncDBClient
     assert calls == [0]
 
 
-def test_empty_sync_page_finishes(client: DBClient, router: Router, query):
+def test_empty_sync_page_finishes(
+    client: DBClient,
+    router: Router,
+    query: Query,
+) -> None:
     kind, _ = query
     calls = mock_pages(router, kind, [])
     assert [*getattr(client, f'iter_{kind}')('test')] == []
@@ -106,14 +130,22 @@ def test_empty_sync_page_finishes(client: DBClient, router: Router, query):
 
 
 @pytest.mark.asyncio
-async def test_empty_async_page_finishes(aclient: AsyncDBClient, router: Router, query):
+async def test_empty_async_page_finishes(
+    aclient: AsyncDBClient,
+    router: Router,
+    query: Query,
+) -> None:
     kind, _ = query
     calls = mock_pages(router, kind, [])
     assert [item async for item in getattr(aclient, f'iter_{kind}')('test')] == []
     assert calls == [0]
 
 
-def test_sync_query_limit_fails_before_next_page(client: DBClient, router: Router, query):
+def test_sync_query_limit_fails_before_next_page(
+    client: DBClient,
+    router: Router,
+    query: Query,
+) -> None:
     kind, samples = query
     client.max_query_size = 1
     calls = mock_pages(router, kind, samples)
@@ -123,7 +155,11 @@ def test_sync_query_limit_fails_before_next_page(client: DBClient, router: Route
 
 
 @pytest.mark.asyncio
-async def test_async_query_limit_fails_before_next_page(aclient: AsyncDBClient, router: Router, query):
+async def test_async_query_limit_fails_before_next_page(
+    aclient: AsyncDBClient,
+    router: Router,
+    query: Query,
+) -> None:
     kind, samples = query
     aclient.max_query_size = 1
     calls = mock_pages(router, kind, samples)
@@ -133,14 +169,17 @@ async def test_async_query_limit_fails_before_next_page(aclient: AsyncDBClient, 
 
 
 @pytest.mark.asyncio
-async def test_async_page_request_failure_cancels_other_requests(aclient: AsyncDBClient, router: Router):
+async def test_async_page_request_failure_cancels_other_requests(
+    aclient: AsyncDBClient,
+    router: Router,
+) -> None:
     from httpx import ConnectError
 
     samples = load('idolypride/artists')[:5]
     sibling_started = asyncio.Event()
     sibling_cancelled = asyncio.Event()
 
-    async def page(req: Request):
+    async def page(req: Request) -> Response:
         skip = int(req.url.params['skip'])
         if skip == 0:
             return Response(200, json={'count': 5, 'artists': samples[:2]})
@@ -153,6 +192,7 @@ async def test_async_page_request_failure_cancels_other_requests(aclient: AsyncD
         except asyncio.CancelledError:
             sibling_cancelled.set()
             raise
+        pytest.fail('Sibling request unexpectedly completed')
 
     router.get('/api/artists').mock(side_effect=page)
     items = aclient.iter_artists('test', batch_size=2)

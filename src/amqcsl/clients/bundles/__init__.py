@@ -1,5 +1,9 @@
 from ._core import (
     Bundle,
+    CollectBundle,
+    Items,
+    StreamingBundle,
+    StreamingVendor,
     MixedVendor,
     MultiVendor,
     SingleVendor,
@@ -36,14 +40,9 @@ from ._pages import (
     IterArtistsBundle,
     IterSongsBundle,
     IterTracksBundle,
-    CollectPagesBundle,
     PageBundle,
-    PageMultiVendor,
-    PageSingleVendor,
     PageStrategy,
-    PageVendor,
     RawPage,
-    StreamPagesBundle,
     SyncPageStrategy,
 )
 
@@ -51,6 +50,10 @@ from ._parallel import ParallelBundle, parallel_actions
 
 __all__ = [
     'Bundle',
+    'Items',
+    'StreamingBundle',
+    'StreamingVendor',
+    'CollectBundle',
     'ParallelBundle',
     'parallel_actions',
     'MixedVendor',
@@ -82,16 +85,11 @@ __all__ = [
     'TrackDeleteMetadataBundle',
     'TrackEditBundle',
     'IterArtistsBundle',
-    'CollectPagesBundle',
     'IterSongsBundle',
     'IterTracksBundle',
     'RawPage',
     'PageBundle',
-    'StreamPagesBundle',
     'SyncPageStrategy',
     'PageStrategy',
     'AsyncPageStrategy',
-    'PageSingleVendor',
-    'PageMultiVendor',
-    'PageVendor',
 ]

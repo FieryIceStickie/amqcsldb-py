@@ -95,7 +95,7 @@ expected_track_names = {
 class AspireFixture:
     route: Route
     num_tracks: int
-    calls: dict[str, bytes] = field(factory=dict)
+    calls: dict[str, bytes] = field(factory=lambda: {})
 
 
 @pytest.fixture
@@ -129,7 +129,7 @@ def aspire_fixture(router: Router) -> AspireFixture:
 
 @define
 class ArtistHandler:
-    unknown_artists: dict[str, list[str]] = field(factory=dict)
+    unknown_artists: dict[str, list[str]] = field(factory=lambda: {})
 
     def __call__(
         self,

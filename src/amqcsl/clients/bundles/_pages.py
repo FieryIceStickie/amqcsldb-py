@@ -1,20 +1,19 @@
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Generator, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from functools import cached_property
-from itertools import chain
-from typing import TYPE_CHECKING, Generic, Iterable, TypeVar, overload, override
+from typing import TYPE_CHECKING, cast, override
 
 import httpx
 import rich.repr
-from attrs import Attribute, Converter, define, field, frozen
+from attrs import Attribute, Converter, field, frozen
 from attrs.validators import deep_iterable, gt, instance_of
 
 from amqcsl.exceptions import QueryError
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from ._core import Bundle, MultiVendor, httpxClient
+from ._core import Items, StreamingBundle, StreamingVendor, httpxClient
 
 if TYPE_CHECKING:
     from amqcsl import AsyncDBClient, DBClient
@@ -24,17 +23,57 @@ logger = logging.getLogger('amqcsl.client')
 type RawPage = tuple[int, str, Sequence[JSONType]]
 
 
-type PageSingleVendor = Generator[httpx.Request, RawPage, None]
-type PageMultiVendor = Generator[Iterable[httpx.Request], Iterable[RawPage], None]
-type PageVendor = PageSingleVendor | PageMultiVendor
+class PageStrategy(ABC):
+    """Choose request offsets without interpreting HTTP responses or yielding events."""
+
+    @abstractmethod
+    def next_offsets(
+        self,
+        *,
+        skip: int,
+        count: int,
+        page_size: int,
+        batch_size: int,
+    ) -> Sequence[int]:
+        """Choose the next request round after the last completed page."""
+        ...
 
 
 @frozen
-class PageBundle[R, Vd: PageVendor](ABC):
+class SyncPageStrategy(PageStrategy):
+    @override
+    def next_offsets(
+        self,
+        *,
+        skip: int,
+        count: int,
+        page_size: int,
+        batch_size: int,
+    ) -> Sequence[int]:
+        next_skip = skip + page_size
+        return [next_skip] if next_skip < count else []
+
+
+@frozen
+class AsyncPageStrategy(PageStrategy):
+    @override
+    def next_offsets(
+        self,
+        *,
+        skip: int,
+        count: int,
+        page_size: int,
+        batch_size: int,
+    ) -> Sequence[int]:
+        return range(skip + batch_size, count, batch_size)
+
+
+@frozen
+class PageBundle[R](StreamingBundle[R], ABC):
     max_batch_size: int = field(validator=[instance_of(int), gt(0)])
     max_query_size: int = field(validator=[instance_of(int), gt(0)])
     batch_size: int = field()
-    strategy: 'PageStrategy[R, Vd]' = field()
+    strategy: PageStrategy = field()
 
     @batch_size.validator  # type: ignore
     def check(self, _: 'Attribute[int]', value: int) -> None:
@@ -45,26 +84,60 @@ class PageBundle[R, Vd: PageVendor](ABC):
         elif value > self.max_batch_size:
             raise QueryError(f'Batch size {value} is larger than the max batch size of {self.max_batch_size}')
 
-    def vendor(self, client: httpxClient) -> Vd:
-        """Create the strategy's request generator, which receives processed raw pages."""
-        return self.strategy.vendor(self, client)
+    @override
+    def vendor(self, client: httpxClient) -> StreamingVendor[R]:
+        """Yield HTTP request batches and lazy item events in query order."""
+        offsets: Sequence[int] = [0]
+        initial_count: int | None = None
+        key = ''
+        logger.info('Querying first page')
+        while offsets:
+            responses = yield [self.page_request(client, skip) for skip in offsets]
+            if responses is None or isinstance(responses, httpx.Response):
+                raise TypeError('Page request batches require a batch of HTTP responses')
+            raw_pages = [self.process_response(response) for response in responses]
+            if len(raw_pages) != len(offsets):
+                raise ValueError('Response count does not match page request count')
+            for raw_page in raw_pages:
+                count, key, page = raw_page
+                if initial_count is None:
+                    initial_count = count
+                elif count != initial_count:
+                    logger.error(f'Count mutated from {initial_count} to {count}')
+                yield Items(self.clean_raw_page(raw_page))
+            logger.info('Page exhausted')
+            count, key, page = raw_pages[-1]
+            offsets = self.strategy.next_offsets(
+                skip=offsets[-1],
+                count=count,
+                page_size=len(page),
+                batch_size=self.batch_size,
+            )
+            if offsets:
+                logger.info(f'Querying {len(offsets)} more pages')
+        logger.info(f'Finished querying {key}')
 
     def process_response(self, res: httpx.Response) -> RawPage:
         """Validate an HTTP response and query limits, then extract its raw page."""
-        return self.strategy.process(self, res)
+        res.raise_for_status()
+        match res.json():
+            case {'count': int(count), **data} if len(data) == 1:
+                if count > self.max_query_size:
+                    raise QueryError(
+                        f'Query returns {count} results, which is larger than the max query size of {self.max_query_size}'
+                    )
+                key, page = cast(dict[str, JSONType], data).popitem()
+                if isinstance(page, list):
+                    return count, key, page
+            case _:
+                pass
+        logger.error('Unexpected query response', extra={'response': res.json()})
+        raise QueryError('Unexpected query response')
 
     def clean_raw_page(self, item: RawPage) -> Iterator[R]:
         """Lazily convert a raw page's JSON items into typed results."""
         count, key, page = item
         yield from map(self.process_item, page)
-
-    def stream(self) -> 'StreamPagesBundle[R]':
-        """Adapt page responses to HTTP responses while retaining incremental item delivery."""
-        return StreamPagesBundle(self)
-
-    def collect(self) -> 'CollectPagesBundle[R]':
-        """Collect this query through the ordinary bundle interface rather than streaming it."""
-        return CollectPagesBundle(self)
 
     @abstractmethod
     def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
@@ -82,70 +155,8 @@ class PageBundle[R, Vd: PageVendor](ABC):
         ...
 
 
-R = TypeVar('R')
-Vd = TypeVar('Vd', bound=PageVendor, covariant=True)
-
-
-class PageStrategy(ABC, Generic[R, Vd]):
-    _count: int | None = None
-
-    @abstractmethod
-    def vendor(self, bundle: PageBundle[R, Vd], client: httpxClient) -> Vd: ...
-
-    def process(self, bundle: PageBundle[R, Vd], res: httpx.Response) -> RawPage:
-        res.raise_for_status()
-        match res.json():
-            case {
-                'count': int(count),
-                **data,
-            }:
-                if self._count is None:
-                    if count > bundle.max_query_size:
-                        raise QueryError(
-                            f'Query returns {count} results, which is larger than the max query size of {bundle.max_query_size}'
-                        )
-                    self._count = count
-                elif count != self._count:
-                    logger.error(f'Count mutated from {self._count} to {count}')
-            case _:
-                logger.error('Unexpected query response', extra={'response': res.json()})
-                raise QueryError('Unexpected query response')
-        key, item = data.popitem()
-        return count, key, item
-
-
-@define
-class SyncPageStrategy[R](PageStrategy[R, PageSingleVendor], ABC):
-    @override
-    def vendor(self, bundle: PageBundle[R, PageSingleVendor], client: httpxClient) -> PageSingleVendor:
-        skip = 0
-        self._count = None
-        while True:
-            count, key, page = yield bundle.page_request(client, skip)
-            skip += len(page)
-            logger.info('Page exhausted')
-            if skip >= count:
-                break
-            logger.info('Querying next page')
-        logger.info(f'Finished querying {key}')
-
-
-@define
-class AsyncPageStrategy[R](PageStrategy[R, PageMultiVendor], ABC):
-    @override
-    def vendor(self, bundle: PageBundle[R, PageMultiVendor], client: httpxClient) -> PageMultiVendor:
-        logger.info('Querying first page')
-        ((count, key, page),) = yield [bundle.page_request(client, 0)]
-        reqs = [
-            bundle.page_request(client, skip)  #
-            for skip in range(bundle.batch_size, count, bundle.batch_size)
-        ]
-        logger.info(f'Querying {len(reqs)} more pages')
-        yield reqs
-
-
 @frozen
-class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
+class IterTracksBundle(PageBundle[CSLTrack]):
     search_term: str = field(validator=instance_of(str))
     groups: Iterable[CSLGroup] = field(validator=deep_iterable(instance_of(CSLGroup)))
     active_list: CSLList | None = field(validator=instance_of((CSLList, type(None))))
@@ -159,33 +170,6 @@ class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
         ),
     )
 
-    @overload
-    @classmethod
-    def from_client(
-        cls,
-        client: 'DBClient',
-        search_term: str,
-        groups: Iterable[CSLGroup] = (),
-        active_list: CSLList | None = None,
-        missing_audio: bool = False,
-        missing_info: bool = False,
-        from_active_list: bool | None = None,
-        batch_size: int = 100,
-    ) -> 'IterTracksBundle[PageSingleVendor]': ...
-    @overload
-    @classmethod
-    def from_client(
-        cls,
-        client: 'AsyncDBClient',
-        search_term: str,
-        groups: Iterable[CSLGroup] = (),
-        active_list: CSLList | None = None,
-        missing_audio: bool = False,
-        missing_info: bool = False,
-        from_active_list: bool | None = None,
-        batch_size: int = 100,
-    ) -> 'IterTracksBundle[PageMultiVendor]': ...
-
     @classmethod
     def from_client(
         cls,
@@ -197,7 +181,7 @@ class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
         missing_info: bool = False,
         from_active_list: bool | None = None,
         batch_size: int = 100,
-    ) -> 'IterTracksBundle[PageVendor]':
+    ) -> 'IterTracksBundle':
         return IterTracksBundle(
             search_term=search_term,
             groups=groups,
@@ -233,7 +217,7 @@ class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
         return body
 
     @override
-    def vendor(self, client: httpxClient) -> Vd:
+    def vendor(self, client: httpxClient) -> StreamingVendor[CSLTrack]:
         logger.info(f'Fetching tracks matching search term "{self.search_term}"')
         return super().vendor(client)
 
@@ -267,32 +251,16 @@ class IterTracksBundle(PageBundle[CSLTrack, Vd], Generic[Vd]):
 
 
 @frozen
-class IterSongsBundle(PageBundle[CSLSongSample, Vd], Generic[Vd]):
+class IterSongsBundle(PageBundle[CSLSongSample]):
     search_term: str = field(validator=instance_of(str))
 
-    @overload
-    @classmethod
-    def from_client(
-        cls,
-        client: 'DBClient',
-        search_term: str,
-        batch_size: int = 100,
-    ) -> 'IterSongsBundle[PageSingleVendor]': ...
-    @overload
-    @classmethod
-    def from_client(
-        cls,
-        client: 'AsyncDBClient',
-        search_term: str,
-        batch_size: int = 100,
-    ) -> 'IterSongsBundle[PageMultiVendor]': ...
     @classmethod
     def from_client(
         cls,
         client: 'DBClient | AsyncDBClient',
         search_term: str,
         batch_size: int = 100,
-    ) -> 'IterSongsBundle[PageVendor]':
+    ) -> 'IterSongsBundle':
         return IterSongsBundle(
             search_term=search_term,
             max_batch_size=client.max_batch_size,
@@ -313,7 +281,7 @@ class IterSongsBundle(PageBundle[CSLSongSample, Vd], Generic[Vd]):
         return params
 
     @override
-    def vendor(self, client: httpxClient) -> Vd:
+    def vendor(self, client: httpxClient) -> StreamingVendor[CSLSongSample]:
         logger.info(f'Fetching songs matching search term "{self.search_term}"')
         return super().vendor(client)
 
@@ -335,32 +303,16 @@ class IterSongsBundle(PageBundle[CSLSongSample, Vd], Generic[Vd]):
 
 
 @frozen
-class IterArtistsBundle(PageBundle[CSLArtistSample, Vd], Generic[Vd]):
+class IterArtistsBundle(PageBundle[CSLArtistSample]):
     search_term: str = field(validator=instance_of(str))
 
-    @overload
-    @classmethod
-    def from_client(
-        cls,
-        client: 'DBClient',
-        search_term: str,
-        batch_size: int = 100,
-    ) -> 'IterArtistsBundle[PageSingleVendor]': ...
-    @overload
-    @classmethod
-    def from_client(
-        cls,
-        client: 'AsyncDBClient',
-        search_term: str,
-        batch_size: int = 100,
-    ) -> 'IterArtistsBundle[PageMultiVendor]': ...
     @classmethod
     def from_client(
         cls,
         client: 'DBClient | AsyncDBClient',
         search_term: str,
         batch_size: int = 100,
-    ) -> 'IterArtistsBundle[PageVendor]':
+    ) -> 'IterArtistsBundle':
         return IterArtistsBundle(
             search_term=search_term,
             max_batch_size=client.max_batch_size,
@@ -381,7 +333,7 @@ class IterArtistsBundle(PageBundle[CSLArtistSample, Vd], Generic[Vd]):
         return params
 
     @override
-    def vendor(self, client: httpxClient) -> Vd:
+    def vendor(self, client: httpxClient) -> StreamingVendor[CSLArtistSample]:
         logger.info(f'Fetching artists matching search term "{self.search_term}"')
         return super().vendor(client)
 
@@ -400,65 +352,3 @@ class IterArtistsBundle(PageBundle[CSLArtistSample, Vd], Generic[Vd]):
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'search_term', self.search_term
         yield 'batch_size', self.batch_size
-
-
-@define
-class StreamPagesBundle[R](Bundle[None]):
-    """Bridge page vendors to HTTP vendors, buffering only the current request round.
-
-    After advancing ``vendor``, consume ``take_items()`` before sending its next requests.
-    Drain once more when the vendor finishes: its final responses may contain items.
-    """
-
-    pages: PageBundle[R, PageVendor]
-    _items: list[Iterator[R]] = field(factory=list[Iterator[R]], init=False, repr=False)
-
-    def take_items(self) -> Iterator[R]:
-        """Take the completed pages without retaining items already handed to the caller."""
-        pages, self._items = self._items, []
-        return chain.from_iterable(pages)
-
-    @override
-    def vendor(self, client: httpxClient) -> MultiVendor[None]:
-        vendor = self.pages.vendor(client)
-        reply: RawPage | list[RawPage] | None = None
-        while True:
-            try:
-                outgoing = vendor.send(reply)  # type: ignore[reportArgumentType]
-            except StopIteration:
-                return
-            requests = [outgoing] if isinstance(outgoing, httpx.Request) else outgoing
-            responses = yield requests
-            raw_pages = [self.pages.process_response(response) for response in responses]
-            self._items.extend(self.pages.clean_raw_page(raw_page) for raw_page in raw_pages)
-            reply = raw_pages[0] if isinstance(outgoing, httpx.Request) else raw_pages
-
-    @override
-    def __rich_repr__(self) -> rich.repr.Result:
-        yield 'pages', self.pages
-
-
-@frozen
-class CollectPagesBundle[R](Bundle[list[R]]):
-    """Collect the streaming adapter's items through the ordinary bundle interface."""
-
-    pages: PageBundle[R, PageVendor]
-
-    @override
-    def vendor(self, client: httpxClient) -> MultiVendor[list[R]]:
-        stream = self.pages.stream()
-        vendor = stream.vendor(client)
-        items: list[R] = []
-        responses: Iterable[httpx.Response] | None = None
-        while True:
-            try:
-                requests = vendor.send(responses)  # type: ignore[reportArgumentType]
-            except StopIteration:
-                items.extend(stream.take_items())
-                return items
-            items.extend(stream.take_items())
-            responses = yield requests
-
-    @override
-    def __rich_repr__(self) -> rich.repr.Result:
-        yield 'pages', self.pages

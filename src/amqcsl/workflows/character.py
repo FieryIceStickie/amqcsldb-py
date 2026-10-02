@@ -166,11 +166,23 @@ class ArtistToMeta[R](Protocol):
         return isinstance(artist, CSLArtistSample) and artist.to_sample() in self.metadata
 
     @overload
-    def get(self, artist: CSLArtistSample, default: None = None) -> Sequence[ExtraMetadata] | None: ...
+    def get(
+        self,
+        artist: CSLArtistSample,
+        default: None = None,
+    ) -> Sequence[ExtraMetadata] | None: ...
     @overload
-    def get[T](self, artist: CSLArtistSample, default: T) -> Sequence[ExtraMetadata] | T: ...
+    def get[T](
+        self,
+        artist: CSLArtistSample,
+        default: T,
+    ) -> Sequence[ExtraMetadata] | T: ...
 
-    def get[T](self, artist: CSLArtistSample, default: T | None = None) -> Sequence[ExtraMetadata] | T | None:
+    def get[T](
+        self,
+        artist: CSLArtistSample,
+        default: T | None = None,
+    ) -> Sequence[ExtraMetadata] | T | None:
         return self.metadata.get(artist.to_sample(), default)
 
     def keys(self) -> KeysView[CSLArtistSample]:
@@ -182,10 +194,17 @@ class ArtistToMeta[R](Protocol):
     def items(self) -> ItemsView[CSLArtistSample, Sequence[ExtraMetadata]]:
         return self.metadata.items()
 
-    def apply(self, track: CSLTrack, should_exclude: ShouldExclude = prompt_should_exclude) -> R: ...
+    def apply(
+        self,
+        track: CSLTrack,
+        should_exclude: ShouldExclude = prompt_should_exclude,
+    ) -> R: ...
 
 
-def _match_artist(artist_name: ArtistName, artists: set[CSLArtistSample]) -> CSLArtistSample | None:
+def _match_artist(
+    artist_name: ArtistName,
+    artists: set[CSLArtistSample],
+) -> CSLArtistSample | None:
     matches = [artist for artist in artists if artist_name.match(artist)]
     if len(matches) > 1:
         for artist in matches:
@@ -203,7 +222,11 @@ class MakeArtistToMetaBundle(Bundle[dict[CSLArtistSample, Sequence[ExtraMetadata
     max_batch_size: int = 100
     max_query_size: int = 1500
 
-    def _search(self, client: httpxClient, phrases: Sequence[str]) -> MultiVendor[list[list[CSLArtistSample]]]:
+    def _search(
+        self,
+        client: httpxClient,
+        phrases: Sequence[str],
+    ) -> MultiVendor[list[list[CSLArtistSample]]]:
         bundles = (
             IterArtistsBundle(
                 max_batch_size=self.max_batch_size,
@@ -217,7 +240,10 @@ class MakeArtistToMetaBundle(Bundle[dict[CSLArtistSample, Sequence[ExtraMetadata
         return (yield from ParallelBundle(bundles).vendor(client))
 
     @override
-    def vendor(self, client: httpxClient) -> MultiVendor[dict[CSLArtistSample, Sequence[ExtraMetadata]]]:
+    def vendor(
+        self,
+        client: httpxClient,
+    ) -> MultiVendor[dict[CSLArtistSample, Sequence[ExtraMetadata]]]:
         if self.search_phrases:
             logger.info('Searching phrases for artists')
         results = yield from self._search(client, self.search_phrases)
@@ -308,7 +334,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         )
         group_by_id = {group.id: group for group in fetched}
         reasons: list[Reason] = []
-        metas: set[ExtraMetadata] = {*()}
+        metas: set[ExtraMetadata] = set()
         for artist in credited.values():
             if artist.id in self.excluded_artists:
                 continue
@@ -374,7 +400,11 @@ class SyncArtistToMeta(ArtistToMeta[None]):
         )
         return cls(client, metadata)
 
-    def apply(self, track: CSLTrack, should_exclude: ShouldExclude = prompt_should_exclude) -> None:
+    def apply(
+        self,
+        track: CSLTrack,
+        should_exclude: ShouldExclude = prompt_should_exclude,
+    ) -> None:
         bundle = self._client.process(
             ApplyArtistToMetaBundle(
                 track,
@@ -417,7 +447,11 @@ class AsyncArtistToMeta(ArtistToMeta[Awaitable[None]]):
         )
         return cls(client, metadata)
 
-    async def apply(self, track: CSLTrack, should_exclude: ShouldExclude = prompt_should_exclude) -> None:
+    async def apply(
+        self,
+        track: CSLTrack,
+        should_exclude: ShouldExclude = prompt_should_exclude,
+    ) -> None:
         # Track tasks may run concurrently; share cache/exclusion decisions exactly once.
         async with self._lock:
             bundle = await self._client.process(

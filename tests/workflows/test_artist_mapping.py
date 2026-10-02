@@ -1,23 +1,31 @@
 import asyncio
-import inspect
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
+from typing import cast
 
 import pytest
 from attrs import evolve
 from helpers import load
 from httpx import Request, Response
-from respx import Router
+from respx import Route, Router
+from respx.models import Call
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.exceptions import AMQCSLError, QueryError
 from amqcsl.objects import CSLArtist, CSLArtistSample, CSLTrack
+from amqcsl.objects._json_types import JSONType
+from amqcsl.clients.bundles._parallel import _ParallelActionsBundle  # pyright: ignore[reportPrivateUsage] -- inspect queued actions
 from amqcsl.workflows import character as cm
 
 pytestmark = pytest.mark.asyncio
 
 
-def artist(name: str, *, group: bool = False, disambiguation: str | None = None) -> dict:
+def artist(
+    name: str,
+    *,
+    group: bool = False,
+    disambiguation: str | None = None,
+) -> dict[str, JSONType]:
     return {
         'id': name + (disambiguation or ''),
         'name': name,
@@ -27,32 +35,40 @@ def artist(name: str, *, group: bool = False, disambiguation: str | None = None)
     }
 
 
-def group_details(sample: dict, members: Sequence[dict], other: Sequence[dict] = ()) -> dict:
+def group_details(
+    sample: dict[str, JSONType],
+    members: Sequence[dict[str, JSONType]],
+    other: Sequence[dict[str, JSONType]] = (),
+) -> dict[str, JSONType]:
+    relations: list[JSONType] = [
+        {'id': f'member-{idx}', 'type': 1, 'artist': member} for idx, member in enumerate(members)
+    ]
+    relations.extend({'id': f'other-{idx}', 'type': 2, 'artist': member} for idx, member in enumerate(other))
     return {
         **sample,
-        'forwardRelations': [{'id': f'member-{i}', 'type': 1, 'artist': member} for i, member in enumerate(members)]
-        + [{'id': f'other-{i}', 'type': 2, 'artist': member} for i, member in enumerate(other)],
+        'forwardRelations': relations,
         'reverseRelations': [],
         'linkedAMQSongs': [],
         'linkedTracks': [],
     }
 
 
-def track(*samples: dict, track_id: str = 'test-track') -> CSLTrack:
-    data = load('superstar/aspire')[0]
+def track(*samples: dict[str, JSONType], track_id: str = 'test-track') -> CSLTrack:
+    data: dict[str, JSONType] = cast(list[dict[str, JSONType]], load('superstar/aspire'))[0]
+    credits: list[JSONType] = [
+        {'name': sample['name'], 'joinPhrase': '', 'position': idx, 'artist': sample}
+        for idx, sample in enumerate(samples)
+    ]
     data = {
         **data,
         'id': track_id,
-        'artistCredits': [
-            {'name': sample['name'], 'joinPhrase': '', 'position': i, 'artist': sample}
-            for i, sample in enumerate(samples)
-        ],
+        'artistCredits': credits,
     }
     return CSLTrack.from_json(data)
 
 
-def mock_search(router: Router, samples: Sequence[dict]):
-    def search(req: Request):
+def mock_search(router: Router, samples: Sequence[dict[str, JSONType]]) -> Route:
+    def search(req: Request) -> Response:
         phrase = req.url.params['searchTerm']
         found = [a for a in samples if phrase == 'all' or phrase == a['name']]
         skip, take = int(req.url.params['skip']), int(req.url.params['take'])
@@ -61,7 +77,7 @@ def mock_search(router: Router, samples: Sequence[dict]):
     return router.get('/api/artists').mock(side_effect=search)
 
 
-def mock_metadata(router: Router, extra: Sequence[dict] = ()):
+def mock_metadata(router: Router, extra: Sequence[dict[str, JSONType]] = ()) -> Route:
     if extra:
         response = Response(
             200,
@@ -78,16 +94,37 @@ def mock_metadata(router: Router, extra: Sequence[dict] = ()):
     return router.get(url__regex=r'/api/track/[^/]+/metadata') % response
 
 
-async def finish(result):
-    return await result if inspect.isawaitable(result) else result
+async def finish[T](result: T | Awaitable[T]) -> T:
+    return await cast(Awaitable[T], result) if isinstance(result, Awaitable) else cast(T, result)
+
+
+def apply_with_client(
+    client: DBClient | AsyncDBClient,
+    mapping: cm.SyncArtistToMeta | cm.AsyncArtistToMeta,
+    track: CSLTrack,
+    should_exclude: cm.ShouldExclude = cm.prompt_should_exclude,
+) -> None | Awaitable[None]:
+    # Parametrization guarantees matching clients and mappings; narrow both for the overloads.
+    if isinstance(client, DBClient):
+        assert isinstance(mapping, cm.SyncArtistToMeta)
+        return cm.apply_artist_to_meta(client, mapping, track, should_exclude)
+    assert isinstance(mapping, cm.AsyncArtistToMeta)
+    return cm.apply_artist_to_meta(client, mapping, track, should_exclude)
 
 
 @pytest.fixture(params=['sync', 'async'])
-def db(request, client: DBClient, aclient: AsyncDBClient):
+def db(
+    request: pytest.FixtureRequest,
+    client: DBClient,
+    aclient: AsyncDBClient,
+) -> DBClient | AsyncDBClient:
     return client if request.param == 'sync' else aclient
 
 
-async def test_infer_group_and_cache(db, router: Router):
+async def test_infer_group_and_cache(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a, b, g = artist('Alice'), artist('Bob'), artist('Group', group=True)
     irrelevant = artist('Irrelevant')
     search = mock_search(router, [a, b, g])
@@ -98,7 +135,7 @@ async def test_infer_group_and_cache(db, router: Router):
     assert len(mapping.metadata) == 2  # Discovered groups are not inferred until credited.
     assert search.call_count == 1
     for t in [track(g, a), track(g, track_id='second')]:
-        await finish(cm.apply_artist_to_meta(db, mapping, t, lambda *_: pytest.fail('Unexpected failure')))
+        await finish(apply_with_client(db, mapping, t, lambda _track, _reasons: pytest.fail('Unexpected failure')))
     assert get_group.call_count == 1
     assert search.call_count == 1
     assert mapping.metadata[CSLArtistSample.from_json(g)] == [
@@ -107,22 +144,28 @@ async def test_infer_group_and_cache(db, router: Router):
     ]
     await finish(db.commit())
     assert add.call_count == 2
-    for call in add.calls:
+    for call in cast(Sequence[Call], add.calls):
         assert {meta['value'] for meta in json.loads(call.request.content)['extraMetadatas']} == {'A', 'B'}
 
 
-async def test_explicit_group_overrides_members(db, router: Router):
+async def test_explicit_group_overrides_members(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     g = artist('Group', group=True)
     mock_search(router, [g])
     get_group = router.get('/api/artist/Group') % Response(500)
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Group': 'Override'}, ['all']))
-    await finish(cm.apply_artist_to_meta(db, mapping, track(g)))
+    await finish(apply_with_client(db, mapping, track(g)))
     assert not get_group.called
     assert len(db.queue) == 1
 
 
-async def test_callback_collates_failures_and_caches_exclusions(db, router: Router):
+async def test_callback_collates_failures_and_caches_exclusions(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a, b, c = artist('Alice'), artist('Bob'), artist('Carol')
     g, unknown = artist('Group', group=True), artist('Unknown')
     mock_search(router, [a])
@@ -130,14 +173,14 @@ async def test_callback_collates_failures_and_caches_exclusions(db, router: Rout
     mock_metadata(router)
     calls: list[tuple[CSLTrack, Sequence[cm.Reason]]] = []
 
-    def should_exclude(t, reasons):
+    def should_exclude(t: CSLTrack, reasons: Sequence[cm.Reason]) -> bool:
         calls.append((t, reasons))
         return True
 
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}, ['all']))
     first = track(g, unknown, unknown, a)
-    await finish(cm.apply_artist_to_meta(db, mapping, first, should_exclude))
-    await finish(cm.apply_artist_to_meta(db, mapping, track(unknown, g, a, track_id='second'), should_exclude))
+    await finish(apply_with_client(db, mapping, first, should_exclude))
+    await finish(apply_with_client(db, mapping, track(unknown, g, a, track_id='second'), should_exclude))
     assert len(calls) == 1
     assert calls[0][0] is first
     reasons = calls[0][1]
@@ -151,54 +194,67 @@ async def test_callback_collates_failures_and_caches_exclusions(db, router: Rout
     assert len(db.queue) == 2
 
 
-async def test_rejected_exclusion_raises_without_queueing(db, router: Router):
+async def test_rejected_exclusion_raises_without_queueing(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     unknown = artist('Unknown')
     get_meta = mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {}))
     for _ in range(2):
         with pytest.raises(AMQCSLError, match='Cannot infer'):
-            await finish(cm.apply_artist_to_meta(db, mapping, track(unknown), lambda *_: False))
+            await finish(apply_with_client(db, mapping, track(unknown), lambda _track, _reasons: False))
     assert not mapping.excluded_artists
     assert not db.queue
     assert not get_meta.called
 
 
 @pytest.mark.parametrize('members', [[], [artist('Nested', group=True)]])
-async def test_missing_or_nested_members_do_not_recurse(db, router: Router, members):
+async def test_missing_or_nested_members_do_not_recurse(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+    members: list[dict[str, JSONType]],
+) -> None:
     g = artist('Group', group=True)
     get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, members))
     nested = router.get('/api/artist/Nested') % Response(500)
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {}))
-    failures = []
+    failures: list[cm.Reason] = []
 
-    def should_exclude(_, reasons):
+    def should_exclude(_: CSLTrack, reasons: Sequence[cm.Reason]) -> bool:
         failures.extend(reasons)
         return True
 
-    await finish(cm.apply_artist_to_meta(db, mapping, track(g), should_exclude))
+    await finish(apply_with_client(db, mapping, track(g), should_exclude))
     assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
     assert [*failures[0].reason.artists] == [CSLArtistSample.from_json(m) for m in members]
     assert get_group.called and not nested.called
     assert not db.queue
 
 
-async def test_nested_group_with_explicit_metadata(db, router: Router):
+async def test_nested_group_with_explicit_metadata(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     nested, g = artist('Nested', group=True), artist('Group', group=True)
     mock_search(router, [nested])
-    router.get('/api/artist/Group') % Response(200, json=group_details(g, [nested]))
+    _ = router.get('/api/artist/Group') % Response(200, json=group_details(g, [nested]))
     nested_query = router.get('/api/artist/Nested') % Response(500)
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Nested': 'Character'}))
-    await finish(cm.apply_artist_to_meta(db, mapping, track(g)))
+    await finish(apply_with_client(db, mapping, track(g)))
     assert not nested_query.called
     assert mapping.metadata[CSLArtistSample.from_json(g)] == mapping.metadata[CSLArtistSample.from_json(nested)]
 
 
-async def test_exclusion_keeps_additions_and_all_stale_deletions(db, router: Router):
+async def test_exclusion_keeps_additions_and_all_stale_deletions(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a, unknown = artist('Alice'), artist('Unknown')
     mock_search(router, [a])
-    extra = [
+    extra: list[dict[str, JSONType]] = [
         {'id': 'stale1', 'type': 2, 'key': 'Character', 'value': 'Old'},
         {'id': 'stale2', 'type': 1, 'key': 'Character', 'value': 'Other'},
         {'id': 'unrelated', 'type': 1, 'key': 'Language', 'value': 'Japanese'},
@@ -209,38 +265,52 @@ async def test_exclusion_keeps_additions_and_all_stale_deletions(db, router: Rou
     delete2 = router.delete('/api/track/test-track/metadata/stale2') % Response(200)
     unrelated = router.delete('/api/track/test-track/metadata/unrelated') % Response(500)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'New'}))
-    await finish(cm.apply_artist_to_meta(db, mapping, track(a, unknown), lambda *_: True))
-    assert len(db.queue) == 1 and len(db.queue[0].bundles) == 3
+    await finish(apply_with_client(db, mapping, track(a, unknown), lambda _track, _reasons: True))
+    assert len(db.queue) == 1
+    assert isinstance(db.queue[0], _ParallelActionsBundle)
+    assert len(db.queue[0].bundles) == 3
     assert not add.called and not delete1.called  # Only queued until commit.
     await finish(db.commit())
     assert add.called and delete1.called and delete2.called
     assert not unrelated.called
 
 
-async def test_only_deletions_and_no_changes(db, router: Router):
+async def test_only_deletions_and_no_changes(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a, unknown = artist('Alice'), artist('Unknown')
     mock_search(router, [a])
     mock_metadata(router, [{'id': 'stale', 'type': 2, 'key': 'Character', 'value': 'Old'}])
     delete = router.delete('/api/track/test-track/metadata/stale') % Response(200)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'Old'}))
-    await finish(cm.apply_artist_to_meta(db, mapping, track(a)))
+    await finish(apply_with_client(db, mapping, track(a)))
     assert not db.queue
-    await finish(cm.apply_artist_to_meta(db, mapping, track(unknown), lambda *_: True))
+    await finish(apply_with_client(db, mapping, track(unknown), lambda _track, _reasons: True))
+    assert isinstance(db.queue[0], _ParallelActionsBundle)
     assert len(db.queue[0].bundles) == 1
     await finish(db.commit())
     assert delete.called
 
 
-async def test_off_vocal_skips_queries_and_callback(db, router: Router):
+async def test_off_vocal_skips_queries_and_callback(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     mapping = await finish(cm.compact_make_artist_to_meta(db, {}))
     get_meta = mock_metadata(router)
     await finish(
-        cm.apply_artist_to_meta(db, mapping, evolve(track(artist('Unknown')), type_id=1), lambda *_: pytest.fail())
+        apply_with_client(
+            db, mapping, evolve(track(artist('Unknown')), type_id=1), lambda _track, _reasons: pytest.fail()
+        )
     )
     assert not get_meta.called and not db.queue
 
 
-async def test_disambiguation_and_pagination(db, router: Router):
+async def test_disambiguation_and_pagination(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a, b = artist('Alice', disambiguation='one'), artist('Alice', disambiguation='two')
     db.max_batch_size = 1
     search = mock_search(router, [a, b, artist('Unlisted', group=True)])
@@ -258,7 +328,12 @@ async def test_disambiguation_and_pagination(db, router: Router):
         ({'Alice': 'X', ('Alice', 'one'): 'Y'}, 'both match'),
     ],
 )
-async def test_matching_errors(db, router: Router, definitions, error):
+async def test_matching_errors(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+    definitions: cm.ArtistDict,
+    error: str,
+) -> None:
     samples = [artist('Alice', disambiguation='one')]
     if error == '2 artists found':
         samples.append(artist('Alice', disambiguation='two'))
@@ -267,18 +342,21 @@ async def test_matching_errors(db, router: Router, definitions, error):
         await finish(cm.compact_make_artist_to_meta(db, definitions, ['all']))
 
 
-async def test_query_limit(db, router: Router):
+async def test_query_limit(db: DBClient | AsyncDBClient, router: Router) -> None:
     db.max_query_size = 1
     mock_search(router, [artist('Alice'), artist('Bob')])
     with pytest.raises(QueryError, match='max query size'):
         await finish(cm.compact_make_artist_to_meta(db, {}, ['all']))
 
 
-async def test_global_searches_run_in_parallel(aclient: AsyncDBClient, router: Router):
-    arrived: set[str] = {*()}
+async def test_global_searches_run_in_parallel(
+    aclient: AsyncDBClient,
+    router: Router,
+) -> None:
+    arrived: set[str] = set()
     both_started = asyncio.Event()
 
-    async def search(req: Request):
+    async def search(req: Request) -> Response:
         arrived.add(req.url.params['searchTerm'])
         if len(arrived) == 2:
             both_started.set()
@@ -291,12 +369,15 @@ async def test_global_searches_run_in_parallel(aclient: AsyncDBClient, router: R
     assert route.call_count == 2
 
 
-async def test_concurrent_apply_shares_exclusion(aclient: AsyncDBClient, router: Router):
+async def test_concurrent_apply_shares_exclusion(
+    aclient: AsyncDBClient,
+    router: Router,
+) -> None:
     mapping = await cm.compact_make_artist_to_meta(aclient, {})
     mock_metadata(router)
-    calls = []
+    calls: list[str] = []
 
-    def should_exclude(t, reasons):
+    def should_exclude(t: CSLTrack, reasons: Sequence[cm.Reason]) -> bool:
         calls.append(t.id)
         return True
 
@@ -309,20 +390,26 @@ async def test_concurrent_apply_shares_exclusion(aclient: AsyncDBClient, router:
     assert len(calls) == 1
 
 
-async def test_cached_group_can_be_used_as_member_without_recursion(db, router: Router):
+async def test_cached_group_can_be_used_as_member_without_recursion(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a, nested, parent = artist('Alice'), artist('Nested', group=True), artist('Parent', group=True)
     mock_search(router, [a])
     nested_query = router.get('/api/artist/Nested') % Response(200, json=group_details(nested, [a]))
     parent_query = router.get('/api/artist/Parent') % Response(200, json=group_details(parent, [nested]))
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}))
-    await finish(cm.apply_artist_to_meta(db, mapping, track(nested)))
-    await finish(cm.apply_artist_to_meta(db, mapping, track(parent, track_id='parent-track')))
+    await finish(apply_with_client(db, mapping, track(nested)))
+    await finish(apply_with_client(db, mapping, track(parent, track_id='parent-track')))
     assert nested_query.call_count == 1 and parent_query.call_count == 1
     assert mapping.metadata[CSLArtistSample.from_json(parent)] == mapping.metadata[CSLArtistSample.from_json(a)]
 
 
-async def test_full_artist_credit_uses_existing_group_details(db, router: Router):
+async def test_full_artist_credit_uses_existing_group_details(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a, g = artist('Alice'), artist('Group', group=True)
     mock_search(router, [a])
     get_group = router.get('/api/artist/Group') % Response(500)
@@ -330,18 +417,21 @@ async def test_full_artist_credit_uses_existing_group_details(db, router: Router
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}))
     t = track(g)
     credit = evolve(t.artist_credits[0], artist=CSLArtist.from_json(group_details(g, [a])))
-    await finish(cm.apply_artist_to_meta(db, mapping, evolve(t, artist_credits=[credit])))
+    await finish(apply_with_client(db, mapping, evolve(t, artist_credits=[credit])))
     assert not get_group.called
     assert CSLArtistSample.from_json(g) in mapping.metadata
 
 
-async def test_group_queries_for_one_track_run_in_parallel(aclient: AsyncDBClient, router: Router):
+async def test_group_queries_for_one_track_run_in_parallel(
+    aclient: AsyncDBClient,
+    router: Router,
+) -> None:
     a, g, h = artist('Alice'), artist('Group', group=True), artist('OtherGroup', group=True)
     mock_search(router, [a])
-    arrived: set[str] = {*()}
+    arrived: set[str] = set()
     both_started = asyncio.Event()
 
-    async def get_group(req: Request):
+    async def get_group(req: Request) -> Response:
         name = req.url.path.rsplit('/', 1)[-1]
         arrived.add(name)
         if len(arrived) == 2:
@@ -356,7 +446,10 @@ async def test_group_queries_for_one_track_run_in_parallel(aclient: AsyncDBClien
     assert len(mapping.metadata) == 3
 
 
-async def test_metadata_bundle_handles_multiple_adds_deletes_and_noop(db, router: Router):
+async def test_metadata_bundle_handles_multiple_adds_deletes_and_noop(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     from amqcsl.clients.bundles import TrackAddMetadataBundle, TrackDeleteMetadataBundle, parallel_actions
     from amqcsl.objects import CSLExtraMetadata, ExtraMetadata
 
@@ -374,7 +467,10 @@ async def test_metadata_bundle_handles_multiple_adds_deletes_and_noop(db, router
     assert all(route.call_count == 1 for route in deletes)
 
 
-async def test_mapping_methods_delegate_to_metadata(db, router: Router):
+async def test_mapping_methods_delegate_to_metadata(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     a = artist('Alice')
     mock_search(router, [a])
     mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}))
@@ -400,7 +496,10 @@ async def test_mapping_methods_delegate_to_metadata(db, router: Router):
     assert [*mapping.values()] == [*mapping.metadata.values()]
 
 
-async def test_all_unfound_names_are_reported_together(db, router: Router):
+async def test_all_unfound_names_are_reported_together(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
     search = mock_search(router, [artist('Alice')])
     with pytest.raises(AMQCSLError) as error:
         await finish(
@@ -411,7 +510,11 @@ async def test_all_unfound_names_are_reported_together(db, router: Router):
     assert search.call_count == 3
 
 
-async def test_search_phase_logging(db, router: Router, caplog):
+async def test_search_phase_logging(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     mock_search(router, [artist('Alice')])
     with caplog.at_level('INFO', logger='amqcsl.workflows.character_metadata'):
         await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}, ['no results']))
