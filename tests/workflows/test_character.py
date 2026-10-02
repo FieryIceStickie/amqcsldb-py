@@ -8,7 +8,7 @@ from httpx import Request, Response
 from respx import Route, Router
 
 from amqcsl import AsyncDBClient, DBClient
-from amqcsl.objects import CSLArtistSample, CSLTrack
+from amqcsl.objects import CSLTrack
 from amqcsl.workflows import character as cm
 
 compact_characters: cm.ArtistDict = {
@@ -134,10 +134,9 @@ class ArtistHandler:
     def __call__(
         self,
         track: CSLTrack,
-        artist_to_meta: cm.ArtistToMeta,
-        unknown_artists: Sequence[CSLArtistSample],
+        unknown_artists: Sequence[cm.Reason],
     ) -> bool:
-        self.unknown_artists[track.id] = [artist.id for artist in unknown_artists]
+        self.unknown_artists[track.id] = [reason.artist.id for reason in unknown_artists]
         return False
 
 
@@ -169,8 +168,7 @@ def test_aspire_sync(
 ):
     artist_to_meta = cm.make_artist_to_meta(client, characters, artists, ['Liella!'])
     for track in client.iter_tracks('Aspire'):
-        meta = client.get_metadata(track)
-        cm.queue_character_metadata(client, track, artist_to_meta, meta, artist_handler)
+        cm.apply_artist_to_meta(client, artist_to_meta, track, artist_handler)
     assert not artist_handler.unknown_artists
     assert len(client.queue) == aspire_fixture.num_tracks - 2
 
@@ -188,8 +186,7 @@ def test_aspire_sync_compact(
 ):
     artist_to_meta = cm.compact_make_artist_to_meta(client, compact_characters, ['Liella!'])
     for track in client.iter_tracks('Aspire'):
-        meta = client.get_metadata(track)
-        cm.queue_character_metadata(client, track, artist_to_meta, meta, artist_handler)
+        cm.apply_artist_to_meta(client, artist_to_meta, track, artist_handler)
     assert not artist_handler.unknown_artists
     assert len(client.queue) == aspire_fixture.num_tracks - 2
 
@@ -208,8 +205,7 @@ async def test_aspire_async(
 ):
     artist_to_meta = await cm.make_artist_to_meta(aclient, characters, artists, ['Liella!'])
     async for track in aclient.iter_tracks('Aspire'):
-        meta = await aclient.get_metadata(track)
-        cm.queue_character_metadata(aclient, track, artist_to_meta, meta, artist_handler)
+        await cm.apply_artist_to_meta(aclient, artist_to_meta, track, artist_handler)
     assert not artist_handler.unknown_artists
     assert len(aclient.queue) == aspire_fixture.num_tracks - 2
 
@@ -228,8 +224,7 @@ async def test_aspire_async_compact(
 ):
     artist_to_meta = await cm.compact_make_artist_to_meta(aclient, compact_characters, ['Liella!'])
     async for track in aclient.iter_tracks('Aspire'):
-        meta = await aclient.get_metadata(track)
-        cm.queue_character_metadata(aclient, track, artist_to_meta, meta, artist_handler)
+        await cm.apply_artist_to_meta(aclient, artist_to_meta, track, artist_handler)
     assert not artist_handler.unknown_artists
     assert len(aclient.queue) == aspire_fixture.num_tracks - 2
 
@@ -260,7 +255,7 @@ def test_artist_to_meta_sync(router: Router, client: DBClient):
 
     artist_to_meta = cm.make_artist_to_meta(client, characters, artists)
     expected_artist_to_meta = cm.make_artist_to_meta(client, characters, artists, ['Liella!'])
-    assert artist_to_meta == expected_artist_to_meta
+    assert artist_to_meta.metadata == expected_artist_to_meta.metadata
 
     assert route.call_count == 11
     assert liella_route.call_count == 2
@@ -287,7 +282,7 @@ async def test_artist_to_meta_async(router: Router, aclient: AsyncDBClient):
 
     artist_to_meta = await cm.make_artist_to_meta(aclient, characters, artists)
     expected_artist_to_meta = await cm.make_artist_to_meta(aclient, characters, artists, ['Liella!'])
-    assert artist_to_meta == expected_artist_to_meta
+    assert artist_to_meta.metadata == expected_artist_to_meta.metadata
 
     assert route.call_count == 11
     assert liella_route.call_count == 2
