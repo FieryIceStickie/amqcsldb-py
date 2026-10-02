@@ -223,13 +223,14 @@ def _match_artist(
 
 
 @frozen
-class MakeArtistToMetaBundle(Bundle[dict[CSLArtistSample, Sequence[ExtraMetadata]]]):
+class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMetadata]], set[str]]]):
     artists: ArtistDict
     search_phrases: Sequence[str] = ()
     characters: CharacterDict | None = None
     sep: str = ' '
     max_batch_size: int = 100
     max_query_size: int = 1500
+    exclude: Sequence[ArtistKey] = ()
 
     def _search(
         self,
@@ -252,7 +253,7 @@ class MakeArtistToMetaBundle(Bundle[dict[CSLArtistSample, Sequence[ExtraMetadata
     def vendor(
         self,
         client: httpxClient,
-    ) -> MultiVendor[dict[CSLArtistSample, Sequence[ExtraMetadata]]]:
+    ) -> MultiVendor[tuple[dict[CSLArtistSample, Sequence[ExtraMetadata]], set[str]]]:
         if self.search_phrases:
             logger.info('Searching phrases for artists')
         results = yield from self._search(client, self.search_phrases)
@@ -267,7 +268,7 @@ class MakeArtistToMetaBundle(Bundle[dict[CSLArtistSample, Sequence[ExtraMetadata
                 )
             matched[artist] = key
 
-        for key in self.artists:
+        for key in dict.fromkeys([*self.artists, *self.exclude]):
             name = ArtistName.from_key(key)
             artist = _match_artist(name, discovered)
             if artist is None:
@@ -290,18 +291,22 @@ class MakeArtistToMetaBundle(Bundle[dict[CSLArtistSample, Sequence[ExtraMetadata
         if not_found:
             raise AMQCSLError(f'Could not find artists: {", ".join(str(name) for name in not_found)}')
 
-        return {
+        excluded = {artist.id for artist, key in matched.items() if key in self.exclude}
+        metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]] = {
             artist: [
                 ExtraMetadata(True, 'Character', value if self.characters is None else self.characters[value])
                 for value in self.artists[key].split(self.sep)
             ]
             for artist, key in matched.items()
+            if artist.id not in excluded
         }
+        return metadata, excluded
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'artists', self.artists
         yield 'search_phrases', self.search_phrases
+        yield 'exclude', self.exclude, ()
 
 
 @frozen
@@ -318,10 +323,11 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
             for relation in group.forward_relations
             if relation.type == 'GroupMember'
         }
-        missing = [member for member in members.values() if member.to_sample() not in self.metadata]
+        active_members = [member for member in members.values() if member.id not in self.excluded_artists]
+        missing = [member for member in active_members if member.to_sample() not in self.metadata]
         if missing or not members:
             return Reason(group, INCOMPLETE_GROUP(missing))
-        (*inferred,) = dict.fromkeys(meta for member in members.values() for meta in self.metadata[member.to_sample()])
+        (*inferred,) = dict.fromkeys(meta for member in active_members for meta in self.metadata[member.to_sample()])
         self.metadata[group.to_sample()] = inferred
         return inferred
 
@@ -396,8 +402,9 @@ class SyncArtistToMeta(ArtistToMeta[None]):
         search_phrases: Sequence[str] = (),
         characters: CharacterDict | None = None,
         sep: str = ' ',
+        exclude: Sequence[ArtistKey] = (),
     ) -> Self:
-        metadata = client.process(
+        metadata, excluded = client.process(
             MakeArtistToMetaBundle(
                 artists,
                 search_phrases,
@@ -405,9 +412,10 @@ class SyncArtistToMeta(ArtistToMeta[None]):
                 sep,
                 client.max_batch_size,
                 client.max_query_size,
+                exclude,
             )
         )
-        return cls(client, metadata)
+        return cls(client, metadata, excluded)
 
     def apply(
         self,
@@ -443,8 +451,9 @@ class AsyncArtistToMeta(ArtistToMeta[Awaitable[None]]):
         search_phrases: Sequence[str] = (),
         characters: CharacterDict | None = None,
         sep: str = ' ',
+        exclude: Sequence[ArtistKey] = (),
     ) -> Self:
-        metadata = await client.process(
+        metadata, excluded = await client.process(
             MakeArtistToMetaBundle(
                 artists,
                 search_phrases,
@@ -452,9 +461,10 @@ class AsyncArtistToMeta(ArtistToMeta[Awaitable[None]]):
                 sep,
                 client.max_batch_size,
                 client.max_query_size,
+                exclude,
             )
         )
-        return cls(client, metadata)
+        return cls(client, metadata, excluded)
 
     async def apply(
         self,
@@ -481,6 +491,7 @@ def compact_make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ', ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> SyncArtistToMeta: ...
 @overload
 def compact_make_artist_to_meta(
@@ -488,6 +499,7 @@ def compact_make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ', ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> Awaitable[AsyncArtistToMeta]: ...
 
 
@@ -496,6 +508,7 @@ def compact_make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ', ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> SyncArtistToMeta | Awaitable[AsyncArtistToMeta]:
     """Create a mapping from character names, with parallel global and fallback searches.
 
@@ -504,13 +517,14 @@ def compact_make_artist_to_meta(
         artists: Artist names mapped to character names separated by ``sep``.
         search_phrases: Global searches run before querying unmatched names.
         sep: Separator for character names.
+        exclude: Artist names to ignore, including when inferring group metadata.
 
     Returns:
         A sync mapping, or an awaitable yielding an async mapping.
     """
     if isinstance(client, DBClient):
-        return SyncArtistToMeta.create(client, artists, search_phrases, sep=sep)
-    return AsyncArtistToMeta.create(client, artists, search_phrases, sep=sep)
+        return SyncArtistToMeta.create(client, artists, search_phrases, sep=sep, exclude=exclude)
+    return AsyncArtistToMeta.create(client, artists, search_phrases, sep=sep, exclude=exclude)
 
 
 @overload
@@ -520,6 +534,7 @@ def make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ' ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> SyncArtistToMeta: ...
 @overload
 def make_artist_to_meta(
@@ -528,6 +543,7 @@ def make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ' ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> Awaitable[AsyncArtistToMeta]: ...
 
 
@@ -537,6 +553,7 @@ def make_artist_to_meta(
     artists: ArtistDict,
     search_phrases: Sequence[str] = (),
     sep: str = ' ',
+    exclude: Sequence[ArtistKey] = (),
 ) -> SyncArtistToMeta | Awaitable[AsyncArtistToMeta]:
     """Create a mapping from character keys, with parallel global and fallback searches.
 
@@ -546,10 +563,11 @@ def make_artist_to_meta(
         artists: Artist names mapped to character keys separated by ``sep``.
         search_phrases: Global searches run before querying unmatched names.
         sep: Separator for character keys.
+        exclude: Artist names to ignore, including when inferring group metadata.
 
     Returns:
         A sync mapping, or an awaitable yielding an async mapping.
     """
     if isinstance(client, DBClient):
-        return SyncArtistToMeta.create(client, artists, search_phrases, characters, sep)
-    return AsyncArtistToMeta.create(client, artists, search_phrases, characters, sep)
+        return SyncArtistToMeta.create(client, artists, search_phrases, characters, sep, exclude)
+    return AsyncArtistToMeta.create(client, artists, search_phrases, characters, sep, exclude)

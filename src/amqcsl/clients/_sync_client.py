@@ -25,7 +25,9 @@ from amqcsl.clients.bundles._misc import (
     GroupBundle,
     GroupDeleteBundle,
     GroupEditBundle,
+    ImportAudioBundle,
     ListBundle,
+    ListDeleteBundle,
     ListEditBundle,
     LogoutBundle,
     SongAddMetadataBundle,
@@ -54,6 +56,7 @@ from amqcsl.objects._db_types import (
     CSLSongArtistCredit,
     CSLSongSample,
     CSLTrack,
+    CSLTrackRef,
     Metadata,
     NewSong,
     TrackPutArtistCredit,
@@ -381,8 +384,8 @@ class DBClient:
         csl_list: CSLList,
         *,
         name: str | None = None,
-        add: Iterable[CSLTrack] = (),
-        remove: Iterable[CSLTrack] = (),
+        add: Iterable[CSLTrackRef] = (),
+        remove: Iterable[CSLTrackRef] = (),
     ) -> None:
         """Edit a list
 
@@ -394,6 +397,16 @@ class DBClient:
         """
         bundle = ListEditBundle(csl_list, name, add, remove)
         self.process(bundle)
+
+    def list_delete(self, csl_list: CSLList) -> None:
+        """Delete a list
+
+        Args:
+            csl_list: List to delete
+        """
+        bundle = ListDeleteBundle(csl_list)
+        self.process(bundle)
+        self._lists = None
 
     # --- General Editing ---
 
@@ -632,6 +645,26 @@ class DBClient:
             QueryError: Audio path is invalid
         """
         bundle = AddAudioBundle(track, audio_path)
+        if queue:
+            self.enqueue(bundle)
+        else:
+            self.process(bundle)
+
+    def import_audio(
+        self,
+        track: CSLTrack,
+        track_to_import_from: CSLTrack,
+        *,
+        queue: bool = False,
+    ) -> None:
+        """Import audio from an existing track
+
+        Args:
+            track: CSLTrack
+            track_to_import_from: Other track to import audio from
+            queue: Whether to queue the request, defaults to False
+        """
+        bundle = ImportAudioBundle(track, track_to_import_from)
         if queue:
             self.enqueue(bundle)
         else:

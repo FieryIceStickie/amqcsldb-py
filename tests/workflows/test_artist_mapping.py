@@ -12,7 +12,7 @@ from respx.models import Call
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.exceptions import AMQCSLError, QueryError
-from amqcsl.objects import CSLArtist, CSLArtistSample, CSLTrack
+from amqcsl.objects import CSLArtist, CSLArtistSample, CSLTrack, ExtraMetadata
 from amqcsl.objects._json_types import JSONType
 from amqcsl.clients.bundles._parallel import _ParallelActionsBundle  # pyright: ignore[reportPrivateUsage] -- inspect queued actions
 from amqcsl.workflows import character as cm
@@ -497,3 +497,117 @@ async def test_search_phase_logging(
         await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}, ['no results']))
     assert 'Searching phrases for artists' in caplog.messages
     assert 'Searching for artists by name directly' in caplog.messages
+
+
+@pytest.mark.parametrize('factory', ['compact', 'normal', 'class'])
+@pytest.mark.parametrize('global_search', [False, True])
+async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+    factory: str,
+    global_search: bool,
+) -> None:
+    a, excluded = artist('Alice'), artist('Ignored')
+    search = mock_search(router, [a, excluded])
+    mock_metadata(router)
+    add = router.post(url__regex=r'/api/track/[^/]+/metadata') % Response(200)
+    phrases = ['all'] if global_search else []
+    definitions: cm.ArtistDict = {'Alice': 'A', 'Ignored': 'IgnoredCharacter'}
+    if factory == 'compact':
+        mapping = await finish(cm.compact_make_artist_to_meta(db, definitions, phrases, exclude=['Ignored', 'Ignored']))
+    elif factory == 'normal':
+        mapping = await finish(
+            cm.make_artist_to_meta(
+                db, {'A': 'A', 'IgnoredCharacter': 'IgnoredCharacter'}, definitions, phrases, exclude=['Ignored']
+            )
+        )
+    else:
+        if isinstance(db, DBClient):
+            mapping = cm.SyncArtistToMeta.create(db, definitions, phrases, exclude=['Ignored'])
+        else:
+            mapping = await cm.AsyncArtistToMeta.create(db, definitions, phrases, exclude=['Ignored'])
+    assert mapping.excluded_artists == {'Ignored'}
+    assert CSLArtistSample.from_json(excluded) not in mapping
+    assert search.call_count == (1 if global_search else 2)
+    for idx in range(2):
+        await finish(mapping.apply(track(a, excluded, track_id=str(idx)), lambda _track, _reasons: pytest.fail()))
+    await finish(db.commit())
+    assert add.call_count == 2
+    for call in cast(Sequence[Call], add.calls):
+        assert [meta['value'] for meta in json.loads(call.request.content)['extraMetadatas']] == ['A']
+
+
+@pytest.mark.parametrize('key_kind', ['name', 'tuple', 'artist_name'])
+async def test_exclude_only_mapping_resolves_names_and_skips_groups(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+    key_kind: str,
+) -> None:
+    g = artist('Group', group=True, disambiguation='one')
+    other = artist('Group', group=True, disambiguation='two')
+    samples = [g] if key_kind == 'name' else [g, other]
+    mock_search(router, samples)
+    group_query = router.get(url__regex=r'/api/artist/[^/]+') % Response(500)
+    mock_metadata(router, [{'id': 'stale', 'type': 2, 'key': 'Character', 'value': 'Old'}])
+    delete = router.delete('/api/track/test-track/metadata/stale') % Response(200)
+    keys: dict[str, cm.ArtistKey] = {
+        'name': 'Group',
+        'tuple': ('Group', 'one'),
+        'artist_name': cm.ArtistName('Group', original_name='Group', disambiguation='one'),
+    }
+    mapping = await finish(cm.compact_make_artist_to_meta(db, {}, exclude=[keys[key_kind]]))
+    assert mapping.excluded_artists == {str(g['id'])}
+    assert not mapping.metadata
+    await finish(mapping.apply(track(g), lambda _track, _reasons: pytest.fail()))
+    await finish(db.commit())
+    assert delete.called and not group_query.called
+
+
+@pytest.mark.parametrize('all_excluded', [False, True])
+@pytest.mark.parametrize('initial', [False, True])
+async def test_group_members_respect_initial_and_callback_exclusions(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+    all_excluded: bool,
+    initial: bool,
+) -> None:
+    a, excluded, g = artist('Alice'), artist('Ignored', group=True), artist('Group', group=True)
+    mock_search(router, [a, excluded])
+    members = [excluded] if all_excluded else [a, excluded]
+    get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, members))
+    nested = router.get('/api/artist/Ignored') % Response(200, json=group_details(excluded, []))
+    mock_metadata(router)
+    mapping = await finish(cm.compact_make_artist_to_meta(db, {'Alice': 'A'}, exclude=['Ignored'] if initial else []))
+    if not initial:
+        await finish(mapping.apply(track(excluded), lambda _track, _reasons: True))
+    await finish(mapping.apply(track(g), lambda _track, _reasons: pytest.fail('Excluded member reported missing')))
+    expected: Sequence[ExtraMetadata] = [] if all_excluded else mapping[CSLArtistSample.from_json(a)]
+    assert mapping[CSLArtistSample.from_json(g)] == expected
+    assert get_group.call_count == 1
+    assert nested.call_count == int(not initial)
+    assert len(db.queue) == int(not all_excluded)
+
+
+@pytest.mark.parametrize('ambiguous', [False, True])
+async def test_excluded_names_must_resolve_uniquely(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+    ambiguous: bool,
+) -> None:
+    mock_search(
+        router, [artist('Ignored', disambiguation='one'), artist('Ignored', disambiguation='two')] if ambiguous else []
+    )
+    with pytest.raises(AMQCSLError, match='2 artists found' if ambiguous else 'Could not find artists: Ignored'):
+        await finish(cm.compact_make_artist_to_meta(db, {}, exclude=['Ignored']))
+    assert not db.queue
+
+
+async def test_missing_exclusions_are_reported_with_missing_metadata_names(
+    db: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    search = mock_search(router, [])
+    with pytest.raises(AMQCSLError) as error:
+        await finish(cm.compact_make_artist_to_meta(db, {'Missing': 'A'}, exclude=['Ignored']))
+    assert 'Missing' in str(error.value) and 'Ignored' in str(error.value)
+    assert search.call_count == 2

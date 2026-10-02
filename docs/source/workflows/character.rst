@@ -173,6 +173,21 @@ The metadata is stored in ``artist_to_meta.metadata``, and excluded artist IDs a
 If you're updating an older script, replace ``queue_character_metadata`` with ``artist_to_meta.apply(track)``;
 you no longer need to fetch the track's metadata yourself.
 
+If you already know which artists to ignore, pass them in as ``exclude`` when creating the mapping:
+
+.. code-block:: python
+
+    artist_to_meta = cm.compact_make_artist_to_meta(
+        client,
+        artists,
+        ['Hoshimi Production'],
+        exclude=['Artist to ignore'],
+    )
+
+These use the same name formats as the artist dictionary, and still need to match a unique artist.
+Exclusions take priority over dictionary entries. Excluded members are also skipped when filling in
+a group, so you don't need to provide character metadata for them.
+
 If you want to handle unrecognized artists yourself, you can pass in a ``should_exclude`` function:
 
 .. code-block:: python

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from helpers import collect, finish, first, load
-from httpx import Response
+from httpx import Request, Response
 from respx import Router
 
 from amqcsl import AsyncDBClient, DBClient
@@ -332,6 +332,32 @@ async def test_list_edit(
     remove_track = await first(db.iter_tracks(active_list=mei_list))
     await finish(db.list_edit(mei_list, name='meichan', add=[add_track], remove=[remove_track]))
     assert route.call_count == 1
+
+
+async def test_list_delete(
+    router: Router,
+    db: DBClient | AsyncDBClient,
+) -> None:
+    mei_list = db.lists['MeiHayasaka']
+
+    def update_list_route(req: Request) -> Response:
+        _ = router.get(
+            '/api/lists',
+            name='lists',
+        ) % Response(
+            200,
+            json=[clist for clist in load('lists') if clist['name'] != 'MeiHayasaka'],
+        )
+        return Response(200)
+
+    route = router.delete(
+        f'/api/list/{mei_list.id}',
+        name='list_delete',
+    ).mock(side_effect=update_list_route)
+
+    await finish(db.list_delete(mei_list))
+    assert route.call_count == 1
+    assert 'MeiHayasaka' not in db.lists
 
 
 async def test_add_group(

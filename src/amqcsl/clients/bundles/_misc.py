@@ -24,6 +24,7 @@ from amqcsl.objects._db_types import (
     CSLSongArtistCredit,
     CSLSongSample,
     CSLTrack,
+    CSLTrackRef,
     ExtraMetadata,
     Metadata,
     NewSong,
@@ -282,8 +283,8 @@ class CreateListBundle(Bundle[None]):
 class ListEditBundle(Bundle[None]):
     csl_list: CSLList
     name: str | None = field(default=None, validator=optional(min_len(1)))
-    add: list[CSLTrack] = field(factory=lambda: [], converter=materialize)
-    remove: list[CSLTrack] = field(factory=lambda: [], converter=materialize)
+    add: list[CSLTrackRef] = field(factory=lambda: [], converter=materialize)
+    remove: list[CSLTrackRef] = field(factory=lambda: [], converter=materialize)
 
     @override
     def vendor(self, client: httpxClient) -> SingleVendor[None]:
@@ -302,6 +303,22 @@ class ListEditBundle(Bundle[None]):
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'list', self.csl_list
         yield 'new_name', self.name, None
+
+
+@frozen
+class ListDeleteBundle(Bundle[None]):
+    csl_list: CSLList
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        csl_list = self.csl_list
+        logger.info(f'Deleting list {csl_list.name}')
+        res = yield client.build_request('DELETE', f'/api/list/{csl_list.id}')
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'list', self.csl_list
 
 
 @frozen
@@ -668,3 +685,28 @@ class AddAudioBundle(Bundle[None]):
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'track', self.track.simp
         yield 'audio_path', self.audio_path.resolve()
+
+
+@frozen
+class ImportAudioBundle(Bundle[None]):
+    track: CSLTrack
+    track_to_import_from: CSLTrack
+
+    @override
+    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+        track = self.track
+        logger.info(f'Importing audio of {track.name}')
+        res = yield client.build_request(
+            'POST',
+            f'/api/track/{track.id}/audio-import',
+            json={
+                'id': track.id,
+                'url': self.track_to_import_from.audio_url,
+            },
+        )
+        res.raise_for_status()
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
+        yield 'track_to_import_from', self.track_to_import_from.simp

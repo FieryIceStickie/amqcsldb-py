@@ -21,6 +21,11 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Added :py:meth:`~amqcsl.DBClient.import_audio` and :py:meth:`~amqcsl.DBClient.list_delete`.
+#. Added :py:class:`~amqcsl.objects.CSLTrackRef` for editing lists with track IDs.
+#. Added ``exclude`` to :py:func:`~amqcsl.workflows.character.make_artist_to_meta` and
+   :py:func:`~amqcsl.workflows.character.compact_make_artist_to_meta`.
+
 #. Changed :py:func:`~amqcsl.workflows.character.make_artist_to_meta` and
    :py:func:`~amqcsl.workflows.character.compact_make_artist_to_meta` to return
    :py:class:`~amqcsl.workflows.character.SyncArtistToMeta` or
