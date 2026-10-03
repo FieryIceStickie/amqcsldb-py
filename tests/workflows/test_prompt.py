@@ -1,7 +1,10 @@
+from io import StringIO
 from typing import cast
 
 import pytest
+from attrs import evolve
 from helpers import load
+from rich.console import Console
 
 from amqcsl.exceptions import QuitError
 from amqcsl.objects import (
@@ -76,7 +79,7 @@ def test_exclusion_prompt_decisions(
     expected: cm.ExcludeDecision,
 ) -> None:
     def read(message: str) -> str:
-        assert 'I(gnore track)' in message
+        assert '[I] Ignore track' in message
         return answer
 
     monkeypatch.setattr('builtins.input', read)
@@ -108,4 +111,71 @@ def test_exclusion_prompt_retries_invalid_answers(
     t = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     assert cm.prompt_should_exclude(t, []) is cm.ExcludeDecision.IGNORE
     assert len(prompts) == 3
-    assert t.id in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert t.id in output
+    assert output.count('Unknown answer. Choose Y, N, I, or Q.') == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('answer', ['ignore', 'quit'])
+async def test_async_exclusion_prompt_retries_and_parses(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    answer: str,
+) -> None:
+    answers = iter(['invalid', '', answer])
+
+    def read(_: str) -> str:
+        return next(answers)
+
+    monkeypatch.setattr('builtins.input', read)
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
+    if answer == 'quit':
+        with pytest.raises(QuitError):
+            await cm.async_prompt_should_exclude(track, [])
+    else:
+        assert await cm.async_prompt_should_exclude(track, []) is cm.ExcludeDecision.IGNORE
+    assert capsys.readouterr().out.count('Unknown answer. Choose Y, N, I, or Q.') == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('use_async', [False, True])
+async def test_exclusion_display_is_compact_and_preserves_literal_names(
+    monkeypatch: pytest.MonkeyPatch,
+    use_async: bool,
+) -> None:
+    output = StringIO()
+    console = Console(file=output, width=70, color_system=None)
+    monkeypatch.setattr('rich.get_console', lambda: console)
+
+    def read(_: str) -> str:
+        return 'ignore'
+
+    monkeypatch.setattr('builtins.input', read)
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
+    credit = track.artist_credits[0]
+    recognised = evolve(credit.artist, id='known', name='Known [bold]artist[/bold]')
+    unknown = evolve(credit.artist, id='guest', name='Guest Singer')
+    group = evolve(credit.artist, id='group', name='Special Unit', type_id=3)
+    member = evolve(credit.artist, id='member', name='Another Singer')
+    track = evolve(
+        track,
+        id='test-track-id',
+        name=None,
+        original_name='Test song',
+        artist_credits=[evolve(credit, artist=artist) for artist in [recognised, recognised, unknown, group]],
+    )
+    reasons = [cm.Reason(unknown, cm.UNKNOWN_ARTIST), cm.Reason(group, cm.INCOMPLETE_GROUP([member], [recognised]))]
+    if use_async:
+        assert await cm.async_prompt_should_exclude(track, reasons) is cm.ExcludeDecision.IGNORE
+    else:
+        assert cm.prompt_should_exclude(track, reasons) is cm.ExcludeDecision.IGNORE
+    rendered = output.getvalue()
+    assert '╭─ Unknown metadata found' in rendered and '╰' in rendered
+    assert 'test-track-id' in rendered and 'Test song' in rendered
+    assert rendered.count('Known [bold]artist[/bold]') == 2
+    assert 'Guest Singer — unknown artist' in rendered
+    assert 'Special Unit — incomplete group' in rendered
+    assert 'Known members: Known [bold]artist[/bold]' in rendered
+    assert 'Members without character metadata: Another Singer' in rendered
+    assert 'CSLTrack(' not in rendered and 'type_id' not in rendered and 'original_name' not in rendered

@@ -148,13 +148,15 @@ Nested groups are remembered too, so they don't need to be fetched again on late
 If groups contain each other in a cycle, it'll report the group as incomplete.
 
 To use the mapping, call ``artist_to_meta.apply(track)`` for each track. It'll fetch the existing metadata
-and queue any additions and deletions necessary:
+and return a bundle of additions and deletions, or None if there are no edits:
 
 .. code-block:: python
 
     artist_to_meta = cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
     for track in client.iter_tracks('My album'):
-        artist_to_meta.apply(track)
+        bundle = artist_to_meta.apply(track)
+        if bundle is not None:
+            client.enqueue(bundle)
     client.commit()
 
 If you're using ``AsyncDBClient``, you'll need to await these calls:
@@ -163,7 +165,9 @@ If you're using ``AsyncDBClient``, you'll need to await these calls:
 
     artist_to_meta = await cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
     async for track in client.iter_tracks('My album'):
-        await artist_to_meta.apply(track)
+        bundle = await artist_to_meta.apply(track)
+        if bundle is not None:
+            client.enqueue(bundle)
     await client.commit()
 
 The mapping uses the client that created it. It also works like a dictionary for reading metadata,
@@ -174,7 +178,7 @@ It's fine to pass in either an artist sample or a full artist object.
 The metadata is stored in ``artist_to_meta.metadata``, and excluded artist IDs are stored in
 ``artist_to_meta.excluded_artists``. Search phrases are only needed when creating the mapping.
 If you're updating an older script, replace ``queue_character_metadata`` with ``artist_to_meta.apply(track)``;
-you no longer need to fetch the track's metadata yourself.
+enqueue the returned bundle when it is not None. You no longer need to fetch the track's metadata yourself.
 
 If you already know which artists to ignore, pass them in as ``exclude`` when creating the mapping:
 
@@ -210,7 +214,9 @@ If you want to handle unrecognized artists yourself, you can pass in a ``should_
                 print('Missing members:', [member.name for member in failure.reason.artists])
         return cm.ExcludeDecision.EXCLUDE
 
-    artist_to_meta.apply(track, should_exclude)
+    bundle = artist_to_meta.apply(track, should_exclude)
+    if bundle is not None:
+        client.enqueue(bundle)
 
 The function gets the track and a list of ``Reason`` objects. For each one, ``artist`` is the artist
 on the track (for an incomplete group, this is the group, not the missing member). If the full artist
@@ -218,8 +224,9 @@ was fetched, you'll get that instead of a sample. The ``reason`` tells you what 
 
 * ``UNKNOWN_ARTIST`` means there's no character metadata for that artist.
 * ``INCOMPLETE_GROUP`` has an ``artists`` list containing all the members without metadata.
-  For nested groups, these can be members further down, an empty group, or a group involved in a cycle.
-  If the group has no members in the database, this list will be empty.
+  Its ``known_artists`` list contains resolved members, also shown in the exclusion prompt.
+  For nested groups, these can be members further down or a group involved in a cycle.
+  Groups with no members resolve to no character metadata without prompting.
 
 It'll call your function once per track, after collecting all the artists it couldn't fill in.
 Return a :py:class:`ExcludeDecision <amqcsl.workflows.character.ExcludeDecision>`:
@@ -236,3 +243,47 @@ An excluded artist is treated as if they weren't on the track, so the other arti
 as usual. If a group is incomplete, none of its metadata is used; it won't just add the characters
 it knows about. Stale character metadata will still be removed, but unrelated metadata is left alone.
 If everything is already correct, nothing is queued. Off-vocal and instrumental tracks are skipped.
+
+
+Processing multiple tracks
+--------------------------
+
+Use ``iter_edits`` to prepare changes and enqueue them yourself:
+
+.. code-block:: python
+
+    for edit in artist_to_meta.iter_edits(client.iter_tracks('My album')):
+        client.enqueue(edit)
+    client.commit()
+
+With ``AsyncDBClient``, tracks are processed concurrently and edits are yielded as they finish:
+
+.. code-block:: python
+
+    async for edit in artist_to_meta.iter_edits(client.iter_tracks('My album')):
+        client.enqueue(edit)
+    await client.commit()
+
+The async mapping runs up to ``client.max_request_count`` workers. Exclusion decisions are handled
+one at a time, and earlier exclusions are checked before asking again. Other requests can continue
+while the built-in prompt waits for your answer.
+
+Async mappings accept either a regular ``should_exclude`` function or an async one. Regular callbacks
+run on the event loop, so use an async callback if it needs to wait. The default is
+:py:func:`~amqcsl.workflows.character.async_prompt_should_exclude`; only terminal input runs in a thread.
+
+If you stop iterating early, close the async iterator to cancel pending work:
+
+.. code-block:: python
+
+    from contextlib import aclosing
+
+    async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:
+        async for edit in edits:
+            client.enqueue(edit)
+            if enough_edits():
+                break
+
+An open terminal prompt must finish before cancellation completes. Its answer is discarded when
+cancelled. Processing errors propagate to the caller; edits already yielded or enqueued remain yours.
+Neither iterator commits changes.

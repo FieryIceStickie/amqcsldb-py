@@ -1,9 +1,13 @@
+import ast
+import asyncio
+import logging
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from amqcsl.cli import Templates, app
+from amqcsl.exceptions import QuitError
 
 
 @pytest.mark.parametrize('session_path', ['', 'custom-session.txt'])
@@ -51,3 +55,43 @@ def test_make_refuses_existing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert result.exit_code != 0
     assert isinstance(result.exception, FileExistsError)
     assert path.read_text() == 'original'
+
+
+@pytest.mark.parametrize('template', [Templates.character, Templates.character_compact])
+@pytest.mark.parametrize('error_kind', ['direct', 'grouped', 'mixed'])
+def test_character_template_logs_quit_and_preserves_other_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    template: Templates,
+    error_kind: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ['make', 'script.py', '--template', template.value])
+    assert result.exit_code == 0, result.output
+    script = ast.parse((tmp_path / 'script.py').read_text())
+    entrypoint = script.body[-1]
+    assert isinstance(entrypoint, ast.If)
+    handler = entrypoint.body[-1]
+    assert isinstance(handler, ast.TryStar)
+    code = compile(ast.Module(body=[handler], type_ignores=[]), 'script.py', 'exec')
+    logger = logging.getLogger('template-test')
+
+    async def main(_: logging.Logger) -> None:
+        if error_kind == 'direct':
+            raise QuitError
+        errors: list[Exception] = [QuitError()]
+        if error_kind == 'mixed':
+            errors.append(ValueError('Other error'))
+        raise ExceptionGroup('Processing failed', errors)
+
+    namespace = {'asyncio': asyncio, 'main': main, 'logger': logger, 'QuitError': QuitError}
+    with caplog.at_level(logging.INFO):
+        if error_kind == 'mixed':
+            with pytest.raises(ExceptionGroup) as caught:
+                exec(code, namespace)  # noqa: S102 -- run only the generated quit handler with a fake workflow
+            assert len(caught.value.exceptions) == 1
+            assert isinstance(caught.value.exceptions[0], ValueError)
+        else:
+            exec(code, namespace)  # noqa: S102 -- run only the generated quit handler with a fake workflow
+    assert 'Quit requested; exiting.' in caplog.text

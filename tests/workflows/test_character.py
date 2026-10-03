@@ -14,10 +14,6 @@ from amqcsl.objects import CSLTrack
 from amqcsl.workflows import character as cm
 
 compact_characters: cm.ArtistDict = {
-    ('Liella!', 'Love Live! Superstar!! (11 members)'): (
-        'Kanon Shibuya, Keke Tang, Sumire Heanna, Chisato Arashi, Ren Hazuki, '  # :)
-        'Kinako Sakurakouji, Natsumi Onitsuka, Shiki Wakana, Mei Yoneme, Margarete Wien, Tomari Onitsuka'
-    ),
     'Sayuri Date': 'Kanon Shibuya',
     'Liyuu': 'Keke Tang',
     'Naomi Payton': 'Sumire Heanna',
@@ -49,7 +45,6 @@ characters: cm.CharacterDict = {
 
 # fmt: off
 artists: cm.ArtistDict = {
-    ('Liella!', 'Love Live! Superstar!! (11 members)'): 'kanon keke sumire chisato ren kinako natsumi shiki mei margarete tomari',
     'Sayuri Date': 'kanon',
     'Liyuu': 'keke',
     'Nako Misaki': 'chisato',
@@ -96,6 +91,7 @@ expected_track_names = {
 @define
 class AspireFixture:
     route: Route
+    group_route: Route
     num_tracks: int
     calls: dict[str, bytes] = field(factory=dict[str, bytes])
 
@@ -104,6 +100,22 @@ class AspireFixture:
 def aspire_fixture(router: Router) -> AspireFixture:
     track_data = load('superstar/aspire')
     artist_data = load('superstar/liella')
+    group = next(artist for artist in artist_data if artist['id'] == 'mock-id-artist-liella11')
+    members = [artist for artist in artist_data if artist['type'] == 1]
+    group_route = router.get('/api/artist/mock-id-artist-liella11').mock(
+        return_value=mock_response(
+            200,
+            json={
+                **group,
+                'forwardRelations': [
+                    {'id': f'member-{idx}', 'type': 1, 'artist': member} for idx, member in enumerate(members)
+                ],
+                'reverseRelations': [],
+                'linkedAMQSongs': [],
+                'linkedTracks': [],
+            },
+        )
+    )
     _ = router.post(
         '/api/tracks',
         name='tracks',
@@ -123,7 +135,7 @@ def aspire_fixture(router: Router) -> AspireFixture:
         )
     )
     route = router.post(url=re.compile(r'/api/track/(?P<track_id>[\w-]+)/metadata'))
-    rtn = AspireFixture(route, len(track_data))
+    rtn = AspireFixture(route, group_route, len(track_data))
 
     def side_effect(request: Request):
         track_id = request_url(request).split('/')[-2]
@@ -186,11 +198,16 @@ async def test_aspire(
     match client:
         case DBClient():
             for track in client.iter_tracks('Aspire'):
-                await finish(artist_to_meta.apply(track, artist_handler))
+                bundle = await finish(artist_to_meta.apply(track, artist_handler))
+                if bundle is not None:
+                    client.enqueue(bundle)
         case AsyncDBClient():
             async for track in client.iter_tracks('Aspire'):
-                await finish(artist_to_meta.apply(track, artist_handler))
+                bundle = await finish(artist_to_meta.apply(track, artist_handler))
+                if bundle is not None:
+                    client.enqueue(bundle)
     assert not artist_handler.unknown_artists
+    assert aspire_fixture.group_route.call_count == 1
     assert len(client.queue) == aspire_fixture.num_tracks - 2
 
     await finish(client.commit())
@@ -227,4 +244,4 @@ async def test_artist_to_meta(
     assert artist_to_meta.metadata == expected_artist_to_meta.metadata
 
     assert route.call_count == 11
-    assert liella_route.call_count == 2
+    assert liella_route.call_count == 1

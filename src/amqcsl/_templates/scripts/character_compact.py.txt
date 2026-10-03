@@ -2,19 +2,19 @@ import asyncio
 import logging
 import os
 
-import amqcsl
-from amqcsl.objects import CSLTrack
-from amqcsl.workflows import character as cm
 from dotenv import load_dotenv
-
 from log import setup_logging
+
+import amqcsl
+from amqcsl.exceptions import QuitError
+from amqcsl.workflows import character as cm
 
 _ = load_dotenv()
 
 artists: cm.ArtistDict = {}
 
 
-async def main(logger: logging.Logger):
+async def main(logger: logging.Logger) -> None:
     async with amqcsl.AsyncDBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
@@ -26,22 +26,17 @@ async def main(logger: logging.Logger):
         )
         my_group = client.groups['INSERT GROUP NAME HERE']
         tracks = client.iter_tracks(groups=[my_group], batch_size=100)
-        async with asyncio.TaskGroup() as tg:
-            _ = [tg.create_task(process_track(client, track, artist_to_meta)) async for track in tracks]
+        async for bundle in artist_to_meta.iter_edits(tracks):
+            client.enqueue(bundle)
 
         if cm.prompt(client.queue):
             await client.commit()
 
 
-async def process_track(
-    client: amqcsl.AsyncDBClient,
-    track: CSLTrack,
-    artist_to_meta: cm.AsyncArtistToMeta,
-) -> None:
-    await artist_to_meta.apply(track)
-
-
 if __name__ == '__main__':
     logger = logging.getLogger('TEMPLATE_SCRIPT_NAME')
     setup_logging()
-    asyncio.run(main(logger))
+    try:
+        asyncio.run(main(logger))
+    except* QuitError:
+        logger.info('Quit requested, exiting')

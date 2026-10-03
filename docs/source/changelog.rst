@@ -21,6 +21,12 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Add ``iter_edits`` to character mappings to yield edits for manual enqueueing.
+   Async processing runs concurrently and keeps requests running during exclusion prompts.
+#. Character mapping ``apply`` now returns prepared edits instead of enqueueing them.
+#. Groups with no members now resolve to empty character metadata without prompting.
+#. Show a compact character exclusion prompt with track details and unresolved artist names.
+
 #. Fixed the endpoint for :py:meth:`~amqcsl.DBClient.song_add_metadata`.
 
 #. Replaced object ``from_json`` methods with :py:func:`~amqcsl.objects.from_json` and

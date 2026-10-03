@@ -1,15 +1,31 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, ItemsView, Iterator, KeysView, Mapping, Sequence, ValuesView
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    ItemsView,
+    Iterable,
+    Iterator,
+    KeysView,
+    Mapping,
+    Sequence,
+    ValuesView,
+)
 from enum import Enum, auto
 from typing import Protocol, Self, cast, overload, override
 
 import rich.repr
 from attrs import define, field, frozen
-from rich.pretty import pprint
+from rich.console import Group
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.clients.bundles._core import (
@@ -45,11 +61,13 @@ __all__ = [
     'ArtistName',
     'ArtistToMeta',
     'AsyncArtistToMeta',
+    'AsyncShouldExclude',
     'CharacterDict',
     'ExcludeDecision',
     'Reason',
     'ShouldExclude',
     'SyncArtistToMeta',
+    'async_prompt_should_exclude',
     'compact_make_artist_to_meta',
     'make_artist_to_meta',
     'prompt',
@@ -129,9 +147,10 @@ UNKNOWN_ARTIST = _UnknownArtist()
 
 @frozen
 class INCOMPLETE_GROUP:
-    """Unresolved members, including nested groups and cycles. Empty means the credited group has no members."""
+    """Unresolved members, including nested groups and cycles."""
 
     artists: Sequence[CSLArtistSample]
+    known_artists: Sequence[CSLArtistSample] = ()
 
 
 @frozen
@@ -153,30 +172,96 @@ class ExcludeDecision(Enum):
 type ShouldExclude = Callable[[CSLTrack, Sequence[Reason]], ExcludeDecision]
 
 
-def prompt_should_exclude(
-    track: CSLTrack,
-    artists: Sequence[Reason],
-) -> ExcludeDecision:
+type AsyncShouldExclude = Callable[[CSLTrack, Sequence[Reason]], ExcludeDecision | Awaitable[ExcludeDecision]]
+
+_EXCLUSION_QUESTION = '[Y] Exclude  [N] Error  [I] Ignore track  [Q] Quit › '
+
+
+def _display_exclusion(track: CSLTrack, artists: Sequence[Reason]) -> None:
+    """Show the track and unresolved artists before asking for a decision."""
+    details = Table.grid(padding=(0, 2), expand=True)
+    details.add_column(style='dim', no_wrap=True)
+    details.add_column(ratio=1)
+    details.add_row('Track', Text(track.name if track.name is not None else track.original_name, style='bold'))
+    details.add_row('ID', Text(track.id, style='dim'))
+    details.add_row(
+        'Artists', Text(', '.join(dict.fromkeys(credit.artist.name for credit in track.artist_credits)), style='cyan')
+    )
+    reasons: list[Text] = []
+    for failure in artists:
+        reason = Text('⚠ ', style='yellow')
+        reason.append(failure.artist.name, style='cyan')
+        match failure.reason:
+            case _UnknownArtist():
+                reason.append(' — unknown artist', style='yellow')
+            case INCOMPLETE_GROUP(artists=members, known_artists=known):
+                reason.append(' — incomplete group', style='yellow')
+                if known:
+                    reason.append('\n  Known members: ', style='dim')
+                    reason.append(', '.join(dict.fromkeys(member.name for member in known)), style='green')
+                if members:
+                    reason.append('\n  Members without character metadata: ', style='dim')
+                    reason.append(', '.join(dict.fromkeys(member.name for member in members)), style='cyan')
+        reasons.append(reason)
+    rich.print(Panel(Group(details, Text(''), *reasons), title='Unknown metadata found', title_align='left', width=100))
+
+
+def _parse_exclusion(answer: str) -> ExcludeDecision | None:
+    """Parse a decision, returning None for an unrecognized answer."""
+    match answer.lower().strip():
+        case 'y' | 'yes' | 'exclude':
+            return ExcludeDecision.EXCLUDE
+        case 'n' | 'no' | 'error':
+            return ExcludeDecision.ERROR
+        case 'i' | 'ignore':
+            return ExcludeDecision.IGNORE
+        case 'q' | 'quit':
+            raise QuitError
+        case _:
+            rich.print('[yellow]Unknown answer. Choose Y, N, I, or Q.[/yellow]')
+            return None
+
+
+def prompt_should_exclude(track: CSLTrack, artists: Sequence[Reason]) -> ExcludeDecision:
     """Ask whether to exclude unresolved artists, raise an error, or ignore the track."""
-    pprint(track)
-    pprint(artists)
+    _display_exclusion(track, artists)
     while True:
-        answer = input('Exclude these artists? Y(es) N(o, error) I(gnore track) Q(uit): ').lower().strip()
-        match answer:
-            case 'y' | 'yes' | 'exclude':
-                return ExcludeDecision.EXCLUDE
-            case 'n' | 'no' | 'error':
-                return ExcludeDecision.ERROR
-            case 'i' | 'ignore':
-                return ExcludeDecision.IGNORE
-            case 'q' | 'quit':
-                raise QuitError
-            case _:
-                continue
+        decision = _parse_exclusion(input(_EXCLUSION_QUESTION))
+        if decision is not None:
+            return decision
 
 
-class ArtistToMeta[R](Protocol):
-    """Cached artist metadata and track application, synchronous or asynchronous."""
+async def _read_exclusion() -> str:
+    """Wait for terminal input to finish before propagating cancellation."""
+    task = asyncio.create_task(asyncio.to_thread(input, _EXCLUSION_QUESTION))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+        except BaseException:
+            if cancelled:
+                raise asyncio.CancelledError from None
+            raise
+    if cancelled:
+        if not task.cancelled():
+            task.exception()
+        raise asyncio.CancelledError
+    return task.result()
+
+
+async def async_prompt_should_exclude(track: CSLTrack, artists: Sequence[Reason]) -> ExcludeDecision:
+    """Ask for an exclusion decision without blocking async network requests."""
+    _display_exclusion(track, artists)
+    while True:
+        decision = _parse_exclusion(await _read_exclusion())
+        if decision is not None:
+            return decision
+
+
+class ArtistToMeta(Protocol):
+    """Shared cached artist metadata for synchronous and asynchronous mappings."""
 
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
     excluded_artists: set[str]
@@ -221,22 +306,6 @@ class ArtistToMeta[R](Protocol):
 
     def items(self) -> ItemsView[CSLArtistSample, Sequence[ExtraMetadata]]:
         return self.metadata.items()
-
-    def apply(
-        self,
-        track: CSLTrack,
-        should_exclude: ShouldExclude = prompt_should_exclude,
-    ) -> R:
-        """Infer character metadata and queue additions and deletions for a track.
-
-        Args:
-            track: Track whose character metadata should be updated.
-            should_exclude: Called once with all unresolved artists. EXCLUDE caches their
-                exclusions; ERROR raises AMQCSLError; IGNORE leaves the track unchanged.
-
-        Commit queued changes through the client used to create this mapping.
-        """
-        ...
 
 
 def _match_artist(
@@ -397,6 +466,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
             if relation.type == 'GroupMember'
         }
         missing: dict[str, CSLArtistSample] = {}
+        known: dict[str, CSLArtistSample] = {}
         metas: list[ExtraMetadata] = []
         for member in members.values():
             if member.id in self.excluded_artists:
@@ -408,12 +478,14 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
                     continue
                 result = self._process_group(groups[member.id], groups, ancestors)
             match result:
-                case INCOMPLETE_GROUP(artists=artists):
+                case INCOMPLETE_GROUP(artists=artists, known_artists=resolved):
                     missing.update((artist.id, artist) for artist in artists or [member])
+                    known.update((artist.id, artist) for artist in resolved)
                 case _:
+                    known[member.id] = member
                     metas.extend(result)
-        if missing or not members:
-            return INCOMPLETE_GROUP([*missing.values()])
+        if missing:
+            return INCOMPLETE_GROUP([*missing.values()], [*known.values()])
         (*inferred,) = dict.fromkeys(metas)
         self.metadata[group.to_sample()] = inferred
         return inferred
@@ -436,8 +508,13 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
 
     def prepare(self, fetched: Sequence[CSLArtist]) -> _CharacterMetadataBundle | None:
         """Update caches and decide whether to process the track, without making requests."""
+        reasons, metas = self.analyze(fetched)
+        return self.resolve(reasons, metas, self.should_exclude)
+
+    def analyze(self, fetched: Sequence[CSLArtist]) -> tuple[list[Reason], set[ExtraMetadata]]:
+        """Infer metadata and collect unresolved artists using current shared state."""
         if self.track.type in ('OffVocal', 'Instrumental'):
-            return None
+            return [], set()
         group_by_id = {group.id: group for group in fetched}
         reasons: list[Reason] = []
         metas: set[ExtraMetadata] = set()
@@ -457,8 +534,19 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
                     reasons.append(Reason(group, missing))
                 case inferred:
                     metas.update(inferred)
+        return reasons, metas
+
+    def resolve(
+        self,
+        reasons: Sequence[Reason],
+        metas: set[ExtraMetadata],
+        should_exclude: ShouldExclude,
+    ) -> _CharacterMetadataBundle | None:
+        """Apply an exclusion decision and build the metadata operation."""
+        if self.track.type in ('OffVocal', 'Instrumental'):
+            return None
         if reasons:
-            match self.should_exclude(self.track, reasons):
+            match should_exclude(self.track, reasons):
                 case ExcludeDecision.EXCLUDE:
                     self.excluded_artists.update(reason.artist.id for reason in reasons)
                 case ExcludeDecision.ERROR:
@@ -508,8 +596,8 @@ class _CharacterMetadataBundle(Bundle[Bundle[None] | None]):
 
 
 @define
-class SyncArtistToMeta(ArtistToMeta[None]):
-    """Artist mapping that queues metadata changes synchronously."""
+class SyncArtistToMeta(ArtistToMeta):
+    """Artist mapping that prepares metadata changes synchronously."""
 
     _client: DBClient = field(repr=False, eq=False)
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
@@ -542,8 +630,9 @@ class SyncArtistToMeta(ArtistToMeta[None]):
         self,
         track: CSLTrack,
         should_exclude: ShouldExclude = prompt_should_exclude,
-    ) -> None:
-        bundle = self._client.process(
+    ) -> Bundle[None] | None:
+        """Return prepared track edits without enqueueing or committing them."""
+        return self._client.process(
             ApplyArtistToMetaBundle(
                 track,
                 self.metadata,
@@ -551,18 +640,28 @@ class SyncArtistToMeta(ArtistToMeta[None]):
                 should_exclude,
             )
         )
-        if bundle is not None:
-            self._client.enqueue(bundle)
+
+    def iter_edits(
+        self,
+        tracks: Iterable[CSLTrack],
+        should_exclude: ShouldExclude = prompt_should_exclude,
+    ) -> Iterator[Bundle[None]]:
+        """Yield track edits without enqueueing or committing them."""
+        for track in tracks:
+            bundle = self.apply(track, should_exclude)
+            if bundle is not None:
+                yield bundle
 
 
 @define
-class AsyncArtistToMeta(ArtistToMeta[Awaitable[None]]):
-    """Artist mapping that queues metadata changes asynchronously."""
+class AsyncArtistToMeta(ArtistToMeta):
+    """Artist mapping that prepares metadata changes asynchronously."""
 
     _client: AsyncDBClient = field(repr=False, eq=False)
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
     excluded_artists: set[str] = field(factory=set[str])
     _lock: asyncio.Lock = field(factory=asyncio.Lock, init=False, repr=False, eq=False)
+    _prompt_lock: asyncio.Lock = field(factory=asyncio.Lock, init=False, repr=False, eq=False)
 
     @classmethod
     async def create(
@@ -587,25 +686,120 @@ class AsyncArtistToMeta(ArtistToMeta[Awaitable[None]]):
         )
         return cls(client, metadata, excluded)
 
-    async def apply(
+    async def _prepare(
+        self,
+        bundle: ApplyArtistToMetaBundle,
+        fetched: Sequence[CSLArtist],
+        should_exclude: AsyncShouldExclude,
+    ) -> _CharacterMetadataBundle | None:
+        """Serialize decisions and recheck shared caches without holding locks across input."""
+        async with self._lock:
+            reasons, metas = bundle.analyze(fetched)
+            if not reasons:
+                return bundle.resolve(reasons, metas, bundle.should_exclude)
+        async with self._prompt_lock:
+            async with self._lock:
+                reasons, metas = bundle.analyze(fetched)
+            if reasons:
+                result = should_exclude(bundle.track, reasons)
+                decision = await result if inspect.isawaitable(result) else result
+                async with self._lock:
+                    reasons, metas = bundle.analyze(fetched)
+                    return bundle.resolve(reasons, metas, lambda _track, _reasons: decision)
+            return bundle.resolve(reasons, metas, bundle.should_exclude)
+
+    async def _edit(
         self,
         track: CSLTrack,
-        should_exclude: ShouldExclude = prompt_should_exclude,
-    ) -> None:
-        application = ApplyArtistToMetaBundle(
+        should_exclude: AsyncShouldExclude,
+        decisions: asyncio.Queue[
+            tuple[ApplyArtistToMetaBundle, Sequence[CSLArtist], asyncio.Future[_CharacterMetadataBundle | None]]
+        ]
+        | None = None,
+    ) -> Bundle[None] | None:
+        """Fetch track dependencies, obtain a decision, and build unqueued edits."""
+        bundle = ApplyArtistToMetaBundle(
             track,
             self.metadata,
             self.excluded_artists,
-            should_exclude,
+            lambda _track, _reasons: ExcludeDecision.ERROR,
         )
-        fetched = await self._client.process(application.group_queries())
-        # Recheck shared state after group requests; the lock protects decisions and cache writes.
-        async with self._lock:
-            prepared = application.prepare(fetched)
-        if prepared is not None:
-            bundle = await self._client.process(prepared)
-            if bundle is not None:
-                self._client.enqueue(bundle)
+        fetched = await self._client.process(bundle.group_queries())
+        if decisions is None:
+            prepared = await self._prepare(bundle, fetched, should_exclude)
+        else:
+            async with self._lock:
+                reasons, metas = bundle.analyze(fetched)
+                prepared = bundle.resolve(reasons, metas, bundle.should_exclude) if not reasons else None
+            if reasons:
+                future: asyncio.Future[_CharacterMetadataBundle | None] = asyncio.get_running_loop().create_future()
+                await decisions.put((bundle, fetched, future))
+                prepared = await future
+        return await self._client.process(prepared) if prepared is not None else None
+
+    async def apply(
+        self,
+        track: CSLTrack,
+        should_exclude: AsyncShouldExclude = async_prompt_should_exclude,
+    ) -> Bundle[None] | None:
+        """Return prepared track edits without enqueueing or committing them."""
+        return await self._edit(track, should_exclude)
+
+    async def iter_edits(
+        self,
+        tracks: AsyncIterator[CSLTrack],
+        should_exclude: AsyncShouldExclude = async_prompt_should_exclude,
+    ) -> AsyncGenerator[Bundle[None], None]:
+        """Yield completed edits with bounded workers; close the iterator to stop processing."""
+        limit = self._client.max_request_count
+        pending: asyncio.Queue[CSLTrack | None] = asyncio.Queue(limit)
+        completed: asyncio.Queue[Bundle[None] | None] = asyncio.Queue(limit)
+        decisions: asyncio.Queue[
+            tuple[ApplyArtistToMetaBundle, Sequence[CSLArtist], asyncio.Future[_CharacterMetadataBundle | None]]
+        ] = asyncio.Queue(limit)
+
+        async def produce() -> None:
+            async for track in tracks:
+                await pending.put(track)
+            # Send one stop signal per worker after all tracks have been queued.
+            for _ in range(limit):
+                await pending.put(None)
+
+        async def decide() -> None:
+            while True:
+                bundle, fetched, future = await decisions.get()
+                prepared = await self._prepare(bundle, fetched, should_exclude)
+                if not future.done():
+                    future.set_result(prepared)
+
+        async def work() -> None:
+            while (track := await pending.get()) is not None:
+                edit = await self._edit(track, should_exclude, decisions)
+                if edit is not None:
+                    await completed.put(edit)
+
+        async def run() -> None:
+            try:
+                async with asyncio.TaskGroup() as group:
+                    consumer = group.create_task(decide())
+                    group.create_task(produce())
+                    workers = [group.create_task(work()) for _ in range(limit)]
+                    await asyncio.gather(*workers)
+                    consumer.cancel()
+            finally:
+                await completed.put(None)
+
+        runner = asyncio.create_task(run())
+        try:
+            while (edit := await completed.get()) is not None:
+                yield edit
+            await runner
+        finally:
+            runner.cancel()
+            # Free output capacity so cleanup cannot stall behind an abandoned iterator.
+            while not completed.empty():
+                completed.get_nowait()
+            await asyncio.gather(runner, return_exceptions=True)
 
 
 @overload
