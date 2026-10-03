@@ -107,13 +107,14 @@ real network requests in tests). Fixtures/resources live in
 4. The object model (`objects/_db_types.py`, `_json_types.py`,
    `_obj_consts.py`) is untouched.
 5. No new dependencies were added without asking first.
-6. Changes are on a branch, not committed directly to `main`, with a PR
-   opened.
+6. Changes are on a branch, not committed directly to `main`, and ready for
+   the maintainer to review in the current session.
 
 ## Git and PR conventions
 
 - Always work on a branch, never commit directly to `main`.
-- Open a PR when changes are ready, even though this is a solo project.
+- PRs are optional. The maintainer can review changes in the current session;
+  only open a PR when explicitly asked.
 
 ## Boundaries
 
@@ -121,7 +122,7 @@ real network requests in tests). Fixtures/resources live in
 - Read the existing client/workflow/bundle code before adding to it, and
   match its existing patterns (underscore-private + public re-export, attrs
   for schemas, sync and async client parity).
-- Work on a branch and open a PR for any change.
+- Work on a branch and make changes ready for review in the current session.
 
 **Ask first**
 - Adding any new dependency.
