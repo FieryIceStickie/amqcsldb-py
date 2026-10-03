@@ -111,9 +111,7 @@ You should see something like::
     [2025-06-02 23:43:35,860|amqcsl.client]:INFO: Creating client
     [2025-06-02 23:43:35,893|amqcsl.client]:INFO: Verifying permissions
     [2025-06-02 23:43:35,893|amqcsl.client]:INFO: Invalid session cookie, attempting login
-    [2025-06-02 23:43:37,833|httpx]:INFO: HTTP Request: POST https://amqbot.082640.xyz/api/login "HTTP/1.1 200 OK"
     [2025-06-02 23:43:37,833|amqcsl.client]:INFO: Writing session_id to amq_session.txt
-    [2025-06-02 23:43:38,181|httpx]:INFO: HTTP Request: GET https://amqbot.082640.xyz/api/auth/me "HTTP/1.1 200 OK"
     [2025-06-02 23:43:38,183|amqcsl.client]:INFO: Auth successful
     [2025-06-02 23:43:38,183|__main__]:INFO: shiHib
     [2025-06-02 23:43:38,183|amqcsl.client]:INFO: Closing client

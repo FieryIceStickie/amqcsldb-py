@@ -1,11 +1,13 @@
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
 
+import niquests
 import pytest
-from helpers import finish
-from httpx import HTTPStatusError, Response
-from respx import Router
+from helpers import finish, mock_response
+from niquests import HTTPError
+from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.exceptions import ClientDoesNotExistError, LoginError
@@ -72,15 +74,16 @@ async def test_auth_failure_closes_client(
     username: str,
     password: str,
     scenario: str,
+    closed_sessions: list[niquests.Session | niquests.AsyncSession],
 ) -> None:
     path = tmp_path / 'session.txt'
     if scenario == 'directory':
         path.mkdir()
     elif scenario == 'not_admin':
         path.write_text(mock_id)
-        _ = router.routes['auth_you'] % Response(200, json={'name': username, 'roles': ['USER']})
+        _ = router['auth_you'].mock(return_value=mock_response(200, json={'name': username, 'roles': ['USER']}))
     if scenario == 'forbidden':
-        _ = router.routes['login_you'] % Response(403)
+        _ = router['login_you'].mock(return_value=mock_response(403))
     client = client_class(
         username=None if scenario == 'missing_credentials' else username,
         password=password,
@@ -94,7 +97,7 @@ async def test_auth_failure_closes_client(
         else:
             async with client:
                 pytest.fail('Authentication unexpectedly succeeded')
-    assert client.client.is_closed
+    assert client.client in closed_sessions
     if scenario != 'directory':
         assert path.read_text() == mock_id if scenario == 'not_admin' else not path.exists()
 
@@ -113,8 +116,8 @@ async def test_async_login_fallback_and_logout(
         assert path.read_text() == mock_id
         await finish(client.logout())
         assert path.read_text() == ''
-    assert router.routes['auth_none'].call_count == router.routes['login_you'].call_count == 1
-    assert router.routes['auth_you'].call_count == router.routes['logout_you'].call_count == 1
+    assert router['auth_none'].call_count == router['login_you'].call_count == 1
+    assert router['auth_you'].call_count == router['logout_you'].call_count == 1
 
 
 @pytest.mark.asyncio
@@ -125,13 +128,14 @@ async def test_http_error_closes_client_with_or_without_json(
     tmp_path: Path,
     mock_id: str,
     json_response: bool,
+    closed_sessions: list[niquests.Session | niquests.AsyncSession],
 ) -> None:
     path = tmp_path / 'session.txt'
     path.write_text(mock_id)
-    response = Response(500, json={'error': 'failed'}) if json_response else Response(500, text='Not JSON')
-    route = router.get('/test-error') % response
+    response = mock_response(500, json={'error': 'failed'}) if json_response else mock_response(500, text='Not JSON')
+    route = router.get(path='/test-error').mock(return_value=response)
     client = client_class(session_path=path)
-    with pytest.raises(HTTPStatusError) as error:
+    with pytest.raises(HTTPError) as error:
         match client:
             case DBClient():
                 with client:
@@ -139,9 +143,10 @@ async def test_http_error_closes_client_with_or_without_json(
             case AsyncDBClient():
                 async with client:
                     (await client.client.get('/test-error')).raise_for_status()
+    assert error.value.response is not None
     assert error.value.response.status_code == 500
     assert route.call_count == 1
-    assert client.client.is_closed
+    assert client.client in closed_sessions
 
 
 @pytest.mark.asyncio
@@ -153,10 +158,11 @@ async def test_exit_closes_client_when_logging_fails(
     mock_id: str,
     monkeypatch: pytest.MonkeyPatch,
     http_error: bool,
+    closed_sessions: list[niquests.Session | niquests.AsyncSession],
 ) -> None:
     path = tmp_path / 'session.txt'
     path.write_text(mock_id)
-    route = router.get('/test-error') % Response(500, json={'error': 'failed'})
+    route = router.get(path='/test-error').mock(return_value=mock_response(500, json={'error': 'failed'}))
     client = client_class(session_path=path)
 
     def fail_logging(*args: object, **kwargs: object) -> None:
@@ -179,4 +185,62 @@ async def test_exit_closes_client_when_logging_fails(
                     if http_error:
                         (await client.client.get('/test-error')).raise_for_status()
     assert route.call_count == int(http_error)
-    assert client.client.is_closed
+    assert client.client in closed_sessions
+
+
+@pytest.fixture
+def closed_sessions(monkeypatch: pytest.MonkeyPatch) -> list[niquests.Session | niquests.AsyncSession]:
+    """Record session closure while still executing real transport cleanup."""
+    closed: list[niquests.Session | niquests.AsyncSession] = []
+    sync_close = niquests.Session.close
+    async_close = niquests.AsyncSession.close
+
+    def close(session: niquests.Session) -> None:
+        sync_close(session)
+        closed.append(session)
+
+    async def aclose(session: niquests.AsyncSession) -> None:
+        await async_close(session)
+        closed.append(session)
+
+    monkeypatch.setattr(niquests.Session, 'close', close)
+    monkeypatch.setattr(niquests.AsyncSession, 'close', aclose)
+    return closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stage', ['auth_you', 'lists', 'groups'])
+@pytest.mark.parametrize('cancel', [False, True])
+async def test_async_initialization_failure_closes_session(
+    router: Router,
+    tmp_path: Path,
+    mock_id: str,
+    closed_sessions: list[niquests.Session | niquests.AsyncSession],
+    stage: str,
+    cancel: bool,
+) -> None:
+    path = tmp_path / 'session.txt'
+    path.write_text(mock_id)
+    client = AsyncDBClient(session_path=path)
+    started = asyncio.Event()
+
+    async def wait_for_cancellation(request: niquests.PreparedRequest) -> niquests.Response:
+        started.set()
+        await asyncio.Event().wait()
+        pytest.fail('Initialization unexpectedly resumed')
+
+    if cancel:
+        router[stage].mock(side_effect=wait_for_cancellation)
+        task = asyncio.create_task(client.__aenter__())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    else:
+        router[stage].respond(status_code=500)
+        with pytest.raises(HTTPError) as error:
+            async with client:
+                pytest.fail('Initialization unexpectedly succeeded')
+        assert error.value.response is not None
+        assert error.value.response.status_code == 500
+    assert closed_sessions == [client.client]

@@ -1,14 +1,16 @@
 import logging
 from collections.abc import Generator, Iterable, Iterator, Sequence
+from contextlib import nullcontext
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
-import httpx
+import niquests
 from attrs import define, field
 from attrs.validators import gt
 
+from amqcsl.clients._http_utils import MultipartUpload, reject_redirect, request_options
 from amqcsl.clients.bundles._core import Items, StreamingBundle
 from amqcsl.clients.bundles._misc import (
     AddAudioBundle,
@@ -83,7 +85,7 @@ class DBClient:
     password: str | None = None
     #: Filepath to look for/store session cookie in, defaults to amq_session.txt
     session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
-    _client: httpx.Client | None = field(default=None, init=False, repr=False)
+    _client: niquests.Session | None = field(default=None, init=False, repr=False)
 
     #: Maximum batch size when querying db
     max_batch_size: int = field(default=100, validator=gt(0))
@@ -103,8 +105,8 @@ class DBClient:
         return True
 
     @property
-    def client(self) -> httpx.Client:
-        """Underlying httpx.Client"""
+    def client(self) -> niquests.Session:
+        """Underlying niquests.Session"""
         if self._client is None:
             raise ClientDoesNotExistError
         return self._client
@@ -112,6 +114,14 @@ class DBClient:
     @property
     def queue(self) -> list[Bundle[Any]]:
         return self._queue
+
+    def _send_request(self, req: niquests.PreparedRequest) -> niquests.Response:
+        """Send a prepared request with operation-specific timeouts and reject redirects."""
+        body = req.body
+        with body.opened() if isinstance(body, MultipartUpload) else nullcontext():
+            response = self.client.send(req, **request_options(req))
+        reject_redirect(response)
+        return response
 
     def process[R](self, bundle: Bundle[R]) -> R:
         """Processes a bundle (Mainly for internal use)
@@ -125,7 +135,7 @@ class DBClient:
         logger.debug(f'Processing {type(bundle)}')
         client = self.client
         g = bundle.vendor(client)
-        res: httpx.Response | Sequence[httpx.Response] | None = None
+        res: niquests.Response | Sequence[niquests.Response] | None = None
         while True:
             try:
                 req = g.send(res)  # type: ignore[reportArgumentType]
@@ -135,10 +145,10 @@ class DBClient:
                 case Items():
                     g.close()
                     raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
-                case httpx.Request():
-                    res = client.send(req)
+                case niquests.PreparedRequest():
+                    res = self._send_request(req)
                 case reqs:
-                    res = [client.send(req) for req in reqs]
+                    res = [self._send_request(req) for req in reqs]
 
     def enqueue(self, bundle: Bundle[None]):
         """Add an object to the queue
@@ -158,7 +168,7 @@ class DBClient:
         for bundle in self._queue:
             try:
                 self.process(bundle)
-            except httpx.HTTPError:
+            except niquests.exceptions.RequestException:
                 if stop_if_err:
                     raise
         self.queue.clear()
@@ -167,7 +177,7 @@ class DBClient:
 
     def __enter__(self) -> Self:
         logger.info('Creating client')
-        self._client = httpx.Client(base_url=DB_URL)
+        self._client = niquests.Session(base_url=DB_URL, timeout=(10, 30))
         try:
             logger.info('Verifying permissions')
             bundle = AuthBundle(self.username, self.password, self.session_path)
@@ -188,7 +198,7 @@ class DBClient:
             if exc_type is None:
                 logger.info('Closing client')
             else:
-                if isinstance(exc_val, httpx.HTTPStatusError):
+                if isinstance(exc_val, niquests.exceptions.HTTPError) and exc_val.response is not None:
                     try:
                         error_data = exc_val.response.json()
                         logger.error('JSON given with error, check logs', extra={'data': error_data})
@@ -204,7 +214,7 @@ class DBClient:
         """Logout the client
 
         Raises:
-            AMQCSLError: httpx client doesn't exist yet
+            AMQCSLError: niquests client doesn't exist yet
         """
         bundle = LogoutBundle(self.session_path)
         self.process(bundle)
@@ -234,7 +244,7 @@ class DBClient:
         """Execute HTTP events and expose item events without buffering query results."""
         logger.debug(f'Processing {type(bundle)}')
         vendor = bundle.vendor(self.client)
-        reply: httpx.Response | list[httpx.Response] | None = None
+        reply: niquests.Response | list[niquests.Response] | None = None
         try:
             while True:
                 try:
@@ -245,10 +255,10 @@ class DBClient:
                     case Items(values=values):
                         yield from values
                         reply = None
-                    case httpx.Request():
-                        reply = self.client.send(event)
+                    case niquests.PreparedRequest():
+                        reply = self._send_request(event)
                     case _:
-                        reply = [self.client.send(request) for request in event]
+                        reply = [self._send_request(request) for request in event]
         finally:
             vendor.close()
 

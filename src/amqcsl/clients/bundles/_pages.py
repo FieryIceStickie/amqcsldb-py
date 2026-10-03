@@ -4,16 +4,17 @@ from collections.abc import Iterable, Iterator, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, cast, override
 
-import httpx
+import niquests
 import rich.repr
 from attrs import Attribute, Converter, field, frozen
 from attrs.validators import gt
 
+from amqcsl.clients._http_utils import build_request
 from amqcsl.exceptions import QueryError
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
 
-from ._core import Items, StreamingBundle, StreamingVendor, httpxClient, materialize
+from ._core import Items, StreamingBundle, StreamingVendor, httpClient, materialize
 
 if TYPE_CHECKING:
     from amqcsl import AsyncDBClient, DBClient
@@ -50,6 +51,8 @@ class SyncPageStrategy(PageStrategy):
         page_size: int,
         batch_size: int,
     ) -> Sequence[int]:
+        if page_size == 0 and skip < count:
+            raise QueryError('Query returned an empty page before reaching the reported count')
         next_skip = skip + page_size
         return [next_skip] if next_skip < count else []
 
@@ -83,7 +86,7 @@ class PageBundle[R](StreamingBundle[R], ABC):
             raise QueryError(f'Batch size {value} is larger than the max batch size of {self.max_batch_size}')
 
     @override
-    def vendor(self, client: httpxClient) -> StreamingVendor[R]:
+    def vendor(self, client: httpClient) -> StreamingVendor[R]:
         """Yield HTTP request batches and lazy item events in query order."""
         offsets: Sequence[int] = [0]
         initial_count: int | None = None
@@ -91,7 +94,7 @@ class PageBundle[R](StreamingBundle[R], ABC):
         logger.info('Querying first page')
         while offsets:
             responses = yield [self.page_request(client, skip) for skip in offsets]
-            if responses is None or isinstance(responses, httpx.Response):
+            if responses is None or isinstance(responses, niquests.Response):
                 raise TypeError('Page request batches require a batch of HTTP responses')
             raw_pages = [self.process_response(response) for response in responses]
             if len(raw_pages) != len(offsets):
@@ -115,7 +118,7 @@ class PageBundle[R](StreamingBundle[R], ABC):
                 logger.info(f'Querying {len(offsets)} more pages')
         logger.info(f'Finished querying {key}')
 
-    def process_response(self, res: httpx.Response) -> RawPage:
+    def process_response(self, res: niquests.Response) -> RawPage:
         """Validate an HTTP response and query limits, then extract its raw page."""
         res.raise_for_status()
         match res.json():
@@ -138,7 +141,7 @@ class PageBundle[R](StreamingBundle[R], ABC):
         yield from map(self.process_item, page)
 
     @abstractmethod
-    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+    def page_request(self, client: httpClient, skip: int) -> niquests.PreparedRequest:
         """Build a request for up to batch_size items, starting at the given offset."""
         ...
 
@@ -216,16 +219,16 @@ class IterTracksBundle(PageBundle[CSLTrack]):
         return body
 
     @override
-    def vendor(self, client: httpxClient) -> StreamingVendor[CSLTrack]:
+    def vendor(self, client: httpClient) -> StreamingVendor[CSLTrack]:
         logger.info(f'Fetching tracks matching search term "{self.search_term}"')
         return super().vendor(client)
 
     @override
-    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+    def page_request(self, client: httpClient, skip: int) -> niquests.PreparedRequest:
         body = self.body
         body['skip'] = skip
         body['take'] = self.batch_size
-        return client.build_request('POST', '/api/tracks', json=body)
+        return build_request(client, 'POST', '/api/tracks', json=body)
 
     @override
     def process_item(self, item: JSONType) -> CSLTrack:
@@ -280,16 +283,16 @@ class IterSongsBundle(PageBundle[CSLSongSample]):
         return params
 
     @override
-    def vendor(self, client: httpxClient) -> StreamingVendor[CSLSongSample]:
+    def vendor(self, client: httpClient) -> StreamingVendor[CSLSongSample]:
         logger.info(f'Fetching songs matching search term "{self.search_term}"')
         return super().vendor(client)
 
     @override
-    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+    def page_request(self, client: httpClient, skip: int) -> niquests.PreparedRequest:
         params = self.params
         params['skip'] = skip
         params['take'] = self.batch_size
-        return client.build_request('GET', '/api/songs', params=params)  # type: ignore[reportArgumentType]
+        return build_request(client, 'GET', '/api/songs', params={key: str(value) for key, value in params.items()})
 
     @override
     def process_item(self, item: JSONType) -> CSLSongSample:
@@ -332,16 +335,16 @@ class IterArtistsBundle(PageBundle[CSLArtistSample]):
         return params
 
     @override
-    def vendor(self, client: httpxClient) -> StreamingVendor[CSLArtistSample]:
+    def vendor(self, client: httpClient) -> StreamingVendor[CSLArtistSample]:
         logger.info(f'Fetching artists matching search term "{self.search_term}"')
         return super().vendor(client)
 
     @override
-    def page_request(self, client: httpxClient, skip: int) -> httpx.Request:
+    def page_request(self, client: httpClient, skip: int) -> niquests.PreparedRequest:
         params = self.params
         params['skip'] = skip
         params['take'] = self.batch_size
-        return client.build_request('GET', '/api/artists', params=params)  # type: ignore[reportArgumentType]
+        return build_request(client, 'GET', '/api/artists', params={key: str(value) for key, value in params.items()})
 
     @override
     def process_item(self, item: JSONType) -> CSLArtistSample:

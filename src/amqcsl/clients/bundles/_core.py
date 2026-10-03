@@ -1,15 +1,17 @@
 from collections.abc import Generator, Iterable
 from typing import Protocol, override
 
-import httpx
+import niquests
 import rich.repr
 from attrs import frozen
 
-type httpxClient = httpx.Client | httpx.AsyncClient  # noqa: PYI042 -- retain the existing exported alias
+type httpClient = niquests.Session | niquests.AsyncSession  # noqa: PYI042 -- use the maintainer-requested alias spelling
 
-type SingleVendor[R] = Generator[httpx.Request, httpx.Response, R]
-type MultiVendor[R] = Generator[Iterable[httpx.Request], Iterable[httpx.Response], R]
-type MixedVendor[R] = Generator[httpx.Request | Iterable[httpx.Request], httpx.Response | Iterable[httpx.Response], R]
+type SingleVendor[R] = Generator[niquests.PreparedRequest, niquests.Response, R]
+type MultiVendor[R] = Generator[Iterable[niquests.PreparedRequest], Iterable[niquests.Response], R]
+type MixedVendor[R] = Generator[
+    niquests.PreparedRequest | Iterable[niquests.PreparedRequest], niquests.Response | Iterable[niquests.Response], R
+]
 type Vendor[R] = SingleVendor[R] | MultiVendor[R] | MixedVendor[R]
 
 
@@ -19,10 +21,10 @@ def materialize[T](items: Iterable[T]) -> list[T]:
 
 
 class Bundle[R](Protocol):
-    # httpxClient is used for build_request and other client methods
+    # httpClient provides session state for preparing requests
     # Do not use to send actual requests, since it should work for both sync
     # and async clients
-    def vendor(self, client: httpxClient) -> Vendor[R]: ...
+    def vendor(self, client: httpClient) -> Vendor[R]: ...
     def __rich_repr__(self) -> rich.repr.Result: ...
 
 
@@ -34,8 +36,8 @@ class Items[T]:
 
 
 type StreamingVendor[T] = Generator[
-    httpx.Request | Iterable[httpx.Request] | Items[T],
-    httpx.Response | Iterable[httpx.Response] | None,
+    niquests.PreparedRequest | Iterable[niquests.PreparedRequest] | Items[T],
+    niquests.Response | Iterable[niquests.Response] | None,
     None,
 ]
 
@@ -43,7 +45,7 @@ type StreamingVendor[T] = Generator[
 class StreamingBundle[T](Protocol):
     """HTTP work that also yields items incrementally through Items events."""
 
-    def vendor(self, client: httpxClient) -> StreamingVendor[T]: ...
+    def vendor(self, client: httpClient) -> StreamingVendor[T]: ...
     def __rich_repr__(self) -> rich.repr.Result: ...
 
     def collect(self) -> Bundle[list[T]]:
@@ -58,10 +60,10 @@ class CollectBundle[T](Bundle[list[T]]):
     stream: StreamingBundle[T]
 
     @override
-    def vendor(self, client: httpxClient) -> MixedVendor[list[T]]:
+    def vendor(self, client: httpClient) -> MixedVendor[list[T]]:
         vendor = self.stream.vendor(client)
         items: list[T] = []
-        reply: httpx.Response | Iterable[httpx.Response] | None = None
+        reply: niquests.Response | Iterable[niquests.Response] | None = None
         try:
             while True:
                 try:

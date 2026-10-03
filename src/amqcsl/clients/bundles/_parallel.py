@@ -1,13 +1,13 @@
 from collections.abc import Iterable
 from typing import cast, override
 
-import httpx
+import niquests
 import rich.repr
 from attrs import field, frozen
 
-from ._core import Bundle, MultiVendor, Vendor, httpxClient, materialize
+from ._core import Bundle, MultiVendor, Vendor, httpClient, materialize
 
-type Replies = dict[int, httpx.Response | list[httpx.Response] | None]
+type Replies = dict[int, niquests.Response | list[niquests.Response] | None]
 type RequestSpans = dict[int, tuple[int, int, bool]]
 
 
@@ -22,9 +22,9 @@ class ParallelBundle[R](Bundle[list[R]]):
         vendors: dict[int, Vendor[R]],
         replies: Replies,
         results: dict[int, R],
-    ) -> tuple[list[httpx.Request], RequestSpans]:
+    ) -> tuple[list[niquests.PreparedRequest], RequestSpans]:
         """Advance active vendors and remember where each vendor's responses belong."""
-        requests: list[httpx.Request] = []
+        requests: list[niquests.PreparedRequest] = []
         spans: RequestSpans = {}
         for idx, vendor in [*vendors.items()]:
             try:
@@ -34,8 +34,8 @@ class ParallelBundle[R](Bundle[list[R]]):
                 del vendors[idx]
                 continue
             start = len(requests)
-            single = isinstance(outgoing, httpx.Request)
-            if isinstance(outgoing, httpx.Request):
+            single = isinstance(outgoing, niquests.PreparedRequest)
+            if isinstance(outgoing, niquests.PreparedRequest):
                 requests.append(outgoing)
             else:
                 requests.extend(outgoing)
@@ -43,7 +43,7 @@ class ParallelBundle[R](Bundle[list[R]]):
         return requests, spans
 
     @override
-    def vendor(self, client: httpxClient) -> MultiVendor[list[R]]:
+    def vendor(self, client: httpClient) -> MultiVendor[list[R]]:
         vendors = {idx: bundle.vendor(client) for idx, bundle in enumerate(self.bundles)}
         replies: Replies = dict.fromkeys(vendors)
         results: dict[int, R] = {}
@@ -71,7 +71,7 @@ class _ParallelActionsBundle(Bundle[None]):
         return self.parallel.bundles
 
     @override
-    def vendor(self, client: httpxClient) -> MultiVendor[None]:
+    def vendor(self, client: httpClient) -> MultiVendor[None]:
         yield from self.parallel.vendor(client)
 
     @override

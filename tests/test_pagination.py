@@ -3,9 +3,10 @@ import json
 from typing import cast
 
 import pytest
-from helpers import load
-from httpx import Request, Response
-from respx import Router
+from helpers import load, mock_response, query_params, request_body
+from niquests import PreparedRequest as Request
+from niquests import Response
+from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.exceptions import QueryError
@@ -28,12 +29,12 @@ def mock_pages(
     calls: list[int] = []
 
     def page(req: Request) -> Response:
-        params = json.loads(req.content) if kind == 'tracks' else req.url.params
+        params = json.loads(request_body(req)) if kind == 'tracks' else query_params(req)
         skip, take = int(params['skip']), int(params['take'])
         calls.append(skip)
-        return Response(200, json={'count': len(samples), kind: samples[skip : skip + take]})
+        return mock_response(200, json={'count': len(samples), kind: samples[skip : skip + take]})
 
-    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(f'/api/{kind}')
+    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(path=f'/api/{kind}')
     route.mock(side_effect=page)
     return calls
 
@@ -86,7 +87,7 @@ async def test_async_pagination_first_page_then_parallel_ordered_pages(
     last_finished = asyncio.Event()
 
     async def page(req: Request) -> Response:
-        params = json.loads(req.content) if kind == 'tracks' else req.url.params
+        params = json.loads(request_body(req)) if kind == 'tracks' else query_params(req)
         skip, take = int(params['skip']), int(params['take'])
         calls.append(skip)
         if skip:
@@ -97,9 +98,9 @@ async def test_async_pagination_first_page_then_parallel_ordered_pages(
                 await asyncio.wait_for(last_finished.wait(), timeout=2)
             else:
                 last_finished.set()
-        return Response(200, json={'count': len(samples), kind: samples[skip : skip + take]})
+        return mock_response(200, json={'count': len(samples), kind: samples[skip : skip + take]})
 
-    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(f'/api/{kind}')
+    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(path=f'/api/{kind}')
     route.mock(side_effect=page)
     items = getattr(client, f'iter_{kind}')('test', batch_size=2)
     assert not calls
@@ -191,19 +192,19 @@ async def test_async_page_request_failure_cancels_other_requests(
     router: Router,
 ) -> None:
     assert isinstance(client, AsyncDBClient)
-    from httpx import ConnectError
+    from niquests import ConnectionError
 
     samples = load('idolypride/artists')[:5]
     sibling_started = asyncio.Event()
     sibling_cancelled = asyncio.Event()
 
     async def page(req: Request) -> Response:
-        skip = int(req.url.params['skip'])
+        skip = int(query_params(req)['skip'])
         if skip == 0:
-            return Response(200, json={'count': 5, 'artists': samples[:2]})
+            return mock_response(200, json={'count': 5, 'artists': samples[:2]})
         if skip == 2:
             await sibling_started.wait()
-            raise ConnectError('Failed page request', request=req)
+            raise ConnectionError('Failed page request', request=req)
         sibling_started.set()
         try:
             await asyncio.Event().wait()
@@ -212,11 +213,26 @@ async def test_async_page_request_failure_cancels_other_requests(
             raise
         pytest.fail('Sibling request unexpectedly completed')
 
-    router.get('/api/artists').mock(side_effect=page)
+    router.get(path='/api/artists').mock(side_effect=page)
     items = client.iter_artists('test', batch_size=2)
     await anext(items)
     await anext(items)
     with pytest.raises(ExceptionGroup) as error:
         await asyncio.wait_for(anext(items), timeout=2)
-    assert any(isinstance(exception, ConnectError) for exception in error.value.exceptions)
+    assert any(isinstance(exception, ConnectionError) for exception in error.value.exceptions)
     assert sibling_cancelled.is_set()
+
+
+@pytest.mark.parametrize('client', ['sync'], indirect=True)
+def test_empty_page_with_remaining_results_is_rejected(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+    query: Query,
+) -> None:
+    assert isinstance(client, DBClient)
+    kind, _ = query
+    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(path=f'/api/{kind}')
+    route.respond(json={'count': 1, kind: []})
+    with pytest.raises(QueryError, match='empty page'):
+        _ = [*getattr(client, f'iter_{kind}')('test')]
+    assert route.call_count == 1

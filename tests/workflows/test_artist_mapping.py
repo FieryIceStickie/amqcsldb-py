@@ -1,14 +1,18 @@
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Sequence
 from typing import cast
+from urllib.parse import urlsplit
 
 import pytest
 from attrs import evolve
-from helpers import load
-from httpx import HTTPStatusError, Request, Response
-from respx import Route, Router
-from respx.models import Call
+from helpers import load, mock_response, query_params, request_body, request_url
+from niquests import HTTPError, Response
+from niquests import PreparedRequest as Request
+from niquests_mock import Call
+from niquests_mock import MockRoute as Route
+from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.clients.bundles._parallel import (
@@ -71,17 +75,17 @@ def track(*samples: dict[str, JSONType], track_id: str = 'test-track') -> CSLTra
 
 def mock_search(router: Router, samples: Sequence[dict[str, JSONType]]) -> Route:
     def search(req: Request) -> Response:
-        phrase = req.url.params['searchTerm']
+        phrase = query_params(req)['searchTerm']
         found = [a for a in samples if phrase == 'all' or phrase == a['name']]
-        skip, take = int(req.url.params['skip']), int(req.url.params['take'])
-        return Response(200, json={'count': len(found), 'artists': found[skip : skip + take]})
+        skip, take = int(query_params(req)['skip']), int(query_params(req)['take'])
+        return mock_response(200, json={'count': len(found), 'artists': found[skip : skip + take]})
 
-    return router.get('/api/artists').mock(side_effect=search)
+    return router.get(path='/api/artists').mock(side_effect=search)
 
 
 def mock_metadata(router: Router, extra: Sequence[dict[str, JSONType]] = ()) -> Route:
     if extra:
-        response = Response(
+        response = mock_response(
             200,
             json={
                 'override': False,
@@ -92,8 +96,10 @@ def mock_metadata(router: Router, extra: Sequence[dict[str, JSONType]] = ()) -> 
             },
         )
     else:
-        response = Response(404, json={'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}})
-    return router.get(url__regex=r'/api/track/[^/]+/metadata') % response
+        response = mock_response(
+            404, json={'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}}
+        )
+    return router.get(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=response)
 
 
 async def finish[T](result: T | Awaitable[T]) -> T:
@@ -107,9 +113,11 @@ async def test_infer_group_and_cache(
     a, b, g = artist('Alice'), artist('Bob'), artist('Group', group=True)
     irrelevant = artist('Irrelevant')
     search = mock_search(router, [a, b, g])
-    get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, [a, b, a], [irrelevant]))
+    get_group = router.get(path='/api/artist/Group').mock(
+        return_value=mock_response(200, json=group_details(g, [a, b, a], [irrelevant]))
+    )
     mock_metadata(router)
-    add = router.post(url__regex=r'/api/track/[^/]+/metadata') % Response(200)
+    add = router.post(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=mock_response(200))
     mapping = await finish(cm.make_artist_to_meta(client, {'a': 'A', 'b': 'B'}, {'Alice': 'a', 'Bob': 'b'}, ['all']))
     assert len(mapping.metadata) == 2  # Discovered groups are not inferred until credited.
     assert search.call_count == 1
@@ -124,7 +132,7 @@ async def test_infer_group_and_cache(
     await finish(client.commit())
     assert add.call_count == 2
     for call in cast(Sequence[Call], add.calls):
-        assert {meta['value'] for meta in json.loads(call.request.content)['extraMetadatas']} == {'A', 'B'}
+        assert {meta['value'] for meta in json.loads(request_body(call.request))['extraMetadatas']} == {'A', 'B'}
 
 
 async def test_explicit_group_overrides_members(
@@ -133,7 +141,7 @@ async def test_explicit_group_overrides_members(
 ) -> None:
     g = artist('Group', group=True)
     mock_search(router, [g])
-    get_group = router.get('/api/artist/Group') % Response(500)
+    get_group = router.get(path='/api/artist/Group').mock(return_value=mock_response(500))
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Group': 'Override'}, ['all']))
     await finish(mapping.apply(track(g)))
@@ -148,7 +156,9 @@ async def test_callback_collates_failures_and_caches_exclusions(
     a, b, c = artist('Alice'), artist('Bob'), artist('Carol')
     g, unknown = artist('Group', group=True), artist('Unknown')
     mock_search(router, [a])
-    get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, [a, b, c]))
+    get_group = router.get(path='/api/artist/Group').mock(
+        return_value=mock_response(200, json=group_details(g, [a, b, c]))
+    )
     mock_metadata(router)
     calls: list[tuple[CSLTrack, Sequence[cm.Reason]]] = []
 
@@ -195,8 +205,12 @@ async def test_empty_groups_report_the_credited_group(
     members: list[dict[str, JSONType]],
 ) -> None:
     g = artist('Group', group=True)
-    get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, members))
-    nested = router.get('/api/artist/Nested') % Response(200, json=group_details(artist('Nested', group=True), []))
+    get_group = router.get(path='/api/artist/Group').mock(
+        return_value=mock_response(200, json=group_details(g, members))
+    )
+    nested = router.get(path='/api/artist/Nested').mock(
+        return_value=mock_response(200, json=group_details(artist('Nested', group=True), []))
+    )
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {}))
     failures: list[cm.Reason] = []
@@ -220,8 +234,8 @@ async def test_nested_group_with_explicit_metadata(
 ) -> None:
     nested, g = artist('Nested', group=True), artist('Group', group=True)
     mock_search(router, [nested])
-    _ = router.get('/api/artist/Group') % Response(200, json=group_details(g, [nested]))
-    nested_query = router.get('/api/artist/Nested') % Response(500)
+    _ = router.get(path='/api/artist/Group').mock(return_value=mock_response(200, json=group_details(g, [nested])))
+    nested_query = router.get(path='/api/artist/Nested').mock(return_value=mock_response(500))
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Nested': 'Character'}))
     await finish(mapping.apply(track(g)))
@@ -237,11 +251,13 @@ async def test_recursive_groups_share_members_and_cache_all_levels(
     root, left, right, shared = [artist(name, group=True) for name in ('Root', 'Left', 'Right', 'Shared')]
     mock_search(router, [a, b])
     queries = [
-        router.get(f'/api/artist/{sample["id"]}') % Response(200, json=group_details(sample, members))
+        router.get(path=f'/api/artist/{sample["id"]}').mock(
+            return_value=mock_response(200, json=group_details(sample, members))
+        )
         for sample, members in [(root, [left, right]), (left, [a, shared]), (right, [shared, b]), (shared, [b, a])]
     ]
     mock_metadata(router)
-    add = router.post(url__regex=r'/api/track/[^/]+/metadata') % Response(200)
+    add = router.post(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=mock_response(200))
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A', 'Bob': 'B'}))
     for idx, sample in enumerate([root, shared, left, right, root]):
         await finish(mapping.apply(track(sample, track_id=str(idx)), lambda _t, _r: pytest.fail('Unexpected failure')))
@@ -254,7 +270,7 @@ async def test_recursive_groups_share_members_and_cache_all_levels(
     await finish(client.commit())
     assert add.call_count == 5
     for call in cast(Sequence[Call], add.calls):
-        assert {meta['value'] for meta in json.loads(call.request.content)['extraMetadatas']} == {'A', 'B'}
+        assert {meta['value'] for meta in json.loads(request_body(call.request))['extraMetadatas']} == {'A', 'B'}
 
 
 async def test_recursive_missing_members_are_collated_for_the_credited_group(
@@ -265,9 +281,11 @@ async def test_recursive_missing_members_are_collated_for_the_credited_group(
     root, left, right = [artist(name, group=True) for name in ('Root', 'Left', 'Right')]
     mock_search(router, [a])
     for sample, members in [(root, [left, right]), (left, [a, missing]), (right, [missing, other])]:
-        _ = router.get(f'/api/artist/{sample["id"]}') % Response(200, json=group_details(sample, members))
+        _ = router.get(path=f'/api/artist/{sample["id"]}').mock(
+            return_value=mock_response(200, json=group_details(sample, members))
+        )
     mock_metadata(router)
-    add = router.post('/api/track/test-track/metadata') % Response(200)
+    add = router.post('/api/track/test-track/metadata').mock(return_value=mock_response(200))
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
     failures: list[cm.Reason] = []
 
@@ -283,7 +301,7 @@ async def test_recursive_missing_members_are_collated_for_the_credited_group(
     assert len(mapping.metadata) == 1
     assert mapping.excluded_artists == {'Root'}
     await finish(client.commit())
-    assert json.loads(cast(Call, add.calls[0]).request.content)['extraMetadatas'] == [
+    assert json.loads(request_body(add.calls[0].request))['extraMetadatas'] == [
         {'isArtist': True, 'type': 'Character', 'value': 'A'},
     ]
 
@@ -296,10 +314,12 @@ async def test_recursive_group_cycles_are_incomplete(
 ) -> None:
     root, nested, a = artist('Root', group=True), artist('Nested', group=True), artist('Alice')
     mock_search(router, [a])
-    root_query = router.get('/api/artist/Root') % Response(
-        200, json=group_details(root, [nested if mutual else root, a])
+    root_query = router.get(path='/api/artist/Root').mock(
+        return_value=mock_response(200, json=group_details(root, [nested if mutual else root, a]))
     )
-    nested_query = router.get('/api/artist/Nested') % Response(200, json=group_details(nested, [root]))
+    nested_query = router.get(path='/api/artist/Nested').mock(
+        return_value=mock_response(200, json=group_details(nested, [root]))
+    )
     metadata = mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
     failures: list[cm.Reason] = []
@@ -326,8 +346,10 @@ async def test_nested_explicit_metadata_or_exclusion_stops_cycle_traversal(
 ) -> None:
     root, nested, a = artist('Root', group=True), artist('Nested', group=True), artist('Alice')
     mock_search(router, [nested, a])
-    _ = router.get('/api/artist/Root') % Response(200, json=group_details(root, [nested, a]))
-    nested_query = router.get('/api/artist/Nested') % Response(200, json=group_details(nested, [root]))
+    _ = router.get(path='/api/artist/Root').mock(return_value=mock_response(200, json=group_details(root, [nested, a])))
+    nested_query = router.get(path='/api/artist/Nested').mock(
+        return_value=mock_response(200, json=group_details(nested, [root]))
+    )
     mock_metadata(router)
     mapping = await finish(
         cm.compact_make_artist_to_meta(
@@ -352,20 +374,22 @@ async def test_nested_group_requests_run_in_parallel(
     root, left, right = [artist(name, group=True) for name in ('Root', 'Left', 'Right')]
     a = artist('Alice')
     mock_search(router, [a])
-    _ = router.get('/api/artist/Root') % Response(200, json=group_details(root, [left, right]))
+    _ = router.get(path='/api/artist/Root').mock(
+        return_value=mock_response(200, json=group_details(root, [left, right]))
+    )
     arrived: set[str] = set()
     both_started = asyncio.Event()
 
     async def get_nested(req: Request) -> Response:
-        group_id = req.url.path.rsplit('/', 1)[-1]
+        group_id = urlsplit(request_url(req)).path.rsplit('/', 1)[-1]
         arrived.add(group_id)
         if len(arrived) == 2:
             both_started.set()
         await asyncio.wait_for(both_started.wait(), timeout=2)
         sample = left if group_id == 'Left' else right
-        return Response(200, json=group_details(sample, [a]))
+        return mock_response(200, json=group_details(sample, [a]))
 
-    router.get(url__regex=r'/api/artist/(Left|Right)').mock(side_effect=get_nested)
+    router.get(url=re.compile(r'/api/artist/(Left|Right)')).mock(side_effect=get_nested)
     mock_metadata(router)
     mapping = await cm.compact_make_artist_to_meta(client, {'Alice': 'A'})
     await mapping.apply(track(root))
@@ -379,11 +403,11 @@ async def test_nested_group_query_failure_leaves_mapping_and_queue_unchanged(
 ) -> None:
     root, nested, a = artist('Root', group=True), artist('Nested', group=True), artist('Alice')
     mock_search(router, [a])
-    _ = router.get('/api/artist/Root') % Response(200, json=group_details(root, [a, nested]))
-    nested_query = router.get('/api/artist/Nested') % Response(500)
+    _ = router.get(path='/api/artist/Root').mock(return_value=mock_response(200, json=group_details(root, [a, nested])))
+    nested_query = router.get(path='/api/artist/Nested').mock(return_value=mock_response(500))
     metadata = mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
-    with pytest.raises(HTTPStatusError):
+    with pytest.raises(HTTPError):
         await finish(mapping.apply(track(root), lambda _t, _r: pytest.fail('Query failure called the callback')))
     assert nested_query.called and not metadata.called
     assert len(mapping.metadata) == 1 and not mapping.excluded_artists and not client.queue
@@ -401,10 +425,10 @@ async def test_exclusion_keeps_additions_and_all_stale_deletions(
         {'id': 'unrelated', 'type': 1, 'key': 'Language', 'value': 'Japanese'},
     ]
     mock_metadata(router, extra)
-    add = router.post('/api/track/test-track/metadata') % Response(200)
-    delete1 = router.delete('/api/track/test-track/metadata/stale1') % Response(200)
-    delete2 = router.delete('/api/track/test-track/metadata/stale2') % Response(200)
-    unrelated = router.delete('/api/track/test-track/metadata/unrelated') % Response(500)
+    add = router.post('/api/track/test-track/metadata').mock(return_value=mock_response(200))
+    delete1 = router.delete('/api/track/test-track/metadata/stale1').mock(return_value=mock_response(200))
+    delete2 = router.delete('/api/track/test-track/metadata/stale2').mock(return_value=mock_response(200))
+    unrelated = router.delete('/api/track/test-track/metadata/unrelated').mock(return_value=mock_response(500))
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'New'}))
     await finish(mapping.apply(track(a, unknown), lambda _track, _reasons: cm.ExcludeDecision.EXCLUDE))
     assert len(client.queue) == 1
@@ -423,7 +447,7 @@ async def test_only_deletions_and_no_changes(
     a, unknown = artist('Alice'), artist('Unknown')
     mock_search(router, [a])
     mock_metadata(router, [{'id': 'stale', 'type': 2, 'key': 'Character', 'value': 'Old'}])
-    delete = router.delete('/api/track/test-track/metadata/stale') % Response(200)
+    delete = router.delete('/api/track/test-track/metadata/stale').mock(return_value=mock_response(200))
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'Old'}))
     await finish(mapping.apply(track(a)))
     assert not client.queue
@@ -442,7 +466,7 @@ async def test_non_vocal_tracks_skip_queries_and_callback(
 ) -> None:
     mapping = await finish(cm.compact_make_artist_to_meta(client, {}))
     get_meta = mock_metadata(router)
-    get_group = router.get('/api/artist/Group') % Response(500)
+    get_group = router.get(path='/api/artist/Group').mock(return_value=mock_response(500))
     t = evolve(track(artist('Unknown'), artist('Group', group=True)), type_id=type_id)
     await finish(mapping.apply(t, lambda _track, _reasons: pytest.fail('Skipped track called the callback')))
     assert not get_meta.called and not get_group.called and not client.queue
@@ -501,13 +525,13 @@ async def test_global_searches_run_in_parallel(
     both_started = asyncio.Event()
 
     async def search(req: Request) -> Response:
-        arrived.add(req.url.params['searchTerm'])
+        arrived.add(query_params(req)['searchTerm'])
         if len(arrived) == 2:
             both_started.set()
         await asyncio.wait_for(both_started.wait(), timeout=2)
-        return Response(200, json={'artists': [], 'count': 0})
+        return mock_response(200, json={'artists': [], 'count': 0})
 
-    route = router.get('/api/artists').mock(side_effect=search)
+    route = router.get(path='/api/artists').mock(side_effect=search)
     mapping = await cm.compact_make_artist_to_meta(client, {}, ['one', 'two', 'one'])
     assert not mapping.metadata
     assert route.call_count == 2
@@ -537,8 +561,12 @@ async def test_cached_group_can_be_used_as_member_without_refetching(
 ) -> None:
     a, nested, parent = artist('Alice'), artist('Nested', group=True), artist('Parent', group=True)
     mock_search(router, [a])
-    nested_query = router.get('/api/artist/Nested') % Response(200, json=group_details(nested, [a]))
-    parent_query = router.get('/api/artist/Parent') % Response(200, json=group_details(parent, [nested]))
+    nested_query = router.get(path='/api/artist/Nested').mock(
+        return_value=mock_response(200, json=group_details(nested, [a]))
+    )
+    parent_query = router.get(path='/api/artist/Parent').mock(
+        return_value=mock_response(200, json=group_details(parent, [nested]))
+    )
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
     await finish(mapping.apply(track(nested)))
@@ -553,7 +581,7 @@ async def test_full_artist_credit_uses_existing_group_details(
 ) -> None:
     a, g = artist('Alice'), artist('Group', group=True)
     mock_search(router, [a])
-    get_group = router.get('/api/artist/Group') % Response(500)
+    get_group = router.get(path='/api/artist/Group').mock(return_value=mock_response(500))
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
     t = track(g)
@@ -575,14 +603,14 @@ async def test_group_queries_for_one_track_run_in_parallel(
     both_started = asyncio.Event()
 
     async def get_group(req: Request) -> Response:
-        name = req.url.path.rsplit('/', 1)[-1]
+        name = urlsplit(request_url(req)).path.rsplit('/', 1)[-1]
         arrived.add(name)
         if len(arrived) == 2:
             both_started.set()
         await asyncio.wait_for(both_started.wait(), timeout=2)
-        return Response(200, json=group_details(g if name == 'Group' else h, [a]))
+        return mock_response(200, json=group_details(g if name == 'Group' else h, [a]))
 
-    router.get(url__regex=r'/api/artist/[^/]+').mock(side_effect=get_group)
+    router.get(url=re.compile(r'/api/artist/[^/]+')).mock(side_effect=get_group)
     mock_metadata(router)
     mapping = await cm.compact_make_artist_to_meta(client, {'Alice': 'A'})
     await mapping.apply(track(g, h))
@@ -597,8 +625,10 @@ async def test_metadata_bundle_handles_multiple_adds_deletes_and_noop(
     from amqcsl.objects import CSLExtraMetadata, ExtraMetadata
 
     t = track(artist('Alice'))
-    add = router.post('/api/track/test-track/metadata') % Response(200)
-    deletes = [router.delete(f'/api/track/test-track/metadata/{i}') % Response(200) for i in range(2)]
+    add = router.post('/api/track/test-track/metadata').mock(return_value=mock_response(200))
+    deletes = [
+        router.delete(f'/api/track/test-track/metadata/{i}').mock(return_value=mock_response(200)) for i in range(2)
+    ]
     bundles = [
         TrackAddMetadataBundle(t, []),
         TrackAddMetadataBundle(t, [ExtraMetadata(True, 'Character', 'A')]),
@@ -676,7 +706,7 @@ async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
     a, excluded = artist('Alice'), artist('Ignored')
     search = mock_search(router, [a, excluded])
     mock_metadata(router)
-    add = router.post(url__regex=r'/api/track/[^/]+/metadata') % Response(200)
+    add = router.post(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=mock_response(200))
     phrases = ['all'] if global_search else []
     definitions: cm.ArtistDict = {'Alice': 'A', 'Ignored': 'IgnoredCharacter'}
     if factory == 'compact':
@@ -702,7 +732,7 @@ async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
     await finish(client.commit())
     assert add.call_count == 2
     for call in cast(Sequence[Call], add.calls):
-        assert [meta['value'] for meta in json.loads(call.request.content)['extraMetadatas']] == ['A']
+        assert [meta['value'] for meta in json.loads(request_body(call.request))['extraMetadatas']] == ['A']
 
 
 @pytest.mark.parametrize('key_kind', ['name', 'tuple', 'artist_name'])
@@ -715,9 +745,9 @@ async def test_exclude_only_mapping_resolves_names_and_skips_groups(
     other = artist('Group', group=True, disambiguation='two')
     samples = [g] if key_kind == 'name' else [g, other]
     mock_search(router, samples)
-    group_query = router.get(url__regex=r'/api/artist/[^/]+') % Response(500)
+    group_query = router.get(url=re.compile(r'/api/artist/[^/]+')).mock(return_value=mock_response(500))
     mock_metadata(router, [{'id': 'stale', 'type': 2, 'key': 'Character', 'value': 'Old'}])
-    delete = router.delete('/api/track/test-track/metadata/stale') % Response(200)
+    delete = router.delete('/api/track/test-track/metadata/stale').mock(return_value=mock_response(200))
     keys: dict[str, cm.ArtistKey] = {
         'name': 'Group',
         'tuple': ('Group', 'one'),
@@ -742,8 +772,12 @@ async def test_group_members_respect_initial_and_callback_exclusions(
     a, excluded, g = artist('Alice'), artist('Ignored', group=True), artist('Group', group=True)
     mock_search(router, [a, excluded])
     members = [excluded] if all_excluded else [a, excluded]
-    get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, members))
-    nested = router.get('/api/artist/Ignored') % Response(200, json=group_details(excluded, []))
+    get_group = router.get(path='/api/artist/Group').mock(
+        return_value=mock_response(200, json=group_details(g, members))
+    )
+    nested = router.get(path='/api/artist/Ignored').mock(
+        return_value=mock_response(200, json=group_details(excluded, []))
+    )
     mock_metadata(router)
     mapping = await finish(
         cm.compact_make_artist_to_meta(client, {'Alice': 'A'}, exclude=['Ignored'] if initial else [])
@@ -790,10 +824,12 @@ async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
     a, unknown, g, missing = artist('Alice'), artist('Unknown'), artist('Group', group=True), artist('Missing')
     excluded = artist('Already excluded')
     mock_search(router, [a, excluded])
-    get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, [missing]))
+    get_group = router.get(path='/api/artist/Group').mock(
+        return_value=mock_response(200, json=group_details(g, [missing]))
+    )
     mock_metadata(router)
-    untouched = router.get(url__regex=r'/api/track/ignored-[^/]+/metadata') % Response(500)
-    add = router.post(url__regex=r'/api/track/[^/]+/metadata') % Response(200)
+    untouched = router.get(url=re.compile(r'/api/track/ignored-[^/]+/metadata')).mock(return_value=mock_response(500))
+    add = router.post(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=mock_response(200))
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}, exclude=['Already excluded']))
     await finish(mapping.apply(track(a, track_id='before')))
     queued = [*client.queue]
@@ -817,7 +853,7 @@ async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
     await finish(mapping.apply(track(a, track_id='after')))
     await finish(client.commit())
     assert add.call_count == 2
-    assert {call.request.url.path for call in cast(Sequence[Call], add.calls)} == {
+    assert {urlsplit(request_url(call.request)).path for call in cast(Sequence[Call], add.calls)} == {
         '/api/track/before/metadata',
         '/api/track/after/metadata',
     }
@@ -845,20 +881,22 @@ async def test_track_application_requests_overlap_without_duplicate_exclusion_de
         await asyncio.wait_for(both_started.wait(), timeout=2)
 
     async def get_group(req: Request) -> Response:
-        group_id = req.url.path.rsplit('/', 1)[-1]
+        group_id = urlsplit(request_url(req)).path.rsplit('/', 1)[-1]
         if request_kind == 'groups':
             await wait_for_both(group_id)
         group = next(sample for sample in groups if sample['id'] == group_id)
-        return Response(200, json=group_details(group, [a]))
+        return mock_response(200, json=group_details(group, [a]))
 
     async def get_metadata(req: Request) -> Response:
         if request_kind == 'metadata':
-            await wait_for_both(req.url.path)
-        return Response(404, json={'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}})
+            await wait_for_both(urlsplit(request_url(req)).path)
+        return mock_response(
+            404, json={'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}}
+        )
 
-    router.get(url__regex=r'/api/artist/[^/]+').mock(side_effect=get_group)
-    router.get(url__regex=r'/api/track/[^/]+/metadata').mock(side_effect=get_metadata)
-    add = router.post(url__regex=r'/api/track/[^/]+/metadata') % Response(200)
+    router.get(url=re.compile(r'/api/artist/[^/]+')).mock(side_effect=get_group)
+    router.get(url=re.compile(r'/api/track/[^/]+/metadata')).mock(side_effect=get_metadata)
+    add = router.post(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=mock_response(200))
     mapping = await cm.compact_make_artist_to_meta(client, {'Alice': 'A'})
     failures: list[cm.Reason] = []
 
@@ -911,9 +949,9 @@ async def test_concurrent_group_fetches_recheck_cached_exclusions(
         if started == 2:
             both_started.set()
         await asyncio.wait_for(both_started.wait(), timeout=2)
-        return Response(200, json=group_details(g, [missing]))
+        return mock_response(200, json=group_details(g, [missing]))
 
-    router.get('/api/artist/Group').mock(side_effect=get_group)
+    router.get(path='/api/artist/Group').mock(side_effect=get_group)
     mock_metadata(router)
     mapping = await cm.compact_make_artist_to_meta(client, {'Alice': 'A'})
     failures: list[cm.Reason] = []

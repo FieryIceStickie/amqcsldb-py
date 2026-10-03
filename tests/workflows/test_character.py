@@ -1,11 +1,13 @@
 import json
+import re
 from collections.abc import Sequence
 
 import pytest
 from attrs import define, field
-from helpers import finish, load
-from httpx import Request, Response
-from respx import Route, Router
+from helpers import finish, json_fields, load, mock_response, query_params, request_body, request_url
+from niquests import PreparedRequest as Request
+from niquests_mock import MockRoute as Route
+from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.objects import CSLTrack
@@ -105,25 +107,30 @@ def aspire_fixture(router: Router) -> AspireFixture:
     _ = router.post(
         '/api/tracks',
         name='tracks',
-        json__searchTerm='Aspire',
-    ) % Response(200, json={'tracks': track_data, 'count': len(track_data)})
+        json=json_fields({'searchTerm': 'Aspire'}),
+    ).mock(return_value=mock_response(200, json={'tracks': track_data, 'count': len(track_data)}))
     _ = router.get(
         '/api/artists',
         name='artists',
         params={'searchTerm': 'Liella!'},
-    ) % Response(200, json={'artists': artist_data, 'count': len(artist_data)})
+    ).mock(return_value=mock_response(200, json={'artists': artist_data, 'count': len(artist_data)}))
     _ = router.get(
-        url__regex=r'/api/track/([\w-]+)/metadata',
+        url=re.compile(r'/api/track/([\w-]+)/metadata'),
         name='get_meta',
-    ) % Response(404, json={'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}})
-    route = router.post(url__regex=r'/api/track/(?P<track_id>[\w-]+)/metadata')
+    ).mock(
+        return_value=mock_response(
+            404, json={'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}}
+        )
+    )
+    route = router.post(url=re.compile(r'/api/track/(?P<track_id>[\w-]+)/metadata'))
     rtn = AspireFixture(route, len(track_data))
 
-    def side_effect(request: Request, track_id: str):
-        rtn.calls[track_id] = request.content
-        return Response(200)
+    def side_effect(request: Request):
+        track_id = request_url(request).split('/')[-2]
+        rtn.calls[track_id] = request_body(request)
+        return mock_response(200)
 
-    route.side_effect = side_effect
+    route.mock(side_effect=side_effect)
     return rtn
 
 
@@ -200,18 +207,19 @@ async def test_artist_to_meta(
     artist_data = load('superstar/liella')
 
     def artist_route(req: Request):
-        search_term = req.url.params['searchTerm']
+        search_term = query_params(req)['searchTerm']
         artists = [artist for artist in artist_data if search_term in artist['name']]
-        return Response(200, json={'artists': artists, 'count': len(artists)})
+        return mock_response(200, json={'artists': artists, 'count': len(artists)})
 
     liella_route = router.get(
         '/api/artists',
         name='artists_liella',
         params={'searchTerm': 'Liella!'},
-    ) % Response(200, json={'artists': artist_data, 'count': len(artist_data)})
+    ).mock(return_value=mock_response(200, json={'artists': artist_data, 'count': len(artist_data)}))
     route = router.get(
-        '/api/artists',
+        path='/api/artists',
         name='artists',
+        params={'searchTerm': re.compile(r'^(?!Liella!$)')},
     ).mock(side_effect=artist_route)
 
     artist_to_meta = await finish(cm.make_artist_to_meta(client, characters, artists))

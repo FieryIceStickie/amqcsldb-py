@@ -1,13 +1,14 @@
+import re
+
 # pyright: reportUnusedExpression=false
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
+import niquests_mock
 import pytest
 import pytest_asyncio
-import respx
-from helpers import load
-from httpx import Response
-from respx import Router, SetCookie
+from helpers import load, mock_response
+from niquests_mock import MockRouter as Router
 
 import amqcsl
 from amqcsl.clients._client_consts import DB_URL
@@ -43,7 +44,7 @@ def router(
     mock_id: str,
     cookies: Cookie,
 ) -> Iterator[Router]:
-    with respx.mock(base_url=DB_URL, assert_all_called=False) as router:
+    with niquests_mock.mock(base_url=DB_URL, assert_all_called=False) as router:
         add_login(router, username, password, mock_id, cookies)
         add_lists_and_groups(router)
         yield router
@@ -57,12 +58,17 @@ def add_login(
     cookies: Cookie,
 ) -> None:
     router.get(
-        '/api/auth/me',
+        path='/api/auth/me', name='auth_none', headers={'Cookie': re.compile(rf'^(?!session-id={re.escape(mock_id)}$)')}
+    ).respond(status_code=401)
+    router.get(
+        path='/api/auth/me',
         name='auth_you',
-        cookies=cookies,
-    ) % Response(
-        200,
-        json={'name': username, 'roles': ['ADMIN', 'USER']},
+        headers={'Cookie': f'session-id={cookies["session-id"]}'},
+    ).mock(
+        return_value=mock_response(
+            200,
+            json={'name': username, 'roles': ['ADMIN', 'USER']},
+        )
     )
     router.post(
         '/api/login',
@@ -71,25 +77,17 @@ def add_login(
             'username': username,
             'password': password,
         },
-    ) % Response(
-        200,
-        headers=[SetCookie('session-id', mock_id)],
-    )
+    ).respond(status_code=200, headers={'Set-Cookie': f'session-id={mock_id}; Path=/'})
     router.post(
         '/api/logout',
         name='logout_you',
-        cookies=cookies,
-    ) % Response(
-        200,
-        headers=[SetCookie('session-id', '')],
-    )
-
-    router.get('/api/auth/me', name='auth_none') % 401
+        headers={'Cookie': f'session-id={cookies["session-id"]}'},
+    ).respond(status_code=200, headers={'Set-Cookie': 'session-id=; Path=/'})
 
 
 def add_lists_and_groups(router: Router):
-    router.get('/api/lists', name='lists') % Response(200, json=load('lists'))
-    router.get('/api/groups', name='groups') % Response(200, json=load('groups'))
+    router.get(path='/api/lists', name='lists').mock(return_value=mock_response(200, json=load('lists')))
+    router.get(path='/api/groups', name='groups').mock(return_value=mock_response(200, json=load('groups')))
 
 
 @pytest_asyncio.fixture(params=['sync', 'async'])

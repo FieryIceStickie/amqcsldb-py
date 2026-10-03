@@ -4,12 +4,15 @@ from collections.abc import Sequence
 from functools import cached_property
 from pathlib import Path
 from typing import override
+from urllib.parse import urlsplit
 
-import httpx
+import niquests
 import rich.repr
 from attrs import Attribute, field, frozen
 from attrs.validators import gt, min_len, optional
 
+from amqcsl.clients._client_consts import DB_URL
+from amqcsl.clients._http_utils import AsyncMultipartUpload, MultipartUpload, build_request
 from amqcsl.exceptions import LoginError, QueryError
 from amqcsl.objects._db_types import (
     AlbumTrack,
@@ -33,7 +36,7 @@ from amqcsl.objects._db_types import (
 from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, SongMetadataPostBody, TrackPutBody
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
 
-from ._core import Bundle, SingleVendor, httpxClient, materialize
+from ._core import Bundle, SingleVendor, httpClient, materialize
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -62,11 +65,11 @@ class AuthBundle(Bundle[None]):
         except FileNotFoundError:
             return ''
 
-    def login(self, client: httpxClient) -> SingleVendor[None]:
+    def login(self, client: httpClient) -> SingleVendor[None]:
         """Attempt login, saves session_id to file if successful
 
         Args:
-            client: HTTPx client
+            client: HTTP session
 
         Raises:
             LoginError: If the username and password are invalid
@@ -77,16 +80,17 @@ class AuthBundle(Bundle[None]):
             'username': self.username,
             'password': self.password,
         }
-        res = yield client.build_request('POST', '/api/login', json=body)
+        res = yield build_request(client, 'POST', '/api/login', json=body)
         if res.status_code == 403:
             raise LoginError('Invalid login credentials')
+        res.raise_for_status()
         logger.info(f'Writing session_id to {self.session_path}')
         session_id = res.cookies['session-id']
         with open(self.session_path, 'w') as file:
             file.write(session_id)
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         """Verify that the user login info is correct and user has admin
 
         Raises:
@@ -94,31 +98,41 @@ class AuthBundle(Bundle[None]):
             RuntimeError: If login fails for an unexpected reason
         """
         session_cookie = self.get_session_cookie()
-        client.cookies.set('session-id', session_cookie)
-        res: httpx.Response | None = None
+        host = urlsplit(DB_URL).hostname
+        assert host is not None
+        client.cookies.set(  # type: ignore[reportUnknownMemberType]
+            'session-id',
+            session_cookie,
+            domain=host,
+            path='/',
+            secure=True,
+        )
+        res: niquests.Response | None = None
 
         try:
             is_valid_cookie = bool(session_cookie)
             if is_valid_cookie:
                 logger.info('Trying session cookie')
-                logger.debug('SESSION-ID', extra={'session-id': session_cookie})
-                res = yield client.build_request('GET', '/api/auth/me')
+                res = yield build_request(client, 'GET', '/api/auth/me')
                 is_valid_cookie = res.status_code != 401
 
             if not is_valid_cookie:
                 logger.info('Invalid session cookie, attempting login')
-                client.cookies.delete('session-id')
+                for cookie in [*client.cookies]:
+                    if cookie.name == 'session-id':
+                        client.cookies.clear(cookie.domain, cookie.path, cookie.name)
                 yield from self.login(client)
-                res = yield client.build_request('GET', '/api/auth/me')
+                res = yield build_request(client, 'GET', '/api/auth/me')
 
             if res is None:
                 raise RuntimeError('Unexpected branch')
             res.raise_for_status()
-        except httpx.RequestError:
-            logger.exception('Bad request during auth')
+        except niquests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 'unknown'
+            logger.exception(f'Bad response during auth: {status}')
             raise
-        except httpx.HTTPStatusError as e:
-            logger.exception(f'Bad response during auth: {e.response.status_code}')
+        except niquests.exceptions.RequestException:
+            logger.exception('Bad request during auth')
             raise
         except LoginError:
             logger.exception(f'Error during login of user {self.username}')
@@ -142,9 +156,9 @@ class LogoutBundle(Bundle[None]):
     session_path: Path
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info('Logging out the client')
-        res = yield client.build_request('POST', '/api/logout')
+        res = yield build_request(client, 'POST', '/api/logout')
         res.raise_for_status()
 
         logger.info('Logout successful')
@@ -162,9 +176,9 @@ type CSLLists = dict[str, CSLList]
 @frozen
 class ListBundle(Bundle[CSLLists]):
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[CSLLists]:
+    def vendor(self, client: httpClient) -> SingleVendor[CSLLists]:
         logger.info('Fetching lists')
-        res = yield client.build_request('GET', '/api/lists')
+        res = yield build_request(client, 'GET', '/api/lists')
         res.raise_for_status()
         rtn: CSLLists = {}
         for data in res.json():
@@ -184,9 +198,9 @@ type CSLGroups = dict[str, CSLGroup]
 @frozen
 class GroupBundle(Bundle[CSLGroups]):
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[CSLGroups]:
+    def vendor(self, client: httpClient) -> SingleVendor[CSLGroups]:
         logger.info('Fetching groups')
-        res = yield client.build_request('GET', '/api/groups')
+        res = yield build_request(client, 'GET', '/api/groups')
         res.raise_for_status()
         rtn: CSLGroups = {}
         for data in res.json():
@@ -205,12 +219,12 @@ class GetSongBundle(Bundle[CSLSong]):
     song: CSLSongSample
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[CSLSong]:
+    def vendor(self, client: httpClient) -> SingleVendor[CSLSong]:
         song = self.song
         if isinstance(song, CSLSong):
             logger.warning(f'client.get_song called with already filled CSLSong {song.name}')
             return song
-        res = yield client.build_request('GET', f'/api/song/{song.id}')
+        res = yield build_request(client, 'GET', f'/api/song/{song.id}')
         res.raise_for_status()
         return CSLSong.from_json(res.json())
 
@@ -224,12 +238,12 @@ class GetArtistBundle(Bundle[CSLArtist]):
     artist: CSLArtistSample
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[CSLArtist]:
+    def vendor(self, client: httpClient) -> SingleVendor[CSLArtist]:
         artist = self.artist
         if isinstance(artist, CSLArtist):
             logger.warning(f'client.get_artist called with already filled CSLArtist {artist.name}')
             return artist
-        res = yield client.build_request('GET', f'/api/artist/{artist.id}')
+        res = yield build_request(client, 'GET', f'/api/artist/{artist.id}')
         res.raise_for_status()
         return CSLArtist.from_json(res.json())
 
@@ -243,14 +257,21 @@ class GetMetadataBundle(Bundle[CSLMetadata | None]):
     track: CSLTrack
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[CSLMetadata | None]:
-        res = yield client.build_request('GET', f'/api/track/{self.track.id}/metadata')
-        match res.json():
-            case {'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}}:
-                return None
-            case _:
+    def vendor(self, client: httpClient) -> SingleVendor[CSLMetadata | None]:
+        res = yield build_request(client, 'GET', f'/api/track/{self.track.id}/metadata')
+        if res.status_code == 404:
+            try:
+                data = res.json()
+            except ValueError:
                 res.raise_for_status()
-                return CSLMetadata.from_json(res.json())
+                raise
+            match data:
+                case {'statusCode': 404, 'errors': {'generalErrors': ['Song does not have metadata']}}:
+                    return None
+                case _:
+                    pass
+        res.raise_for_status()
+        return CSLMetadata.from_json(res.json())
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -263,13 +284,13 @@ class CreateListBundle(Bundle[None]):
     csl_lists: list[CSLList] = field(factory=list[CSLList], converter=materialize)
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Creating list {self.name}')
         body = {
             'importListIds': [csl_list.id for csl_list in self.csl_lists],
             'name': self.name,
         }
-        res = yield client.build_request('POST', '/api/list', json=body)
+        res = yield build_request(client, 'POST', '/api/list', json=body)
         res.raise_for_status()
         logger.info(f'List {self.name} created')
 
@@ -287,7 +308,7 @@ class ListEditBundle(Bundle[None]):
     remove: list[CSLTrackRef] = field(factory=list[CSLTrackRef], converter=materialize)
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         csl_list = self.csl_list
         logger.info(f'Editing list {csl_list.name}')
         body = {
@@ -296,7 +317,7 @@ class ListEditBundle(Bundle[None]):
             'name': self.name,
             'removeSongIds': [track.id for track in self.remove],
         }
-        res = yield client.build_request('PUT', f'/api/list/{csl_list.id}', json=body)
+        res = yield build_request(client, 'PUT', f'/api/list/{csl_list.id}', json=body)
         res.raise_for_status()
 
     @override
@@ -310,10 +331,10 @@ class ListDeleteBundle(Bundle[None]):
     csl_list: CSLList
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         csl_list = self.csl_list
         logger.info(f'Deleting list {csl_list.name}')
-        res = yield client.build_request('DELETE', f'/api/list/{csl_list.id}')
+        res = yield build_request(client, 'DELETE', f'/api/list/{csl_list.id}')
         res.raise_for_status()
 
     @override
@@ -326,9 +347,9 @@ class CreateGroupBundle(Bundle[CSLGroup]):
     name: str = field(validator=min_len(1))
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[CSLGroup]:
+    def vendor(self, client: httpClient) -> SingleVendor[CSLGroup]:
         logger.info(f'Adding group {self.name}')
-        res = yield client.build_request('POST', '/api/group', json={'name': self.name})
+        res = yield build_request(client, 'POST', '/api/group', json={'name': self.name})
         res.raise_for_status()
         return CSLGroup.from_json(res.json())
 
@@ -343,13 +364,13 @@ class GroupEditBundle(Bundle[None]):
     name: str = field(validator=min_len(1))
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Editing group {self.group.name}')
         body = {
             'id': EMPTY_ID,
             'name': self.name,
         }
-        res = yield client.build_request('PUT', f'/api/group/{self.group.id}', json=body)
+        res = yield build_request(client, 'PUT', f'/api/group/{self.group.id}', json=body)
         res.raise_for_status()
 
     @override
@@ -363,9 +384,9 @@ class GroupDeleteBundle(Bundle[None]):
     group: CSLGroup
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Deleting group {self.group.name}')
-        res = yield client.build_request('DELETE', f'/api/group/{self.group.id}')
+        res = yield build_request(client, 'DELETE', f'/api/group/{self.group.id}')
         res.raise_for_status()
 
     @override
@@ -380,14 +401,14 @@ class SongEditBundle(Bundle[None]):
     disambiguation: str | None
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Editing song {self.song.name}')
         body = {
             'id': EMPTY_ID,
-            'name': self.name if self.name else self.song.name,
-            'disambiguation': self.disambiguation if self.disambiguation else self.song.disambiguation,
+            'name': self.song.name if self.name is None else self.name,
+            'disambiguation': self.song.disambiguation if self.disambiguation is None else self.disambiguation,
         }
-        res = yield client.build_request('PUT', f'/api/song/{self.song.id}', json=body)
+        res = yield build_request(client, 'PUT', f'/api/song/{self.song.id}', json=body)
         res.raise_for_status()
 
     @override
@@ -402,9 +423,9 @@ class SongDeleteBundle(Bundle[None]):
     song: CSLSong
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Deleting song {self.song.name}')
-        res = yield client.build_request('DELETE', f'/api/song/{self.song.id}')
+        res = yield build_request(client, 'DELETE', f'/api/song/{self.song.id}')
         res.raise_for_status()
 
     @override
@@ -430,7 +451,7 @@ class SongAddMetadataBundle(Bundle[None]):
         return artist_credits, extra_metadata
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Queuing metadata edit on {self.song.name}')
         artist_credits, extra_metadata = self.filtered_metas
         body: SongMetadataPostBody = {
@@ -438,7 +459,7 @@ class SongAddMetadataBundle(Bundle[None]):
             'artistCredits': [meta.to_json() for meta in artist_credits],
             'extraMetadatas': [meta.to_json() for meta in extra_metadata],
         }
-        res = yield client.build_request('POST', f'/api/song/{self.song.id}', json=body)
+        res = yield build_request(client, 'POST', f'/api/song/{self.song.id}', json=body)
         res.raise_for_status()
 
     @override
@@ -455,9 +476,9 @@ class SongDeleteMetadataBundle(Bundle[None]):
     meta: CSLSongArtistCredit | CSLExtraMetadata
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Removing metadata {self.meta} from song {self.song.name}')
-        res = yield client.build_request('DELETE', f'/api/song/{self.song.id}/metadata/{self.meta.id}')
+        res = yield build_request(client, 'DELETE', f'/api/song/{self.song.id}/metadata/{self.meta.id}')
         res.raise_for_status()
 
     @override
@@ -504,7 +525,7 @@ class TrackAddMetadataBundle(Bundle[None]):
         return len(artist_credits) + len(extra_metadata)
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         track = self.track
         logger.info(f'Queuing metadata edit on {track.name}')
 
@@ -518,7 +539,7 @@ class TrackAddMetadataBundle(Bundle[None]):
             'id': EMPTY_ID,
             'override': self._override,
         }
-        res = yield client.build_request('POST', f'/api/track/{track.id}/metadata', json=body)
+        res = yield build_request(client, 'POST', f'/api/track/{track.id}/metadata', json=body)
         res.raise_for_status()
 
     @override
@@ -536,9 +557,9 @@ class TrackDeleteMetadataBundle(Bundle[None]):
     meta: CSLSongArtistCredit | CSLExtraMetadata
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Removing metadata {self.meta} from track {self.track.name}')
-        res = yield client.build_request('DELETE', f'/api/track/{self.track.id}/metadata/{self.meta.id}')
+        res = yield build_request(client, 'DELETE', f'/api/track/{self.track.id}/metadata/{self.meta.id}')
         res.raise_for_status()
 
     @override
@@ -559,7 +580,7 @@ class TrackEditBundle(Bundle[None]):
     type: TrackType | None = None
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         track = self.track
         logger.info(f'Editing track {track.name}')
 
@@ -584,7 +605,7 @@ class TrackEditBundle(Bundle[None]):
                 body['songId'] = self.song.id
             case None:
                 pass
-        res = yield client.build_request('PUT', f'/api/track/{track.id}', json=body)
+        res = yield build_request(client, 'PUT', f'/api/track/{track.id}', json=body)
         res.raise_for_status()
 
     @override
@@ -608,7 +629,7 @@ class CreateAlbumBundle(Bundle[None]):
     tracks: Sequence[Sequence[AlbumTrack]]
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         name = self.name
         logger.info(f'Adding album {name}')
         body: AlbumAddBody = {
@@ -623,7 +644,7 @@ class CreateAlbumBundle(Bundle[None]):
                 for track_number, track in enumerate(disc, start=1)
             ],
         }
-        res = yield client.build_request('POST', '/api/album', json=body)
+        res = yield build_request(client, 'POST', '/api/album', json=body)
         res.raise_for_status()
 
     @override
@@ -655,10 +676,10 @@ class AddAudioBundle(Bundle[None]):
         return mime_type
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         track = self.track
         logger.info(f'Uploading audio to {track.name}')
-        res = yield client.build_request('POST', f'/api/track/{track.id}/presigned-upload', json={})
+        res = yield build_request(client, 'POST', f'/api/track/{track.id}/presigned-upload', json={})
         res.raise_for_status()
         match res.json():
             case {
@@ -672,13 +693,14 @@ class AddAudioBundle(Bundle[None]):
                     f'Presigning upload of {self.track.name} returned unknown json', extra={'return_json': res.json()}
                 )
                 raise QueryError('Received unknown json when presigning upload')
-        with open(self.audio_path, 'rb') as file:
-            res = yield client.build_request(
-                'POST',
-                url,
-                params={'sessionId': session_id, 'key': key},
-                files={'file': (self.audio_path.name, file, self.mime_type)},
-            )
+        upload_type = AsyncMultipartUpload if isinstance(client, niquests.AsyncSession) else MultipartUpload
+        res = yield build_request(
+            client,
+            'POST',
+            url,
+            params={'sessionId': session_id, 'key': key},
+            upload=upload_type(self.audio_path, self.mime_type),
+        )
         res.raise_for_status()
 
     @override
@@ -693,10 +715,11 @@ class ImportAudioBundle(Bundle[None]):
     track_to_import_from: CSLTrack
 
     @override
-    def vendor(self, client: httpxClient) -> SingleVendor[None]:
+    def vendor(self, client: httpClient) -> SingleVendor[None]:
         track = self.track
         logger.info(f'Importing audio of {track.name}')
-        res = yield client.build_request(
+        res = yield build_request(
+            client,
             'POST',
             f'/api/track/{track.id}/audio-import',
             json={

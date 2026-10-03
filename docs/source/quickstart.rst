@@ -43,7 +43,6 @@ In summary, your code should now look like
 If you now run the file again, you should see the track names being printed
 to the console in 50 track batches::
 
-    [2025-06-03 00:06:46,953|httpx]:INFO: HTTP Request: POST https://amqbot.082640.xyz/api/tracks "HTTP/1.1 200 OK"
     WATER BLUE NEW WORLD
     WONDERFUL STORIES
     "MY LIST" to you!
@@ -302,3 +301,19 @@ and await the methods that make requests:
 Lists and groups are still accessed through ``client.lists`` and ``client.groups`` without awaiting.
 You'll also need to await edits with ``queue=True``, and ``client.commit()``. See :doc:`advanced/async`
 for a full script example.
+
+HTTP requests
+-------------
+
+The clients use niquests, with HTTP/2 and HTTP/3 enabled when supported by the server.
+Redirects are rejected with ``niquests.HTTPError``. Other HTTP failures also use niquests exceptions.
+
+Ordinary requests use 10-second connect and 30-second read timeouts. Audio uploads use
+120 seconds for both phases, giving parallel uploads more time to finish. These are socket
+operation timeouts, not a deadline for the whole upload. Uploads are not automatically retried.
+Audio uploads stream from disk in bounded chunks. Waiting uploads don't load files into memory.
+The async client's ``max_request_count`` still controls how many requests run at once.
+
+The ``client`` property exposes a ``niquests.Session`` or ``niquests.AsyncSession``.
+Requests made directly through that session use niquests' redirect behavior and bypass the
+wrapper's upload timeout policy and concurrency limit.

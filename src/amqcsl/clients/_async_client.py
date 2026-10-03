@@ -1,17 +1,18 @@
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
-from contextlib import aclosing
+from contextlib import aclosing, nullcontext
 from functools import cached_property
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Self
 
-import httpx
+import niquests
 from attrs import define, field
 from attrs.validators import gt, le
 
+from amqcsl.clients._http_utils import MultipartUpload, reject_redirect, request_options
 from amqcsl.clients.bundles._core import Items, StreamingBundle
 from amqcsl.clients.bundles._misc import (
     AddAudioBundle,
@@ -86,7 +87,7 @@ class AsyncDBClient:
     password: str | None = None
     #: Filepath to look for/store session cookie in, defaults to amq_session.txt
     session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
-    _client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
+    _client: niquests.AsyncSession | None = field(default=None, init=False, repr=False)
 
     #: Maximum batch size when querying db
     max_batch_size: int = field(default=100, validator=gt(0))
@@ -112,8 +113,8 @@ class AsyncDBClient:
         return asyncio.Semaphore(self.max_request_count)
 
     @property
-    def client(self) -> httpx.AsyncClient:
-        """Underlying httpx.Client"""
+    def client(self) -> niquests.AsyncSession:
+        """Underlying niquests.AsyncSession"""
         if self._client is None:
             raise ClientDoesNotExistError
         return self._client
@@ -122,9 +123,14 @@ class AsyncDBClient:
     def queue(self) -> list[Bundle[Any]]:
         return self._queue
 
-    async def _send_request(self, req: httpx.Request) -> httpx.Response:
+    async def _send_request(self, req: niquests.PreparedRequest) -> niquests.Response:
+        """Send within the concurrency limit using the shared transport policy."""
         async with self._request_semaphore:
-            return await self.client.send(req)
+            body = req.body
+            with body.opened() if isinstance(body, MultipartUpload) else nullcontext():
+                response = await self.client.send(req, **request_options(req))
+            reject_redirect(response)
+            return response
 
     async def process[R](self, bundle: Bundle[R]) -> R:
         """Processes a bundle (Mainly for internal use)
@@ -138,7 +144,7 @@ class AsyncDBClient:
         logger.debug(f'Processing {type(bundle)}')
         client = self.client
         g = bundle.vendor(client)
-        res: httpx.Response | Sequence[httpx.Response] | None = None
+        res: niquests.Response | Sequence[niquests.Response] | None = None
         while True:
             try:
                 req = g.send(res)  # type: ignore[reportArgumentType]
@@ -148,7 +154,7 @@ class AsyncDBClient:
                 case Items():
                     g.close()
                     raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
-                case httpx.Request():
+                case niquests.PreparedRequest():
                     res = await self._send_request(req)
                 case reqs:
                     res = await asyncio.gather(*map(self._send_request, reqs))
@@ -174,7 +180,7 @@ class AsyncDBClient:
         results = await asyncio.gather(*map(self.process, self.queue), return_exceptions=True)
         for task, result in zip(self.queue, results):
             match result:
-                case httpx.HTTPError():
+                case niquests.exceptions.RequestException():
                     logger.error(f'{task} failed: {result!r}')
                     if stop_if_err:
                         raise result
@@ -188,17 +194,17 @@ class AsyncDBClient:
 
     async def __aenter__(self) -> Self:
         logger.info('Creating client')
-        self._client = httpx.AsyncClient(base_url=DB_URL)
+        self._client = niquests.AsyncSession(base_url=DB_URL, timeout=(10, 30))
         try:
             logger.info('Verifying permissions')
             bundle = AuthBundle(self.username, self.password, self.session_path)
             await self.process(bundle)
-        except Exception:
-            await self._client.aclose()
-            raise
-        else:
             await self.refresh_lists()
             await self.refresh_groups()
+        except BaseException:
+            await self._client.close()
+            raise
+        else:
             return self
 
     async def __aexit__(
@@ -211,7 +217,7 @@ class AsyncDBClient:
             if exc_type is None:
                 logger.info('Closing client')
             else:
-                if isinstance(exc_val, httpx.HTTPStatusError):
+                if isinstance(exc_val, niquests.exceptions.HTTPError) and exc_val.response is not None:
                     try:
                         error_data = exc_val.response.json()
                         logger.error('JSON given with error, check logs', extra={'data': error_data})
@@ -221,13 +227,13 @@ class AsyncDBClient:
 
         finally:
             if self._client:
-                await self._client.aclose()
+                await self._client.close()
 
     async def logout(self):
         """Logout the client
 
         Raises:
-            AMQCSLError: httpx client doesn't exist yet
+            AMQCSLError: niquests client doesn't exist yet
         """
         bundle = LogoutBundle(self.session_path)
         await self.process(bundle)
@@ -261,7 +267,7 @@ class AsyncDBClient:
         """Execute HTTP events concurrently and expose item events in stream order."""
         logger.debug(f'Processing {type(bundle)}')
         vendor = bundle.vendor(self.client)
-        reply: httpx.Response | Sequence[httpx.Response] | None = None
+        reply: niquests.Response | Sequence[niquests.Response] | None = None
         try:
             while True:
                 try:
@@ -273,7 +279,7 @@ class AsyncDBClient:
                         for item in values:
                             yield item
                         reply = None
-                    case httpx.Request():
+                    case niquests.PreparedRequest():
                         reply = await self._send_request(event)
                     case _:
                         async with asyncio.TaskGroup() as tg:

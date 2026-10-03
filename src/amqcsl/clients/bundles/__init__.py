@@ -8,7 +8,7 @@ from ._core import (
     StreamingBundle,
     StreamingVendor,
     Vendor,
-    httpxClient,
+    httpClient,
 )
 from ._misc import (
     AddAudioBundle,
@@ -89,6 +89,6 @@ __all__ = [
     'TrackDeleteMetadataBundle',
     'TrackEditBundle',
     'Vendor',
-    'httpxClient',
+    'httpClient',
     'parallel_actions',
 ]

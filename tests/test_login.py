@@ -2,7 +2,7 @@
 from pathlib import Path
 
 import pytest
-from respx import Router
+from niquests_mock import MockRouter as Router
 
 import amqcsl
 
@@ -14,7 +14,7 @@ def test_login_with_session(tmp_path: Path, router: Router, mock_id: str):
         assert client.session_path == session_path
         assert session_path.read_text() == mock_id
 
-    routes = router.routes
+    routes = router.named_routes
     assert routes['auth_you'].call_count == 1
     assert routes['auth_none'].call_count == 0
 
@@ -41,7 +41,7 @@ def test_login_with_details(
         assert client.session_path == session_path
         assert session_path.read_text() == mock_id
 
-    routes = router.routes
+    routes = router.named_routes
     assert routes['auth_none'].call_count == bool(fake_id)
     assert routes['login_you'].call_count == 1
     assert routes['auth_you'].call_count == 1
@@ -54,5 +54,5 @@ def test_logout(tmp_path: Path, router: Router, mock_id: str):
         client.logout()
         assert not session_path.read_text()
 
-    routes = router.routes
+    routes = router.named_routes
     assert routes['logout_you'].call_count == 1

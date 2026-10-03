@@ -21,6 +21,16 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Stream audio uploads without buffering whole files in memory.
+#. Scope saved session cookies to the database over HTTPS and stop logging session IDs.
+
+#. Fixed async initialization cleanup, stalled pagination, and login/metadata HTTP error handling.
+#. Allow clearing song disambiguation with an empty string.
+
+#. Replaced HTTPX/RESPX with niquests/niquests-mock; enabled HTTP/2 and HTTP/3.
+#. Increased request timeouts, with longer timeouts for audio uploads; redirects remain disabled.
+#. Renamed the bundle client alias to ``httpClient``; underlying sessions and HTTP exceptions now use niquests.
+
 #. Added :py:meth:`~amqcsl.DBClient.import_audio` and :py:meth:`~amqcsl.DBClient.list_delete`.
 #. Added :py:class:`~amqcsl.objects.CSLTrackRef` for editing lists with track IDs.
 #. Added ``exclude`` to :py:func:`~amqcsl.workflows.character.make_artist_to_meta` and

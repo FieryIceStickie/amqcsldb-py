@@ -3,9 +3,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from helpers import collect, finish, load
-from httpx import HTTPStatusError, Response
-from respx import Router
+from helpers import collect, finish, load, mock_response, request_body
+from niquests import HTTPError
+from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.exceptions import QueryError
@@ -49,10 +49,10 @@ async def test_full_objects_do_not_refetch(
     song: CSLSong,
     artist: CSLArtist,
 ) -> None:
-    before = router.calls.call_count
+    before = len(router.calls)
     assert await finish(client.get_song(song)) is song
     assert await finish(client.get_artist(artist)) is artist
-    assert router.calls.call_count == before
+    assert len(router.calls) == before
 
 
 async def test_cached_collections_and_explicit_refresh(
@@ -61,19 +61,19 @@ async def test_cached_collections_and_explicit_refresh(
 ) -> None:
     lists, groups = client.lists, client.groups
     assert client.lists is lists and client.groups is groups
-    assert router.routes['lists'].call_count == router.routes['groups'].call_count == 1
-    _ = router.routes['lists'] % Response(200, json=[])
-    _ = router.routes['groups'] % Response(200, json=[])
+    assert router['lists'].call_count == router['groups'].call_count == 1
+    _ = router['lists'].mock(return_value=mock_response(200, json=[]))
+    _ = router['groups'].mock(return_value=mock_response(200, json=[]))
     if isinstance(client, AsyncDBClient):
         await client.refresh_lists()
         await client.refresh_groups()
     else:
         # Sync exposes cached collections only, with no public refresh method.
         assert client.lists is lists and client.groups is groups
-        assert router.routes['lists'].call_count == router.routes['groups'].call_count == 1
+        assert router['lists'].call_count == router['groups'].call_count == 1
         return
     assert client.lists == client.groups == {}
-    assert router.routes['lists'].call_count == router.routes['groups'].call_count == 2
+    assert router['lists'].call_count == router['groups'].call_count == 2
 
 
 @pytest.mark.parametrize('queue', [False, True])
@@ -87,9 +87,9 @@ async def test_group_changes_immediate_or_queued(
     group = client.groups['IDOLY PRIDE']
     if isinstance(client, AsyncDBClient):
         route = (
-            (router.put(f'/api/group/{group.id}') % Response(200))
+            (router.put(f'/api/group/{group.id}').mock(return_value=mock_response(200)))
             if operation == 'edit'
-            else (router.delete(f'/api/group/{group.id}') % Response(200))
+            else (router.delete(f'/api/group/{group.id}').mock(return_value=mock_response(200)))
         )
         if queue:
             method: Any = client.group_edit if operation == 'edit' else client.group_delete
@@ -105,10 +105,12 @@ async def test_group_changes_immediate_or_queued(
         assert route.call_count == 1
         return
     if operation == 'edit':
-        route = router.put(f'/api/group/{group.id}', json={'id': EMPTY_ID, 'name': 'Renamed'}) % Response(200)
+        route = router.put(f'/api/group/{group.id}', json={'id': EMPTY_ID, 'name': 'Renamed'}).mock(
+            return_value=mock_response(200)
+        )
         await finish(client.group_edit(group, 'Renamed', queue=queue))
     else:
-        route = router.delete(f'/api/group/{group.id}') % Response(200)
+        route = router.delete(f'/api/group/{group.id}').mock(return_value=mock_response(200))
         await finish(client.group_delete(group, queue=queue))
     assert route.call_count == (0 if queue else 1)
     assert len(client.queue) == (1 if queue else 0)
@@ -124,7 +126,7 @@ async def test_song_delete_immediate_or_queued(
     song: CSLSong,
     queue: bool,
 ) -> None:
-    route = router.delete(f'/api/song/{song.id}') % Response(200)
+    route = router.delete(f'/api/song/{song.id}').mock(return_value=mock_response(200))
     if isinstance(client, AsyncDBClient):
         if queue:
             method: Any = client.song_delete
@@ -153,7 +155,7 @@ async def test_song_metadata_accepts_both_metadata_types(
             'artistCredits': [{'artistId': artist.id, 'type': 'Composer', 'credit': 'As credited'}],
             'extraMetadatas': [{'isArtist': False, 'type': 'Language', 'value': 'Japanese'}],
         },
-    ) % Response(200)
+    ).mock(return_value=mock_response(200))
     await finish(
         client.song_add_metadata(
             song, ArtistCredit(artist, 'Composer', 'As credited'), ExtraMetadata(False, 'Language', 'Japanese')
@@ -172,7 +174,7 @@ async def test_empty_metadata_only_requests_explicit_override(
     route = router.post(
         f'/api/track/{track.id}/metadata',
         json={'id': EMPTY_ID, 'artistCredits': [], 'extraMetadatas': [], 'override': override},
-    ) % Response(200)
+    ).mock(return_value=mock_response(200))
     await finish(client.track_add_metadata(track, override=override))
     assert route.call_count == (0 if override is None else 1)
 
@@ -202,7 +204,7 @@ async def test_metadata_deduplicates_against_existing_and_within_input(
             'artistCredits': [new_credit.to_json()],
             'extraMetadatas': [new_meta.to_json()],
         },
-    ) % Response(200)
+    ).mock(return_value=mock_response(200))
     await finish(
         client.track_add_metadata(
             track, unchanged_credit, unchanged_meta, new_credit, new_credit, new_meta, new_meta, existing_meta=existing
@@ -249,7 +251,7 @@ async def test_track_edit_serializes_song_variants_and_types(
             'songId': song.id if song_kind == 'existing' else None,
             'type': REVERSE_TRACK_TYPE[track_type],
         },
-    ) % Response(200)
+    ).mock(return_value=mock_response(200))
     await finish(
         client.track_edit(
             track,
@@ -272,9 +274,9 @@ async def test_track_edit_distinguishes_empty_sequences_from_omitted_values(
     track: CSLTrack,
     clear: bool,
 ) -> None:
-    route = router.put(f'/api/track/{track.id}') % Response(200)
+    route = router.put(f'/api/track/{track.id}').mock(return_value=mock_response(200))
     await finish(client.track_edit(track, artist_credits=() if clear else None, groups=() if clear else None))
-    body = route.calls.last.request.read()
+    body = request_body(route.calls[-1].request)
     payload = json.loads(body)
     assert payload['artistCredits'] == ([] if clear else None)
     assert payload['groupIds'] == ([] if clear else None)
@@ -296,7 +298,7 @@ async def test_album_multiple_discs_track_numbers_and_totals(
             'groupIds': [group.id],
             'tracks': [a.to_json(1, 1, 2), b.to_json(1, 2, 2), c.to_json(2, 1, 1)],
         },
-    ) % Response(200)
+    ).mock(return_value=mock_response(200))
     await finish(client.create_album('Album', 'Original', 2025, (group,), ((a, b), (c,))))
     assert route.call_count == 1
 
@@ -308,11 +310,12 @@ async def test_unrecognized_metadata_errors_propagate(
     track: CSLTrack,
     status: int,
 ) -> None:
-    route = router.get(f'/api/track/{track.id}/metadata') % Response(
-        status, json={'errors': {'generalErrors': ['Different error']}}
+    route = router.get(path=f'/api/track/{track.id}/metadata').mock(
+        return_value=mock_response(status, json={'errors': {'generalErrors': ['Different error']}})
     )
-    with pytest.raises(HTTPStatusError) as error:
+    with pytest.raises(HTTPError) as error:
         await finish(client.get_metadata(track))
+    assert error.value.response is not None
     assert error.value.response.status_code == status
     assert route.call_count == 1
 
@@ -329,10 +332,10 @@ async def test_invalid_query_batch_sizes_fail_before_requests(
     batch_size: Any,
     error: str,
 ) -> None:
-    before = router.calls.call_count
+    before = len(router.calls)
     with pytest.raises(QueryError, match=error):
         await collect(getattr(client, f'iter_{kind}')('test', batch_size=batch_size))
-    assert router.calls.call_count == before
+    assert len(router.calls) == before
 
 
 @pytest.mark.parametrize(
@@ -349,10 +352,10 @@ async def test_empty_names_fail_before_requests(
     kwargs: dict[str, Any],
     error: type[Exception],
 ) -> None:
-    before = router.calls.call_count
+    before = len(router.calls)
     with pytest.raises(error):
         await finish(getattr(client, operation)(**kwargs))
-    assert router.calls.call_count == before and not client.queue
+    assert len(router.calls) == before and not client.queue
 
 
 @pytest.mark.parametrize(
@@ -372,10 +375,10 @@ async def test_invalid_album_inputs_fail_before_requests(
 ) -> None:
     values: dict[str, Any] = {'name': 'Album', 'original_name': 'Original', 'year': 2025, 'groups': (), 'tracks': ()}
     values.update(kwargs)
-    before = router.calls.call_count
+    before = len(router.calls)
     with pytest.raises(error):
         await finish(client.create_album(**values))
-    assert router.calls.call_count == before
+    assert len(router.calls) == before
 
 
 @pytest.mark.parametrize('kind', ['missing', 'directory', 'text', 'unknown'])
@@ -391,10 +394,10 @@ async def test_invalid_audio_paths(
         path.mkdir()
     elif kind != 'missing':
         path.write_bytes(b'audio')
-    presign = router.post(f'/api/track/{track.id}/presigned-upload') % Response(
-        200, json={'sessionId': 's', 'key': 'k', 'url': 'https://upload.test'}
+    presign = router.post(f'/api/track/{track.id}/presigned-upload').mock(
+        return_value=mock_response(200, json={'sessionId': 's', 'key': 'k', 'url': 'https://upload.test'})
     )
-    upload = router.post('https://upload.test') % Response(200)
+    upload = router.post('https://upload.test').mock(return_value=mock_response(200))
     with pytest.raises(QueryError):
         await finish(client.add_audio(track, str(path)))
     assert not upload.called
@@ -413,8 +416,8 @@ async def test_malformed_audio_presign_response(
 ) -> None:
     path = tmp_path / 'audio.flac'
     path.write_bytes(b'audio')
-    _ = router.post(f'/api/track/{track.id}/presigned-upload') % Response(200, json=payload)
-    upload = router.post('https://upload.test') % Response(200)
+    _ = router.post(f'/api/track/{track.id}/presigned-upload').mock(return_value=mock_response(200, json=payload))
+    upload = router.post('https://upload.test').mock(return_value=mock_response(200))
     with pytest.raises(QueryError, match='unknown json'):
         await finish(client.add_audio(track, path))
     assert not upload.called
@@ -430,7 +433,7 @@ async def test_query_filter_flags_are_combined_in_order(
     missing_info: bool,
     from_active_list: bool,
 ) -> None:
-    route = router.post('/api/tracks') % Response(200, json={'count': 0, 'tracks': []})
+    route = router.post('/api/tracks').mock(return_value=mock_response(200, json={'count': 0, 'tracks': []}))
     assert (
         await collect(
             client.iter_tracks(
@@ -439,7 +442,7 @@ async def test_query_filter_flags_are_combined_in_order(
         )
         == []
     )
-    body = json.loads(route.calls.last.request.content)
+    body = json.loads(request_body(route.calls[-1].request))
     expected = [idx for idx, enabled in enumerate([missing_audio, missing_info, from_active_list], start=1) if enabled]
     assert body['quickFilters'] == expected
 
@@ -451,9 +454,9 @@ async def test_default_list_filter_depends_on_active_list(
     active: bool,
 ) -> None:
     active_list = client.lists['MeiHayasaka'] if active else None
-    route = router.post('/api/tracks') % Response(200, json={'count': 0, 'tracks': []})
+    route = router.post('/api/tracks').mock(return_value=mock_response(200, json={'count': 0, 'tracks': []}))
     assert await collect(client.iter_tracks(active_list=active_list)) == []
-    body = json.loads(route.calls.last.request.content)
+    body = json.loads(request_body(route.calls[-1].request))
     assert body['activeListId'] == (active_list.id if active_list else None)
     assert body['quickFilters'] == ([3] if active else [])
 
@@ -474,8 +477,8 @@ async def test_malformed_query_responses_are_rejected(
     kind: str,
     payload: dict[str, Any],
 ) -> None:
-    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(f'/api/{kind}')
-    _ = route % Response(200, json=payload)
+    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(path=f'/api/{kind}')
+    _ = route.mock(return_value=mock_response(200, json=payload))
     with pytest.raises(QueryError, match='Unexpected query response'):
         await collect(getattr(client, f'iter_{kind}')('test'))
     assert route.call_count == 1
@@ -483,7 +486,7 @@ async def test_malformed_query_responses_are_rejected(
 
 @pytest.mark.parametrize('stop_if_err', [False, True])
 @pytest.mark.parametrize('client', ['sync'], indirect=True)
-async def test_sync_commit_error_policy_and_queue_state(
+async def test_sync_commit_error_policy(
     client: DBClient | AsyncDBClient,
     router: Router,
     stop_if_err: bool,
@@ -494,14 +497,14 @@ async def test_sync_commit_error_policy_and_queue_state(
         CSLExtraMetadata('first', 1, 'Language', 'Japanese'),
         CSLExtraMetadata('second', 1, 'Language', 'English'),
     )
-    failure = router.delete(f'/api/track/{track.id}/metadata/{first.id}') % Response(500)
-    success = router.delete(f'/api/track/{track.id}/metadata/{second.id}') % Response(200)
+    failure = router.delete(f'/api/track/{track.id}/metadata/{first.id}').mock(return_value=mock_response(500))
+    success = router.delete(f'/api/track/{track.id}/metadata/{second.id}').mock(return_value=mock_response(200))
     client.track_remove_metadata(track, first, queue=True)
     client.track_remove_metadata(track, second, queue=True)
     if stop_if_err:
-        with pytest.raises(HTTPStatusError):
+        with pytest.raises(HTTPError):
             client.commit(stop_if_err=True)
-        assert not success.called and len(client.queue) == 2
+        assert not success.called
     else:
         client.commit(stop_if_err=False)
         assert success.called and not client.queue

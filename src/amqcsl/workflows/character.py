@@ -16,7 +16,7 @@ from amqcsl.clients.bundles._core import (
     Bundle,
     MixedVendor,
     MultiVendor,
-    httpxClient,
+    httpClient,
 )
 from amqcsl.clients.bundles._misc import (
     GetArtistBundle,
@@ -263,7 +263,7 @@ class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMe
 
     def _search(
         self,
-        client: httpxClient,
+        client: httpClient,
         phrases: Sequence[str],
     ) -> MultiVendor[list[list[CSLArtistSample]]]:
         bundles = (
@@ -281,7 +281,7 @@ class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMe
     @override
     def vendor(
         self,
-        client: httpxClient,
+        client: httpClient,
     ) -> MultiVendor[tuple[dict[CSLArtistSample, Sequence[ExtraMetadata]], set[str]]]:
         if self.search_phrases:
             logger.info('Searching phrases for artists')
@@ -347,7 +347,7 @@ class _GroupGraphBundle(Bundle[list[CSLArtist]]):
     excluded_artists: set[str]
 
     @override
-    def vendor(self, client: httpxClient) -> MultiVendor[list[CSLArtist]]:
+    def vendor(self, client: httpClient) -> MultiVendor[list[CSLArtist]]:
         pending = {artist.id: artist for artist in self.artists}
         fetched: dict[str, CSLArtist] = {}
         while pending:
@@ -470,7 +470,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         return _CharacterMetadataBundle(self.track, metas)
 
     @override
-    def vendor(self, client: httpxClient) -> MixedVendor[Bundle[None] | None]:
+    def vendor(self, client: httpClient) -> MixedVendor[Bundle[None] | None]:
         fetched = yield from cast(MixedVendor[list[CSLArtist]], self.group_queries().vendor(client))
         prepared = self.prepare(fetched)
         if prepared is None:
@@ -490,7 +490,7 @@ class _CharacterMetadataBundle(Bundle[Bundle[None] | None]):
     metas: set[ExtraMetadata]
 
     @override
-    def vendor(self, client: httpxClient) -> MixedVendor[Bundle[None] | None]:
+    def vendor(self, client: httpClient) -> MixedVendor[Bundle[None] | None]:
         existing = yield from cast(MixedVendor[CSLMetadata | None], GetMetadataBundle(self.track).vendor(client))
         add = TrackAddMetadataBundle(self.track, self.metas, existing_meta=existing)
         bundles: list[MetadataBundle] = [add] if add else []

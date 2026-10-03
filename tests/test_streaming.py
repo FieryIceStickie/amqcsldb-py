@@ -2,16 +2,17 @@
 # pyright: reportPrivateUsage=false
 from collections.abc import Iterator
 
-import httpx
+import niquests
 import pytest
 import rich.repr
 from attrs import frozen
-from helpers import collect, finish, first
-from respx import Router
+from helpers import collect, finish, first, mock_response
+from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
+from amqcsl.clients._http_utils import build_request
 from amqcsl.clients.bundles import Items, ParallelBundle, StreamingBundle, StreamingVendor
-from amqcsl.clients.bundles._core import httpxClient
+from amqcsl.clients.bundles._core import httpClient
 from amqcsl.exceptions import QueryError
 
 
@@ -19,7 +20,7 @@ from amqcsl.exceptions import QueryError
 class NumberStream(StreamingBundle[int]):
     trace: list[str]
 
-    def vendor(self, client: httpxClient) -> StreamingVendor[int]:
+    def vendor(self, client: httpClient) -> StreamingVendor[int]:
         def first_items() -> Iterator[int]:
             self.trace.append('converted')
             yield 1
@@ -28,12 +29,12 @@ class NumberStream(StreamingBundle[int]):
             self.trace.append('started')
             reply = yield Items(first_items())
             assert reply is None
-            response = yield client.build_request('GET', '/stream/one')
-            assert isinstance(response, httpx.Response)
+            response = yield build_request(client, 'GET', '/stream/one')
+            assert isinstance(response, niquests.Response)
             reply = yield Items([response.json()])
             assert reply is None
-            responses = yield (client.build_request('GET', f'/stream/{idx}') for idx in [3, 4])
-            assert responses is not None and not isinstance(responses, httpx.Response)
+            responses = yield (build_request(client, 'GET', f'/stream/{idx}') for idx in [3, 4])
+            assert responses is not None and not isinstance(responses, niquests.Response)
             reply = yield Items(response.json() for response in responses)
             assert reply is None
             # Final item events require no special draining at generator completion.
@@ -47,7 +48,7 @@ class NumberStream(StreamingBundle[int]):
 
 def routes(router: Router) -> None:
     for name, value in [('one', 2), ('3', 3), ('4', 4)]:
-        _ = router.get(f'/stream/{name}') % httpx.Response(200, json=value)
+        _ = router.get(path=f'/stream/{name}').mock(return_value=mock_response(200, json=value))
 
 
 pytestmark = pytest.mark.asyncio
@@ -82,7 +83,7 @@ async def test_early_stream_close_does_not_request_more(
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
-    route = router.get('/stream/one') % httpx.Response(500)
+    route = router.get(path='/stream/one').mock(return_value=mock_response(500))
     trace: list[str] = []
     match client:
         case DBClient():
@@ -114,7 +115,7 @@ async def test_collection_closes_stream_when_item_conversion_fails(
     client: DBClient | AsyncDBClient,
 ) -> None:
     class BrokenStream(NumberStream):
-        def vendor(self, client: httpxClient) -> StreamingVendor[int]:
+        def vendor(self, client: httpClient) -> StreamingVendor[int]:
             try:
 
                 def broken_items() -> Iterator[int]:
