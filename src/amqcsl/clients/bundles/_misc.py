@@ -3,7 +3,7 @@ import mimetypes
 from collections.abc import Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import override
+from typing import cast, override
 from urllib.parse import urlsplit
 
 import niquests
@@ -14,6 +14,10 @@ from attrs.validators import gt, min_len, optional
 from amqcsl.clients._client_consts import DB_URL
 from amqcsl.clients._http_utils import AsyncMultipartUpload, MultipartUpload, build_request
 from amqcsl.exceptions import LoginError, QueryError
+from amqcsl.objects._conversion import (
+    from_json,
+    to_json,
+)
 from amqcsl.objects._db_types import (
     AlbumTrack,
     ArtistCredit,
@@ -33,7 +37,17 @@ from amqcsl.objects._db_types import (
     NewSong,
     TrackPutArtistCredit,
 )
-from amqcsl.objects._json_types import AlbumAddBody, MetadataPostBody, SongMetadataPostBody, TrackPutBody
+from amqcsl.objects._json_types import (
+    AlbumAddBody,
+    JSONArtist,
+    JSONGroup,
+    JSONList,
+    JSONMetadata,
+    JSONSong,
+    MetadataPostBody,
+    SongMetadataPostBody,
+    TrackPutBody,
+)
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
 
 from ._core import Bundle, SingleVendor, httpClient, materialize
@@ -182,7 +196,7 @@ class ListBundle(Bundle[CSLLists]):
         res.raise_for_status()
         rtn: CSLLists = {}
         for data in res.json():
-            csl_list = CSLList.from_json(data)
+            csl_list = from_json(cast(JSONList, data), CSLList)
             rtn[csl_list.name] = csl_list
         return rtn
 
@@ -204,7 +218,7 @@ class GroupBundle(Bundle[CSLGroups]):
         res.raise_for_status()
         rtn: CSLGroups = {}
         for data in res.json():
-            group = CSLGroup.from_json(data)
+            group = from_json(cast(JSONGroup, data), CSLGroup)
             rtn[group.name] = group
         return rtn
 
@@ -226,7 +240,7 @@ class GetSongBundle(Bundle[CSLSong]):
             return song
         res = yield build_request(client, 'GET', f'/api/song/{song.id}')
         res.raise_for_status()
-        return CSLSong.from_json(res.json())
+        return from_json(cast(JSONSong, res.json()), CSLSong)
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -245,7 +259,7 @@ class GetArtistBundle(Bundle[CSLArtist]):
             return artist
         res = yield build_request(client, 'GET', f'/api/artist/{artist.id}')
         res.raise_for_status()
-        return CSLArtist.from_json(res.json())
+        return from_json(cast(JSONArtist, res.json()), CSLArtist)
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -271,7 +285,7 @@ class GetMetadataBundle(Bundle[CSLMetadata | None]):
                 case _:
                     pass
         res.raise_for_status()
-        return CSLMetadata.from_json(res.json())
+        return from_json(cast(JSONMetadata, res.json()), CSLMetadata)
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -351,7 +365,7 @@ class CreateGroupBundle(Bundle[CSLGroup]):
         logger.info(f'Adding group {self.name}')
         res = yield build_request(client, 'POST', '/api/group', json={'name': self.name})
         res.raise_for_status()
-        return CSLGroup.from_json(res.json())
+        return from_json(cast(JSONGroup, res.json()), CSLGroup)
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -456,10 +470,10 @@ class SongAddMetadataBundle(Bundle[None]):
         artist_credits, extra_metadata = self.filtered_metas
         body: SongMetadataPostBody = {
             'id': self.song.id,
-            'artistCredits': [meta.to_json() for meta in artist_credits],
-            'extraMetadatas': [meta.to_json() for meta in extra_metadata],
+            'artistCredits': [to_json(meta) for meta in artist_credits],
+            'extraMetadatas': [to_json(meta) for meta in extra_metadata],
         }
-        res = yield build_request(client, 'POST', f'/api/song/{self.song.id}', json=body)
+        res = yield build_request(client, 'POST', f'/api/song/{self.song.id}/metadata', json=body)
         res.raise_for_status()
 
     @override
@@ -534,8 +548,8 @@ class TrackAddMetadataBundle(Bundle[None]):
             logger.info('No changes necessary, skipping request')
             return
         body: MetadataPostBody = {
-            'artistCredits': [meta.to_json() for meta in artist_credits],
-            'extraMetadatas': [meta.to_json() for meta in extra_metadata],
+            'artistCredits': [to_json(meta) for meta in artist_credits],
+            'extraMetadatas': [to_json(meta) for meta in extra_metadata],
             'id': EMPTY_ID,
             'override': self._override,
         }
@@ -587,7 +601,7 @@ class TrackEditBundle(Bundle[None]):
         body: TrackPutBody = {
             'artistCredits': None
             if self.artist_credits is None
-            else [v.to_json(i) for i, v in enumerate(self.artist_credits)],
+            else [to_json(credit, position=idx) for idx, credit in enumerate(self.artist_credits)],
             'batchSongIds': None,
             'groupIds': None if self.groups is None else [group.id for group in self.groups],
             'id': EMPTY_ID,
@@ -600,7 +614,7 @@ class TrackEditBundle(Bundle[None]):
         }
         match self.song:
             case NewSong():
-                body['newSong'] = self.song.to_json()
+                body['newSong'] = to_json(self.song)
             case CSLSongSample():
                 body['songId'] = self.song.id
             case None:
@@ -639,7 +653,7 @@ class CreateAlbumBundle(Bundle[None]):
             'originalAlbum': self.original_name,
             'year': self.year,
             'tracks': [
-                track.to_json(disc_number, track_number, len(disc))
+                to_json(track, disc_number=disc_number, track_number=track_number, track_total=len(disc))
                 for disc_number, disc in enumerate(self.tracks, start=1)
                 for track_number, track in enumerate(disc, start=1)
             ],

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pytest
 from helpers import collect, finish, load, mock_response, request_body
@@ -22,7 +22,10 @@ from amqcsl.objects import (
     ExtraMetadata,
     NewSong,
     TrackPutArtistCredit,
+    from_json,
+    to_json,
 )
+from amqcsl.objects._json_types import JSONArtist, JSONSong, JSONTrack
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
 
 pytestmark = pytest.mark.asyncio
@@ -30,17 +33,17 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
 def track() -> CSLTrack:
-    return CSLTrack.from_json(load('sunshine/tracks')[0])
+    return from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
 
 
 @pytest.fixture
 def song() -> CSLSong:
-    return CSLSong.from_json(load('idolypride/songs/blueskysummer'))
+    return from_json(cast(JSONSong, load('idolypride/songs/blueskysummer')), CSLSong)
 
 
 @pytest.fixture
 def artist() -> CSLArtist:
-    return CSLArtist.from_json(load('sunshine/artists/shukasaitou'))
+    return from_json(cast(JSONArtist, load('sunshine/artists/shukasaitou')), CSLArtist)
 
 
 async def test_full_objects_do_not_refetch(
@@ -149,7 +152,7 @@ async def test_song_metadata_accepts_both_metadata_types(
     artist: CSLArtist,
 ) -> None:
     route = router.post(
-        f'/api/song/{song.id}',
+        f'/api/song/{song.id}/metadata',
         json={
             'id': song.id,
             'artistCredits': [{'artistId': artist.id, 'type': 'Composer', 'credit': 'As credited'}],
@@ -201,8 +204,8 @@ async def test_metadata_deduplicates_against_existing_and_within_input(
         json={
             'id': EMPTY_ID,
             'override': None,
-            'artistCredits': [new_credit.to_json()],
-            'extraMetadatas': [new_meta.to_json()],
+            'artistCredits': [to_json(new_credit)],
+            'extraMetadatas': [to_json(new_meta)],
         },
     ).mock(return_value=mock_response(200))
     await finish(
@@ -245,7 +248,7 @@ async def test_track_edit_serializes_song_variants_and_types(
             'batchSongIds': None,
             'groupIds': [group.id],
             'name': 'Renamed',
-            'newSong': replacement.to_json() if isinstance(replacement, NewSong) else None,
+            'newSong': to_json(replacement) if isinstance(replacement, NewSong) else None,
             'originalArtist': 'Original artist',
             'originalName': 'Original name',
             'songId': song.id if song_kind == 'existing' else None,
@@ -296,7 +299,11 @@ async def test_album_multiple_discs_track_numbers_and_totals(
             'year': 2025,
             'discTotal': 2,
             'groupIds': [group.id],
-            'tracks': [a.to_json(1, 1, 2), b.to_json(1, 2, 2), c.to_json(2, 1, 1)],
+            'tracks': [
+                to_json(a, disc_number=1, track_number=1, track_total=2),
+                to_json(b, disc_number=1, track_number=2, track_total=2),
+                to_json(c, disc_number=2, track_number=1, track_total=1),
+            ],
         },
     ).mock(return_value=mock_response(200))
     await finish(client.create_album('Album', 'Original', 2025, (group,), ((a, b), (c,))))
@@ -492,7 +499,7 @@ async def test_sync_commit_error_policy(
     stop_if_err: bool,
 ) -> None:
     assert isinstance(client, DBClient)
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     first, second = (
         CSLExtraMetadata('first', 1, 'Language', 'Japanese'),
         CSLExtraMetadata('second', 1, 'Language', 'English'),

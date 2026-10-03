@@ -11,8 +11,17 @@ from attrs.validators import gt
 
 from amqcsl.clients._http_utils import build_request
 from amqcsl.exceptions import QueryError
+from amqcsl.objects._conversion import from_json
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
-from amqcsl.objects._json_types import JSONType, QueryArtist, QuerySong, QueryTrack
+from amqcsl.objects._json_types import (
+    JSONArtistSample,
+    JSONSongSample,
+    JSONTrack,
+    JSONType,
+    QueryArtist,
+    QuerySong,
+    QueryTrack,
+)
 
 from ._core import Items, StreamingBundle, StreamingVendor, httpClient, materialize
 
@@ -232,7 +241,7 @@ class IterTracksBundle(PageBundle[CSLTrack]):
 
     @override
     def process_item(self, item: JSONType) -> CSLTrack:
-        return CSLTrack.from_json(item)
+        return from_json(cast(JSONTrack, item), CSLTrack)
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -296,7 +305,7 @@ class IterSongsBundle(PageBundle[CSLSongSample]):
 
     @override
     def process_item(self, item: JSONType) -> CSLSongSample:
-        return CSLSongSample.from_json(item)
+        return from_json(cast(JSONSongSample, item), CSLSongSample)
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
@@ -348,7 +357,7 @@ class IterArtistsBundle(PageBundle[CSLArtistSample]):
 
     @override
     def process_item(self, item: JSONType) -> CSLArtistSample:
-        return CSLArtistSample.from_json(item)
+        return from_json(cast(JSONArtistSample, item), CSLArtistSample)
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:

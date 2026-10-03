@@ -1,3 +1,4 @@
+from ._conversion import from_json, to_json
 from ._db_types import (
     AlbumTrack,
     ArtistCredit,
@@ -47,4 +48,6 @@ __all__ = [
     'SongRelationType',
     'TrackPutArtistCredit',
     'TrackType',
+    'from_json',
+    'to_json',
 ]

@@ -70,14 +70,14 @@ When adding new files, follow this same pattern: put the implementation in an
 underscore-prefixed module and re-export the public surface from the
 appropriately-grouped non-underscore module.
 
-### Object model — do not modify
+### Object model
 
-`objects/_db_types.py`, `objects/_json_types.py`, and `objects/_obj_consts.py`
-define the attrs-based mapping between the database's data and Python
-objects. **Do not change anything about the object model** — its shape is
-dictated by the external database, not by this project, and isn't under our
-control. Treat it as a fixed contract; build new functionality on top of it
-rather than editing it.
+`objects/_db_types.py` defines the attrs-based Python objects and their
+conversion methods. This file may be edited.
+
+`objects/_json_types.py` and `objects/_obj_consts.py` define the external
+database schemas and constants. Do not modify these files; treat the
+database contract as fixed.
 
 ## Setup and commands
 
@@ -141,8 +141,7 @@ real network requests in tests). Fixtures/resources live in
 1. `uv run pytest -vv` passes.
 2. `uv run ruff check` and `uv run ruff format --check` are clean.
 3. New or changed behavior has a corresponding test.
-4. The object model (`objects/_db_types.py`, `_json_types.py`,
-   `_obj_consts.py`) is untouched.
+4. `objects/_json_types.py` and `objects/_obj_consts.py` are untouched.
 5. No new dependencies were added without asking first.
 6. Changes are on a branch, not committed directly to `main`, and ready for
    the maintainer to review in the current session.
@@ -174,8 +173,8 @@ real network requests in tests). Fixtures/resources live in
   non-underscore module.
 
 **Never**
-- Modify `objects/_db_types.py`, `objects/_json_types.py`, or
-  `objects/_obj_consts.py` (the object model) — not under our control.
+- Modify `objects/_json_types.py` or `objects/_obj_consts.py` without permission — the database
+  contract is not under our control.
 - Commit directly to `main`.
 - Add new dependencies without asking.
 - Edit generated/build output: `docs/build/`, `__pycache__/`, `.pyc` files.

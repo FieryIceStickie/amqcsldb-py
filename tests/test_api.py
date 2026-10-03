@@ -6,7 +6,7 @@ from contextlib import AsyncExitStack
 from email.parser import BytesParser
 from email.policy import default
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import niquests
 import pytest
@@ -28,8 +28,11 @@ from amqcsl.objects import (
     CSLTrackLink,
     CSLTrackRef,
     ExtraMetadata,
+    from_json,
+    to_json,
 )
 from amqcsl.objects._db_types import ArtistCredit, CSLArtistSample
+from amqcsl.objects._json_types import JSONArtist, JSONArtistSample, JSONMetadata, JSONSong, JSONTrack
 from amqcsl.objects._obj_consts import EMPTY_ID
 
 pytestmark = pytest.mark.asyncio
@@ -193,7 +196,7 @@ async def test_get_song(
 
     song_sample = await first(client.iter_songs('Blue sky summer'))
     song = await finish(client.get_song(song_sample))
-    assert song == CSLSong.from_json(expected_song)
+    assert song == from_json(cast(JSONSong, expected_song), CSLSong)
     assert iter_route.call_count == 1
     assert song_route.call_count == 1
 
@@ -221,7 +224,7 @@ async def test_get_artist(
 
     artist_sample = await first(client.iter_artists('Shuka Saitou'))
     artist = await finish(client.get_artist(artist_sample))
-    assert artist == CSLArtist.from_json(expected_artist)
+    assert artist == from_json(cast(JSONArtist, expected_artist), CSLArtist)
     assert iter_route.call_count == 1
     assert artist_route.call_count == 1
 
@@ -249,7 +252,7 @@ async def test_get_metadata(
 
     track = await first(client.iter_tracks('SUKI for you'))
     meta = await finish(client.get_metadata(track))
-    assert meta == CSLMetadata.from_json(expected_meta)
+    assert meta == from_json(cast(JSONMetadata, expected_meta), CSLMetadata)
     assert track_route.call_count == 1
     assert meta_route.call_count == 1
 
@@ -456,7 +459,7 @@ async def test_track_add_metadata_artist_credit(
         'disambiguation': None,
         'type': 1,
     }
-    artist = CSLArtistSample.from_json(artist_json)  # type: ignore[reportArgumentType]
+    artist = from_json(cast(JSONArtistSample, artist_json), CSLArtistSample)
     meta_json['artistCredits'].append(
         {
             'id': 'mock-id-metadata-aki',
@@ -596,7 +599,7 @@ async def test_add_album(
     original_album_name = 'Duo & Trio Collection CD Vol. 2 Winter Vacation'
     year = 2024
     album_track = AlbumTrack('Misty Frosty Love', 'Misty frosty love', 'Shuka Saitou, Rikako Aida')
-    track = album_track.to_json(1, 1, 1)
+    track = to_json(album_track, disc_number=1, track_number=1, track_total=1)
     group = client.groups['Love Live! Sunshine!!']
     route = router.post(
         '/api/album',
@@ -667,7 +670,7 @@ async def test_async_commit_raises_when_requested(
     router: Router,
 ) -> None:
     assert isinstance(client, AsyncDBClient)
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     meta = CSLExtraMetadata('meta-id', 1, 'Language', 'Japanese')
     _ = router.delete(f'/api/track/{track.id}/metadata/{meta.id}').mock(return_value=mock_response(500))
     await client.track_remove_metadata(track, meta, queue=True)
@@ -681,7 +684,7 @@ async def test_async_commit_can_continue_past_http_errors(
     router: Router,
 ) -> None:
     assert isinstance(client, AsyncDBClient)
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     first, second = (
         CSLExtraMetadata('first', 1, 'Language', 'Japanese'),
         CSLExtraMetadata('second', 1, 'Language', 'English'),
@@ -703,7 +706,7 @@ async def test_iterable_inputs_preserve_members(
     container: str,
 ) -> None:
     group = client.groups['IDOLY PRIDE']
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     members: list[Any] = [track] if operation in ('list_edit', 'list_remove') else [group]
     values = members if container == 'list' else tuple(members) if container == 'tuple' else iter(members)
     if operation == 'search':
@@ -738,7 +741,7 @@ async def test_async_commit_propagates_non_http_errors(
     assert isinstance(client, AsyncDBClient)
     from amqcsl.exceptions import QueryError
 
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     path = tmp_path / 'audio.txt'
     path.write_bytes(b'not audio')
     _ = router.post(f'/api/track/{track.id}/presigned-upload').mock(
@@ -759,7 +762,7 @@ async def test_async_commit_finishes_siblings_before_raising(
 
     from niquests import PreparedRequest as Request
 
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     first = CSLExtraMetadata('first', 1, 'Language', 'Japanese')
     second = CSLExtraMetadata('second', 1, 'Language', 'English')
     completed = asyncio.Event()
@@ -785,21 +788,21 @@ async def test_bundle_metadata_generators_and_list_imports_preserve_values(
     from amqcsl.clients.bundles import CreateListBundle, SongAddMetadataBundle, TrackAddMetadataBundle
     from amqcsl.objects import ExtraMetadata
 
-    song = CSLSong.from_json(load('idolypride/songs/blueskysummer'))
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    song = from_json(cast(JSONSong, load('idolypride/songs/blueskysummer')), CSLSong)
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     meta = ExtraMetadata(True, 'Character', 'Character name')
     imported = client.lists['MeiHayasaka']
     create_list = router.post('/api/list', json={'name': 'Copy', 'importListIds': [imported.id]}).mock(
         return_value=mock_response(200)
     )
-    song_meta = router.post(f'/api/song/{song.id}').mock(return_value=mock_response(200))
+    song_meta = router.post(f'/api/song/{song.id}/metadata').mock(return_value=mock_response(200))
     track_meta = router.post(f'/api/track/{track.id}/metadata').mock(return_value=mock_response(200))
     await finish(client.process(CreateListBundle('Copy', (item for item in [imported]))))
     await finish(client.process(SongAddMetadataBundle(song, (item for item in [meta]))))
     await finish(client.process(TrackAddMetadataBundle(track, (item for item in [meta]))))
     assert create_list.call_count == song_meta.call_count == track_meta.call_count == 1
-    assert json.loads(request_body(song_meta.calls[-1].request))['extraMetadatas'] == [meta.to_json()]
-    assert json.loads(request_body(track_meta.calls[-1].request))['extraMetadatas'] == [meta.to_json()]
+    assert json.loads(request_body(song_meta.calls[-1].request))['extraMetadatas'] == [to_json(meta)]
+    assert json.loads(request_body(track_meta.calls[-1].request))['extraMetadatas'] == [to_json(meta)]
 
 
 @pytest.mark.parametrize('queue', [False, True])
@@ -810,7 +813,7 @@ async def test_import_audio(
     queue: bool,
     status: int,
 ) -> None:
-    target = CSLTrack.from_json(load('sunshine/tracks')[0])
+    target = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     source = evolve(target, id='source', audio_name='source.flac')
     route = router.post(f'/api/track/{target.id}/audio-import').mock(return_value=mock_response(status))
     before = len(router.calls)
@@ -863,7 +866,7 @@ async def test_list_edit_accepts_track_references(
     container: str,
 ) -> None:
     target = client.lists['MeiHayasaka']
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     link = CSLTrackLink(track.id, track.name, track.artist_credits)
     references = {'ref': CSLTrackRef(track.id), 'link': link, 'simple': track.simp, 'track': track}
     reference = references[kind]
@@ -910,7 +913,7 @@ async def test_non_json_metadata_http_errors_preserve_status(
     router: Router,
     status: int,
 ) -> None:
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     router.get(path=f'/api/track/{track.id}/metadata').respond(status_code=status, text='Not JSON')
     with pytest.raises(HTTPError) as error:
         await finish(client.get_metadata(track))
@@ -924,7 +927,7 @@ async def test_song_edit_distinguishes_empty_disambiguation_from_omission(
     router: Router,
     disambiguation: str | None,
 ) -> None:
-    song = CSLSong.from_json(load('idolypride/songs/blueskysummer'))
+    song = from_json(cast(JSONSong, load('idolypride/songs/blueskysummer')), CSLSong)
     expected = song.disambiguation if disambiguation is None else disambiguation
     route = router.put(
         f'/api/song/{song.id}', json={'id': EMPTY_ID, 'name': song.name, 'disambiguation': expected}
@@ -939,7 +942,7 @@ async def test_redirects_are_rejected_without_following(
     router: Router,
     status: int,
 ) -> None:
-    artist = CSLArtistSample.from_json(load('superstar/liella')[0])
+    artist = from_json(cast(JSONArtistSample, load('superstar/liella')[0]), CSLArtistSample)
     redirect = router.get(path=f'/api/artist/{artist.id}').respond(
         status_code=status, headers={'Location': '/destination'}
     )
@@ -958,7 +961,7 @@ async def test_uploads_receive_longer_timeouts(
     router: Router,
     tmp_path: Path,
 ) -> None:
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     audio = tmp_path / 'audio.flac'
     audio.write_bytes(b'audio data')
     presign = router.post(f'/api/track/{track.id}/presigned-upload').respond(
@@ -991,7 +994,7 @@ async def test_parallel_uploads_preserve_limit_and_do_not_retry(
 ) -> None:
     assert isinstance(client, AsyncDBClient)
     client.max_request_count = 2
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     audio = tmp_path / 'audio.flac'
     audio.write_bytes(b'audio data')
     router.post(f'/api/track/{track.id}/presigned-upload').respond(
@@ -1082,7 +1085,7 @@ async def test_audio_upload_streams_valid_multipart(
     tmp_path: Path,
     filename: str,
 ) -> None:
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     audio = tmp_path / filename
     content = bytes(range(256)) * 700
     audio.write_bytes(content)
@@ -1149,7 +1152,7 @@ async def test_upload_closes_file_on_transport_failure(
     tmp_path: Path,
     failure: str,
 ) -> None:
-    track = CSLTrack.from_json(load('sunshine/tracks')[0])
+    track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     audio = tmp_path / 'audio.flac'
     audio.write_bytes(b'audio')
     router.post(f'/api/track/{track.id}/presigned-upload').respond(

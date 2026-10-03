@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "attrs>=25.3.0",
+    "cattrs>=25.2.0",
     "niquests>=3.21.2",
     "python-dotenv>=1.1.0",
     "rich>=14.0.0",

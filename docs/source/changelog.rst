@@ -21,6 +21,13 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Fixed the endpoint for :py:meth:`~amqcsl.DBClient.song_add_metadata`.
+
+#. Replaced object ``from_json`` methods with :py:func:`~amqcsl.objects.from_json` and
+   replaced edit-object ``to_json`` methods with :py:func:`~amqcsl.objects.to_json`.
+   Credit positions and album numbering are now keyword arguments.
+#. Allow null song disambiguation and linked track names; corrected the ``linkedAMQSongs`` schema key.
+
 #. Allow changing :py:attr:`~amqcsl.AsyncDBClient.max_request_count` while requests are running.
 #. Stream audio uploads without buffering whole files in memory.
 #. Scope saved session cookies to the database over HTTPS and stop logging session IDs.

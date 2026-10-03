@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from typing import cast
 
 import niquests
 import pytest
@@ -18,8 +19,11 @@ from amqcsl.clients.bundles import (
     SyncPageStrategy,
 )
 from amqcsl.clients.bundles._core import httpClient
-from amqcsl.objects import CSLArtistSample
-from amqcsl.objects._json_types import JSONType
+from amqcsl.objects import (
+    CSLArtistSample,
+    from_json,
+)
+from amqcsl.objects._json_types import JSONArtistSample, JSONType
 
 
 @frozen
@@ -92,4 +96,6 @@ async def test_page_collection_supports_both_scheduling_strategies(
             )
         )
     query = IterArtistsBundle(1, 10, 1, strategy(), 'test')
-    assert await finish(client.process(query.collect())) == [CSLArtistSample.from_json(sample) for sample in samples]
+    assert await finish(client.process(query.collect())) == [
+        from_json(cast(JSONArtistSample, sample), CSLArtistSample) for sample in samples
+    ]

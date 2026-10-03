@@ -1,8 +1,14 @@
+from typing import cast
+
 import pytest
 from helpers import load
 
 from amqcsl.exceptions import QuitError
-from amqcsl.objects import CSLTrack
+from amqcsl.objects import (
+    CSLTrack,
+    from_json,
+)
+from amqcsl.objects._json_types import JSONTrack
 from amqcsl.workflows import character as cm
 from amqcsl.workflows._workflow_utils import prompt
 
@@ -74,7 +80,7 @@ def test_exclusion_prompt_decisions(
         return answer
 
     monkeypatch.setattr('builtins.input', read)
-    assert cm.prompt_should_exclude(CSLTrack.from_json(load('sunshine/tracks')[0]), []) is expected
+    assert cm.prompt_should_exclude(from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack), []) is expected
 
 
 @pytest.mark.parametrize('answer', ['q', 'QUIT'])
@@ -84,7 +90,7 @@ def test_exclusion_prompt_quit(monkeypatch: pytest.MonkeyPatch, answer: str) -> 
 
     monkeypatch.setattr('builtins.input', read)
     with pytest.raises(QuitError):
-        cm.prompt_should_exclude(CSLTrack.from_json(load('sunshine/tracks')[0]), [])
+        cm.prompt_should_exclude(from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack), [])
 
 
 def test_exclusion_prompt_retries_invalid_answers(
@@ -99,7 +105,7 @@ def test_exclusion_prompt_retries_invalid_answers(
         return next(answers)
 
     monkeypatch.setattr('builtins.input', read)
-    t = CSLTrack.from_json(load('sunshine/tracks')[0])
+    t = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     assert cm.prompt_should_exclude(t, []) is cm.ExcludeDecision.IGNORE
     assert len(prompts) == 3
     assert t.id in capsys.readouterr().out

@@ -19,8 +19,14 @@ from amqcsl.clients.bundles._parallel import (
     _ParallelActionsBundle,  # pyright: ignore[reportPrivateUsage] -- inspect queued actions
 )
 from amqcsl.exceptions import AMQCSLError, QueryError
-from amqcsl.objects import CSLArtist, CSLArtistSample, CSLTrack, ExtraMetadata
-from amqcsl.objects._json_types import JSONType
+from amqcsl.objects import (
+    CSLArtist,
+    CSLArtistSample,
+    CSLTrack,
+    ExtraMetadata,
+    from_json,
+)
+from amqcsl.objects._json_types import JSONArtist, JSONArtistSample, JSONTrack, JSONType
 from amqcsl.workflows import character as cm
 
 pytestmark = pytest.mark.asyncio
@@ -70,7 +76,7 @@ def track(*samples: dict[str, JSONType], track_id: str = 'test-track') -> CSLTra
         'id': track_id,
         'artistCredits': credits,
     }
-    return CSLTrack.from_json(data)
+    return from_json(cast(JSONTrack, data), CSLTrack)
 
 
 def mock_search(router: Router, samples: Sequence[dict[str, JSONType]]) -> Route:
@@ -125,9 +131,9 @@ async def test_infer_group_and_cache(
         await finish(mapping.apply(t, lambda _track, _reasons: pytest.fail('Unexpected failure')))
     assert get_group.call_count == 1
     assert search.call_count == 1
-    assert mapping.metadata[CSLArtistSample.from_json(g)] == [
-        *mapping.metadata[CSLArtistSample.from_json(a)],
-        *mapping.metadata[CSLArtistSample.from_json(b)],
+    assert mapping.metadata[from_json(cast(JSONArtistSample, g), CSLArtistSample)] == [
+        *mapping.metadata[from_json(cast(JSONArtistSample, a), CSLArtistSample)],
+        *mapping.metadata[from_json(cast(JSONArtistSample, b), CSLArtistSample)],
     ]
     await finish(client.commit())
     assert add.call_count == 2
@@ -176,7 +182,10 @@ async def test_callback_collates_failures_and_caches_exclusions(
     assert [r.artist.id for r in reasons] == ['Group', 'Unknown']
     assert isinstance(reasons[0].artist, CSLArtist)
     assert isinstance(reasons[0].reason, cm.INCOMPLETE_GROUP)
-    assert [*reasons[0].reason.artists] == [CSLArtistSample.from_json(b), CSLArtistSample.from_json(c)]
+    assert [*reasons[0].reason.artists] == [
+        from_json(cast(JSONArtistSample, b), CSLArtistSample),
+        from_json(cast(JSONArtistSample, c), CSLArtistSample),
+    ]
     assert reasons[1].reason is cm.UNKNOWN_ARTIST
     assert mapping.excluded_artists == {'Group', 'Unknown'}
     assert get_group.call_count == 1
@@ -221,7 +230,7 @@ async def test_empty_groups_report_the_credited_group(
 
     await finish(mapping.apply(track(g), should_exclude))
     assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
-    assert [*failures[0].reason.artists] == [CSLArtistSample.from_json(m) for m in members]
+    assert [*failures[0].reason.artists] == [from_json(cast(JSONArtistSample, m), CSLArtistSample) for m in members]
     assert failures[0].artist.id == 'Group'
     assert get_group.called
     assert nested.called == bool(members)
@@ -240,7 +249,10 @@ async def test_nested_group_with_explicit_metadata(
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Nested': 'Character'}))
     await finish(mapping.apply(track(g)))
     assert not nested_query.called
-    assert mapping.metadata[CSLArtistSample.from_json(g)] == mapping.metadata[CSLArtistSample.from_json(nested)]
+    assert (
+        mapping.metadata[from_json(cast(JSONArtistSample, g), CSLArtistSample)]
+        == mapping.metadata[from_json(cast(JSONArtistSample, nested), CSLArtistSample)]
+    )
 
 
 async def test_recursive_groups_share_members_and_cache_all_levels(
@@ -264,7 +276,7 @@ async def test_recursive_groups_share_members_and_cache_all_levels(
     assert all(query.call_count == 1 for query in queries)
     assert len(mapping.metadata) == 6
     for sample in [root, left, right, shared]:
-        values = mapping.metadata[CSLArtistSample.from_json(sample)]
+        values = mapping.metadata[from_json(cast(JSONArtistSample, sample), CSLArtistSample)]
         assert len(values) == 2
         assert {meta.value for meta in values} == {'A', 'B'}
     await finish(client.commit())
@@ -360,7 +372,7 @@ async def test_nested_explicit_metadata_or_exclusion_stops_cycle_traversal(
     )
     await finish(mapping.apply(track(root), lambda _t, _r: pytest.fail('Unexpected failure')))
     assert not nested_query.called
-    assert {meta.value for meta in mapping.metadata[CSLArtistSample.from_json(root)]} == (
+    assert {meta.value for meta in mapping.metadata[from_json(cast(JSONArtistSample, root), CSLArtistSample)]} == (
         {'A'} if exclude else {'A', 'Override'}
     )
 
@@ -482,7 +494,7 @@ async def test_disambiguation_and_pagination(
     search = mock_search(router, [a, b, artist('Unlisted', group=True)])
     mapping = await finish(cm.compact_make_artist_to_meta(client, {('Alice', 'two'): 'B'}, ['all']))
     assert len(mapping.metadata) == 1
-    assert mapping.metadata[CSLArtistSample.from_json(b)][0].value == 'B'
+    assert mapping.metadata[from_json(cast(JSONArtistSample, b), CSLArtistSample)][0].value == 'B'
     assert search.call_count == 3
 
 
@@ -572,7 +584,10 @@ async def test_cached_group_can_be_used_as_member_without_refetching(
     await finish(mapping.apply(track(nested)))
     await finish(mapping.apply(track(parent, track_id='parent-track')))
     assert nested_query.call_count == 1 and parent_query.call_count == 1
-    assert mapping.metadata[CSLArtistSample.from_json(parent)] == mapping.metadata[CSLArtistSample.from_json(a)]
+    assert (
+        mapping.metadata[from_json(cast(JSONArtistSample, parent), CSLArtistSample)]
+        == mapping.metadata[from_json(cast(JSONArtistSample, a), CSLArtistSample)]
+    )
 
 
 async def test_full_artist_credit_uses_existing_group_details(
@@ -585,10 +600,10 @@ async def test_full_artist_credit_uses_existing_group_details(
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
     t = track(g)
-    credit = evolve(t.artist_credits[0], artist=CSLArtist.from_json(group_details(g, [a])))
+    credit = evolve(t.artist_credits[0], artist=from_json(cast(JSONArtist, group_details(g, [a])), CSLArtist))
     await finish(mapping.apply(evolve(t, artist_credits=[credit])))
     assert not get_group.called
-    assert CSLArtistSample.from_json(g) in mapping.metadata
+    assert from_json(cast(JSONArtistSample, g), CSLArtistSample) in mapping.metadata
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
@@ -647,8 +662,8 @@ async def test_mapping_methods_delegate_to_metadata(
     a = artist('Alice')
     mock_search(router, [a])
     mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
-    sample = CSLArtistSample.from_json(a)
-    full = CSLArtist.from_json(group_details(a, []))
+    sample = from_json(cast(JSONArtistSample, a), CSLArtistSample)
+    full = from_json(cast(JSONArtist, group_details(a, [])), CSLArtist)
     assert len(mapping) == 1
     assert [*mapping] == [sample]
     assert sample in mapping and full in mapping
@@ -656,7 +671,7 @@ async def test_mapping_methods_delegate_to_metadata(
     assert mapping[sample] is mapping.metadata[sample]
     assert mapping[full] is mapping.metadata[sample]
     assert mapping.get(full) is mapping.metadata[sample]
-    missing = CSLArtistSample.from_json(artist('Missing'))
+    missing = from_json(cast(JSONArtistSample, artist('Missing')), CSLArtistSample)
     assert missing not in mapping
     assert mapping.get(missing) is None
     sentinel = object()
@@ -725,7 +740,7 @@ async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
         else:
             mapping = await cm.AsyncArtistToMeta.create(client, definitions, phrases, exclude=['Ignored'])
     assert mapping.excluded_artists == {'Ignored'}
-    assert CSLArtistSample.from_json(excluded) not in mapping
+    assert from_json(cast(JSONArtistSample, excluded), CSLArtistSample) not in mapping
     assert search.call_count == (1 if global_search else 2)
     for idx in range(2):
         await finish(mapping.apply(track(a, excluded, track_id=str(idx)), lambda _track, _reasons: pytest.fail()))
@@ -785,8 +800,10 @@ async def test_group_members_respect_initial_and_callback_exclusions(
     if not initial:
         await finish(mapping.apply(track(excluded), lambda _track, _reasons: cm.ExcludeDecision.EXCLUDE))
     await finish(mapping.apply(track(g), lambda _track, _reasons: pytest.fail('Excluded member reported missing')))
-    expected: Sequence[ExtraMetadata] = [] if all_excluded else mapping[CSLArtistSample.from_json(a)]
-    assert mapping[CSLArtistSample.from_json(g)] == expected
+    expected: Sequence[ExtraMetadata] = (
+        [] if all_excluded else mapping[from_json(cast(JSONArtistSample, a), CSLArtistSample)]
+    )
+    assert mapping[from_json(cast(JSONArtistSample, g), CSLArtistSample)] == expected
     assert get_group.call_count == 1
     assert nested.call_count == int(not initial)
     assert len(client.queue) == int(not all_excluded)

@@ -67,7 +67,7 @@ class JSONGroup(TypedDict):
 class JSONArtist(JSONArtistSample):
     forwardRelations: list[JSONSongRelation]
     reverseRelations: list[JSONSongRelation]
-    linkedAmqSongs: list[JSONTrackLink]
+    linkedAMQSongs: list[JSONTrackLink]
     linkedTracks: list[JSONTrackLink]
 
 
