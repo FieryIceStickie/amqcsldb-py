@@ -106,7 +106,8 @@ Now, if you run the script, it'll go through and queue all the metadata changes 
 free to run this on tracks already filled with metadata; it won't do anything if the metadata
 is correct, but it will change it if it's incorrect). If a track shows up with unrecognized artists,
 it will prompt you once with the track and all unresolved artists. Choose ``y`` to exclude
-those artists, ``n`` to raise an error, or ``q`` to quit. Exclusions are remembered for later tracks.
+those artists, ``n`` to raise an error, ``i`` to ignore the track, or ``q`` to quit. Ignoring leaves the
+track's metadata as it is. Exclusions are remembered for later tracks.
 
 After processing all the tracks, it'll prompt you with all the queued metadata. Have a look through it,
 and if it's fine then type `y` and enter to make the changes, or type `n` to not commit the changes
@@ -198,14 +199,14 @@ If you want to handle unrecognized artists yourself, you can pass in a ``should_
     def should_exclude(
         track: CSLTrack,
         artists: Sequence[cm.Reason],
-    ) -> bool:
+    ) -> cm.ExcludeDecision:
         for failure in artists:
             print(failure.artist.name)
             if failure.reason is cm.UNKNOWN_ARTIST:
                 print('No character metadata for this artist')
             else:
                 print('Missing members:', [member.name for member in failure.reason.artists])
-        return True
+        return cm.ExcludeDecision.EXCLUDE
 
     artist_to_meta.apply(track, should_exclude)
 
@@ -218,8 +219,15 @@ was fetched, you'll get that instead of a sample. The ``reason`` tells you what 
   If the group has no members in the database, this list will be empty.
 
 It'll call your function once per track, after collecting all the artists it couldn't fill in.
-Return ``True`` to exclude all of them, or ``False`` to raise an ``AMQCSLError``. If it raises,
-no changes are queued for that track.
+Return a :py:class:`ExcludeDecision <amqcsl.workflows.character.ExcludeDecision>`:
+
+* ``EXCLUDE`` excludes all the listed artists and remembers them for later tracks.
+* ``ERROR`` raises an ``AMQCSLError`` without queueing changes for the track.
+* ``IGNORE`` skips the track entirely, leaving its metadata as it is.
+
+Ignoring doesn't remember any new exclusions, so the same artists can prompt you again on another track.
+If you have an existing callback, replace ``True`` with ``cm.ExcludeDecision.EXCLUDE`` and ``False`` with
+``cm.ExcludeDecision.ERROR``.
 
 An excluded artist is treated as if they weren't on the track, so the other artists are processed
 as usual. If a group is incomplete, none of its metadata is used; it won't just add the characters

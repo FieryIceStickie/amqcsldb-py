@@ -4,10 +4,12 @@ import asyncio
 import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, ItemsView, Iterator, KeysView, Mapping, Sequence, ValuesView
+from enum import Enum, auto
 from typing import Protocol, Self, cast, overload, override
 
 import rich.repr
 from attrs import define, field, frozen
+from rich.pretty import pprint
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.clients.bundles._core import (
@@ -24,7 +26,7 @@ from amqcsl.clients.bundles._misc import (
 )
 from amqcsl.clients.bundles._pages import AsyncPageStrategy, IterArtistsBundle
 from amqcsl.clients.bundles._parallel import ParallelBundle, parallel_actions
-from amqcsl.exceptions import AMQCSLError
+from amqcsl.exceptions import AMQCSLError, QuitError
 from amqcsl.objects._db_types import (
     CSLArtist,
     CSLArtistSample,
@@ -44,6 +46,7 @@ __all__ = [
     'ArtistToMeta',
     'AsyncArtistToMeta',
     'CharacterDict',
+    'ExcludeDecision',
     'Reason',
     'ShouldExclude',
     'SyncArtistToMeta',
@@ -139,11 +142,37 @@ class Reason:
     reason: _UnknownArtist | INCOMPLETE_GROUP
 
 
-type ShouldExclude = Callable[[CSLTrack, Sequence[Reason]], bool]
+class ExcludeDecision(Enum):
+    """How to handle unresolved artists on a track."""
+
+    EXCLUDE = auto()
+    ERROR = auto()
+    IGNORE = auto()
 
 
-def prompt_should_exclude(track: CSLTrack, artists: Sequence[Reason]) -> bool:
-    return prompt(track, artists, msg='Exclude these artists?')
+type ShouldExclude = Callable[[CSLTrack, Sequence[Reason]], ExcludeDecision]
+
+
+def prompt_should_exclude(
+    track: CSLTrack,
+    artists: Sequence[Reason],
+) -> ExcludeDecision:
+    """Ask whether to exclude unresolved artists, raise an error, or ignore the track."""
+    pprint(track)
+    pprint(artists)
+    while True:
+        answer = input('Exclude these artists? Y(es) N(o, error) I(gnore track) Q(uit): ').lower().strip()
+        match answer:
+            case 'y' | 'yes' | 'exclude':
+                return ExcludeDecision.EXCLUDE
+            case 'n' | 'no' | 'error':
+                return ExcludeDecision.ERROR
+            case 'i' | 'ignore':
+                return ExcludeDecision.IGNORE
+            case 'q' | 'quit':
+                raise QuitError
+            case _:
+                continue
 
 
 class ArtistToMeta[R](Protocol):
@@ -202,8 +231,8 @@ class ArtistToMeta[R](Protocol):
 
         Args:
             track: Track whose character metadata should be updated.
-            should_exclude: Called once with all unresolved artists. True caches their
-                exclusions; False raises AMQCSLError without queueing track changes.
+            should_exclude: Called once with all unresolved artists. EXCLUDE caches their
+                exclusions; ERROR raises AMQCSLError; IGNORE leaves the track unchanged.
 
         Commit queued changes through the client used to create this mapping.
         """
@@ -331,26 +360,30 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         self.metadata[group.to_sample()] = inferred
         return inferred
 
-    @override
-    def vendor(self, client: httpxClient) -> MixedVendor[Bundle[None] | None]:
-        if self.track.type == 'OffVocal':
-            return None
-        credited = {credit.artist.id: credit.artist for credit in self.track.artist_credits}
-        groups = [
+    @property
+    def _credited_artists(self) -> dict[str, CSLArtistSample]:
+        return {credit.artist.id: credit.artist for credit in self.track.artist_credits}
+
+    def group_queries(self) -> Bundle[list[CSLArtist]]:
+        """Fetch uncached groups without modifying shared mapping state."""
+        groups = (
             artist
-            for artist in credited.values()
-            if artist.id not in self.excluded_artists
+            for artist in self._credited_artists.values()
+            if self.track.type != 'OffVocal'
+            and artist.id not in self.excluded_artists
             and artist.to_sample() not in self.metadata
             and artist.type == 'Group'
-        ]
-        fetched = yield from cast(
-            MixedVendor[list[CSLArtist]],
-            ParallelBundle(GetArtistBundle(artist) for artist in groups).vendor(client),
         )
+        return ParallelBundle(GetArtistBundle(artist) for artist in groups)
+
+    def prepare(self, fetched: Sequence[CSLArtist]) -> _CharacterMetadataBundle | None:
+        """Update caches and decide whether to process the track, without making requests."""
+        if self.track.type == 'OffVocal':
+            return None
         group_by_id = {group.id: group for group in fetched}
         reasons: list[Reason] = []
         metas: set[ExtraMetadata] = set()
-        for artist in credited.values():
+        for artist in self._credited_artists.values():
             if artist.id in self.excluded_artists:
                 continue
             key = artist.to_sample()
@@ -366,18 +399,47 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
             else:
                 metas.update(result)
         if reasons:
-            if not self.should_exclude(self.track, reasons):
-                raise AMQCSLError(f'Cannot infer character metadata for {self.track.name}: {reasons!r}')
-            self.excluded_artists.update(reason.artist.id for reason in reasons)
+            match self.should_exclude(self.track, reasons):
+                case ExcludeDecision.EXCLUDE:
+                    self.excluded_artists.update(reason.artist.id for reason in reasons)
+                case ExcludeDecision.ERROR:
+                    raise AMQCSLError(f'Cannot infer character metadata for {self.track.name}: {reasons!r}')
+                case ExcludeDecision.IGNORE:
+                    logger.info(f'Ignoring track {self.track.name}')
+                    return None
 
+        return _CharacterMetadataBundle(self.track, metas)
+
+    @override
+    def vendor(self, client: httpxClient) -> MixedVendor[Bundle[None] | None]:
+        fetched = yield from cast(MixedVendor[list[CSLArtist]], self.group_queries().vendor(client))
+        prepared = self.prepare(fetched)
+        if prepared is None:
+            return None
+        return (yield from prepared.vendor(client))
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'track', self.track.simp
+
+
+@frozen
+class _CharacterMetadataBundle(Bundle[Bundle[None] | None]):
+    """Fetch existing metadata and build queued edits after artist decisions are complete."""
+
+    track: CSLTrack
+    metas: set[ExtraMetadata]
+
+    @override
+    def vendor(self, client: httpxClient) -> MixedVendor[Bundle[None] | None]:
         existing = yield from cast(MixedVendor[CSLMetadata | None], GetMetadataBundle(self.track).vendor(client))
-        add = TrackAddMetadataBundle(self.track, metas, existing_meta=existing)
+        add = TrackAddMetadataBundle(self.track, self.metas, existing_meta=existing)
         bundles: list[MetadataBundle] = [add] if add else []
         if existing is not None:
             bundles.extend(
                 TrackDeleteMetadataBundle(self.track, meta)
                 for meta in existing.extra_metas
-                if meta.key == 'Character' and ExtraMetadata.simplify(meta) not in metas
+                if meta.key == 'Character' and ExtraMetadata.simplify(meta) not in self.metas
             )
         return parallel_actions(bundles) if bundles else None
 
@@ -471,16 +533,18 @@ class AsyncArtistToMeta(ArtistToMeta[Awaitable[None]]):
         track: CSLTrack,
         should_exclude: ShouldExclude = prompt_should_exclude,
     ) -> None:
-        # Track tasks may run concurrently; share cache/exclusion decisions exactly once.
+        application = ApplyArtistToMetaBundle(
+            track,
+            self.metadata,
+            self.excluded_artists,
+            should_exclude,
+        )
+        fetched = await self._client.process(application.group_queries())
+        # Recheck shared state after group requests; the lock protects decisions and cache writes.
         async with self._lock:
-            bundle = await self._client.process(
-                ApplyArtistToMetaBundle(
-                    track,
-                    self.metadata,
-                    self.excluded_artists,
-                    should_exclude,
-                )
-            )
+            prepared = application.prepare(fetched)
+        if prepared is not None:
+            bundle = await self._client.process(prepared)
             if bundle is not None:
                 self._client.enqueue(bundle)
 

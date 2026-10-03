@@ -135,9 +135,9 @@ class ArtistHandler:
         self,
         track: CSLTrack,
         unknown_artists: Sequence[cm.Reason],
-    ) -> bool:
+    ) -> cm.ExcludeDecision:
         self.unknown_artists[track.id] = [reason.artist.id for reason in unknown_artists]
-        return False
+        return cm.ExcludeDecision.ERROR
 
 
 @pytest.fixture
