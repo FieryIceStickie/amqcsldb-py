@@ -21,6 +21,8 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Use the filename without its extension for generated script logger names.
+
 #. Add ``iter_edits`` to character mappings to yield edits for manual enqueueing.
    Async processing runs concurrently and keeps requests running during exclusion prompts.
 #. Character mapping ``apply`` now returns prepared edits instead of enqueueing them.

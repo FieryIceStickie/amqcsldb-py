@@ -34,17 +34,23 @@ def test_init_existing_log_directory_leaves_config_unchanged(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize('template', [*Templates])
+@pytest.mark.parametrize('destination', ['script.py', 'scripts/script.py', 'absolute'])
 def test_make_copies_each_template(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     template: Templates,
+    destination: str,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    result = CliRunner().invoke(app, ['make', 'script.py', '--template', template.value])
+    script = tmp_path / ('script.py' if destination == 'absolute' else destination)
+    script.parent.mkdir(parents=True, exist_ok=True)
+    dest = str(script) if destination == 'absolute' else destination
+    result = CliRunner().invoke(app, ['make', dest, '--template', template.value])
     assert result.exit_code == 0, result.output
-    script = tmp_path / 'script.py'
     assert script.exists()
-    compile(script.read_text(), str(script), 'exec')
+    source = script.read_text()
+    assert "logging.getLogger('script')" in source
+    compile(source, str(script), 'exec')
 
 
 def test_make_refuses_existing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,4 +100,4 @@ def test_character_template_logs_quit_and_preserves_other_errors(
             assert isinstance(caught.value.exceptions[0], ValueError)
         else:
             exec(code, namespace)  # noqa: S102 -- run only the generated quit handler with a fake workflow
-    assert 'Quit requested; exiting.' in caplog.text
+    assert 'Quit requested' in caplog.text

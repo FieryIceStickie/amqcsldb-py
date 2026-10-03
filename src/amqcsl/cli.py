@@ -90,7 +90,7 @@ def make(
 
     template_file = files('amqcsl') / f'_templates/scripts/{template}.py.txt'
     with as_file(template_file) as path, open(path, 'r') as file, open(dest_path, 'w') as dest_file:
-        dest_file.write(file.read().replace('TEMPLATE_SCRIPT_NAME', dest))
+        dest_file.write(file.read().replace('TEMPLATE_SCRIPT_NAME', dest_path.stem))
 
 
 @app.callback()
