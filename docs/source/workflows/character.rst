@@ -143,7 +143,9 @@ later tracks too.
 
 If you do provide an entry for the group, it'll just use that. Only forward relations of type
 ``GroupMember`` are used to find members; other relations are ignored. If a member is itself a
-group, that group needs to already be in the mapping, since it won't go and fetch another set of members.
+group, it'll fetch that group's members too, and keep going until it reaches artists already in the mapping.
+Nested groups are remembered too, so they don't need to be fetched again on later tracks.
+If groups contain each other in a cycle, it'll report the group as incomplete.
 
 To use the mapping, call ``artist_to_meta.apply(track)`` for each track. It'll fetch the existing metadata
 and queue any additions and deletions necessary:
@@ -216,6 +218,7 @@ was fetched, you'll get that instead of a sample. The ``reason`` tells you what 
 
 * ``UNKNOWN_ARTIST`` means there's no character metadata for that artist.
 * ``INCOMPLETE_GROUP`` has an ``artists`` list containing all the members without metadata.
+  For nested groups, these can be members further down, an empty group, or a group involved in a cycle.
   If the group has no members in the database, this list will be empty.
 
 It'll call your function once per track, after collecting all the artists it couldn't fill in.

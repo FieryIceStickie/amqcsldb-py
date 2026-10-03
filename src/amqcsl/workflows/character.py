@@ -129,7 +129,7 @@ UNKNOWN_ARTIST = _UnknownArtist()
 
 @frozen
 class INCOMPLETE_GROUP:
-    """Members without cached metadata. An empty list means no members exist."""
+    """Unresolved members, including nested groups and cycles. Empty means the credited group has no members."""
 
     artists: Sequence[CSLArtistSample]
 
@@ -339,24 +339,82 @@ class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMe
 
 
 @frozen
+class _GroupGraphBundle(Bundle[list[CSLArtist]]):
+    """Fetch uncached nested groups in parallel layers, visiting each ID once."""
+
+    artists: Sequence[CSLArtistSample]
+    metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
+    excluded_artists: set[str]
+
+    @override
+    def vendor(self, client: httpxClient) -> MultiVendor[list[CSLArtist]]:
+        pending = {artist.id: artist for artist in self.artists}
+        fetched: dict[str, CSLArtist] = {}
+        while pending:
+            groups = yield from ParallelBundle(
+                GetArtistBundle(artist)
+                for artist in pending.values()
+                if artist.id not in self.excluded_artists and artist.to_sample() not in self.metadata
+            ).vendor(client)
+            fetched.update((group.id, group) for group in groups)
+            pending = {
+                relation.artist.id: relation.artist
+                for group in groups
+                for relation in group.forward_relations
+                if relation.type == 'GroupMember'
+                and relation.artist.type == 'Group'
+                and relation.artist.id not in fetched
+                and relation.artist.id not in self.excluded_artists
+                and relation.artist.to_sample() not in self.metadata
+            }
+        return [*fetched.values()]
+
+    @override
+    def __rich_repr__(self) -> rich.repr.Result:
+        yield 'artists', self.artists
+
+
+@frozen
 class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
     track: CSLTrack
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
     excluded_artists: set[str]
     should_exclude: ShouldExclude
 
-    def _process_group(self, group: CSLArtist) -> Sequence[ExtraMetadata] | Reason:
-        """Infer a complete group from cached member metadata without recursive queries."""
+    def _process_group(
+        self,
+        group: CSLArtist,
+        groups: Mapping[str, CSLArtist],
+        ancestors: set[str],
+    ) -> Sequence[ExtraMetadata] | INCOMPLETE_GROUP:
+        """Infer nested groups, reporting unresolved leaves and cycles without partial metadata."""
+        if group.id in ancestors:
+            return INCOMPLETE_GROUP([group.to_sample()])
+        ancestors = {*ancestors, group.id}
         members = {
             relation.artist.id: relation.artist
             for relation in group.forward_relations
             if relation.type == 'GroupMember'
         }
-        active_members = [member for member in members.values() if member.id not in self.excluded_artists]
-        missing = [member for member in active_members if member.to_sample() not in self.metadata]
+        missing: dict[str, CSLArtistSample] = {}
+        metas: list[ExtraMetadata] = []
+        for member in members.values():
+            if member.id in self.excluded_artists:
+                continue
+            result = self.metadata.get(member.to_sample())
+            if result is None:
+                if member.type != 'Group':
+                    missing[member.id] = member
+                    continue
+                result = self._process_group(groups[member.id], groups, ancestors)
+            match result:
+                case INCOMPLETE_GROUP(artists=artists):
+                    missing.update((artist.id, artist) for artist in artists or [member])
+                case _:
+                    metas.extend(result)
         if missing or not members:
-            return Reason(group, INCOMPLETE_GROUP(missing))
-        (*inferred,) = dict.fromkeys(meta for member in active_members for meta in self.metadata[member.to_sample()])
+            return INCOMPLETE_GROUP([*missing.values()])
+        (*inferred,) = dict.fromkeys(metas)
         self.metadata[group.to_sample()] = inferred
         return inferred
 
@@ -366,15 +424,15 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
 
     def group_queries(self) -> Bundle[list[CSLArtist]]:
         """Fetch uncached groups without modifying shared mapping state."""
-        groups = (
+        groups = [
             artist
             for artist in self._credited_artists.values()
             if self.track.type not in ('OffVocal', 'Instrumental')
             and artist.id not in self.excluded_artists
             and artist.to_sample() not in self.metadata
             and artist.type == 'Group'
-        )
-        return ParallelBundle(GetArtistBundle(artist) for artist in groups)
+        ]
+        return _GroupGraphBundle(groups, self.metadata, self.excluded_artists)
 
     def prepare(self, fetched: Sequence[CSLArtist]) -> _CharacterMetadataBundle | None:
         """Update caches and decide whether to process the track, without making requests."""
@@ -393,11 +451,12 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
             if artist.type != 'Group':
                 reasons.append(Reason(artist, UNKNOWN_ARTIST))
                 continue
-            result = self._process_group(group_by_id[artist.id])
-            if isinstance(result, Reason):
-                reasons.append(result)
-            else:
-                metas.update(result)
+            group = group_by_id[artist.id]
+            match self._process_group(group, group_by_id, set()):
+                case INCOMPLETE_GROUP() as missing:
+                    reasons.append(Reason(group, missing))
+                case inferred:
+                    metas.update(inferred)
         if reasons:
             match self.should_exclude(self.track, reasons):
                 case ExcludeDecision.EXCLUDE:

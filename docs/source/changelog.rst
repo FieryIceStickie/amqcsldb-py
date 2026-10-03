@@ -32,6 +32,8 @@ Version 1.1.2
    :py:class:`~amqcsl.workflows.character.AsyncArtistToMeta` mappings.
 #. Added group metadata inference, cached exclusions, and parallel artist searches to the
    :doc:`character workflow <workflows/character>`.
+#. Added recursive group inference and cycle detection to
+   :py:meth:`~amqcsl.workflows.character.ArtistToMeta.apply`.
 #. Added :py:class:`~amqcsl.workflows.character.ExcludeDecision` with an option to ignore tracks.
 #. Skip instrumental tracks in :py:meth:`~amqcsl.workflows.character.ArtistToMeta.apply`.
 #. Parallelized group and metadata fetching in :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.apply`.

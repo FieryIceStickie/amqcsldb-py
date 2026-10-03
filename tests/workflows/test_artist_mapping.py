@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 from attrs import evolve
 from helpers import load
-from httpx import Request, Response
+from httpx import HTTPStatusError, Request, Response
 from respx import Route, Router
 from respx.models import Call
 
@@ -189,14 +189,14 @@ async def test_rejected_exclusion_raises_without_queueing(
 
 
 @pytest.mark.parametrize('members', [[], [artist('Nested', group=True)]])
-async def test_missing_or_nested_members_do_not_recurse(
+async def test_empty_groups_report_the_credited_group(
     client: DBClient | AsyncDBClient,
     router: Router,
     members: list[dict[str, JSONType]],
 ) -> None:
     g = artist('Group', group=True)
     get_group = router.get('/api/artist/Group') % Response(200, json=group_details(g, members))
-    nested = router.get('/api/artist/Nested') % Response(500)
+    nested = router.get('/api/artist/Nested') % Response(200, json=group_details(artist('Nested', group=True), []))
     mock_metadata(router)
     mapping = await finish(cm.compact_make_artist_to_meta(client, {}))
     failures: list[cm.Reason] = []
@@ -208,7 +208,9 @@ async def test_missing_or_nested_members_do_not_recurse(
     await finish(mapping.apply(track(g), should_exclude))
     assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
     assert [*failures[0].reason.artists] == [CSLArtistSample.from_json(m) for m in members]
-    assert get_group.called and not nested.called
+    assert failures[0].artist.id == 'Group'
+    assert get_group.called
+    assert nested.called == bool(members)
     assert not client.queue
 
 
@@ -225,6 +227,166 @@ async def test_nested_group_with_explicit_metadata(
     await finish(mapping.apply(track(g)))
     assert not nested_query.called
     assert mapping.metadata[CSLArtistSample.from_json(g)] == mapping.metadata[CSLArtistSample.from_json(nested)]
+
+
+async def test_recursive_groups_share_members_and_cache_all_levels(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    a, b = artist('Alice'), artist('Bob')
+    root, left, right, shared = [artist(name, group=True) for name in ('Root', 'Left', 'Right', 'Shared')]
+    mock_search(router, [a, b])
+    queries = [
+        router.get(f'/api/artist/{sample["id"]}') % Response(200, json=group_details(sample, members))
+        for sample, members in [(root, [left, right]), (left, [a, shared]), (right, [shared, b]), (shared, [b, a])]
+    ]
+    mock_metadata(router)
+    add = router.post(url__regex=r'/api/track/[^/]+/metadata') % Response(200)
+    mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A', 'Bob': 'B'}))
+    for idx, sample in enumerate([root, shared, left, right, root]):
+        await finish(mapping.apply(track(sample, track_id=str(idx)), lambda _t, _r: pytest.fail('Unexpected failure')))
+    assert all(query.call_count == 1 for query in queries)
+    assert len(mapping.metadata) == 6
+    for sample in [root, left, right, shared]:
+        values = mapping.metadata[CSLArtistSample.from_json(sample)]
+        assert len(values) == 2
+        assert {meta.value for meta in values} == {'A', 'B'}
+    await finish(client.commit())
+    assert add.call_count == 5
+    for call in cast(Sequence[Call], add.calls):
+        assert {meta['value'] for meta in json.loads(call.request.content)['extraMetadatas']} == {'A', 'B'}
+
+
+async def test_recursive_missing_members_are_collated_for_the_credited_group(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    a, missing, other = artist('Alice'), artist('Missing'), artist('Other')
+    root, left, right = [artist(name, group=True) for name in ('Root', 'Left', 'Right')]
+    mock_search(router, [a])
+    for sample, members in [(root, [left, right]), (left, [a, missing]), (right, [missing, other])]:
+        _ = router.get(f'/api/artist/{sample["id"]}') % Response(200, json=group_details(sample, members))
+    mock_metadata(router)
+    add = router.post('/api/track/test-track/metadata') % Response(200)
+    mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
+    failures: list[cm.Reason] = []
+
+    def exclude(_: CSLTrack, reasons: Sequence[cm.Reason]) -> cm.ExcludeDecision:
+        failures.extend(reasons)
+        return cm.ExcludeDecision.EXCLUDE
+
+    await finish(mapping.apply(track(root, a), exclude))
+    assert len(failures) == 1
+    assert failures[0].artist.id == 'Root'
+    assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
+    assert [member.id for member in failures[0].reason.artists] == ['Missing', 'Other']
+    assert len(mapping.metadata) == 1
+    assert mapping.excluded_artists == {'Root'}
+    await finish(client.commit())
+    assert json.loads(cast(Call, add.calls[0]).request.content)['extraMetadatas'] == [
+        {'isArtist': True, 'type': 'Character', 'value': 'A'},
+    ]
+
+
+@pytest.mark.parametrize('mutual', [False, True], ids=['self_cycle', 'mutual_cycle'])
+async def test_recursive_group_cycles_are_incomplete(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+    mutual: bool,
+) -> None:
+    root, nested, a = artist('Root', group=True), artist('Nested', group=True), artist('Alice')
+    mock_search(router, [a])
+    root_query = router.get('/api/artist/Root') % Response(
+        200, json=group_details(root, [nested if mutual else root, a])
+    )
+    nested_query = router.get('/api/artist/Nested') % Response(200, json=group_details(nested, [root]))
+    metadata = mock_metadata(router)
+    mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
+    failures: list[cm.Reason] = []
+
+    def ignore(_: CSLTrack, reasons: Sequence[cm.Reason]) -> cm.ExcludeDecision:
+        failures.extend(reasons)
+        return cm.ExcludeDecision.IGNORE
+
+    await finish(mapping.apply(track(root), ignore))
+    assert root_query.call_count == 1
+    assert nested_query.call_count == int(mutual)
+    assert len(failures) == 1 and failures[0].artist.id == 'Root'
+    assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
+    assert [member.id for member in failures[0].reason.artists] == ['Root']
+    assert len(mapping.metadata) == 1
+    assert not metadata.called and not client.queue and not mapping.excluded_artists
+
+
+@pytest.mark.parametrize('exclude', [False, True], ids=['explicit_metadata', 'excluded_member'])
+async def test_nested_explicit_metadata_or_exclusion_stops_cycle_traversal(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+    exclude: bool,
+) -> None:
+    root, nested, a = artist('Root', group=True), artist('Nested', group=True), artist('Alice')
+    mock_search(router, [nested, a])
+    _ = router.get('/api/artist/Root') % Response(200, json=group_details(root, [nested, a]))
+    nested_query = router.get('/api/artist/Nested') % Response(200, json=group_details(nested, [root]))
+    mock_metadata(router)
+    mapping = await finish(
+        cm.compact_make_artist_to_meta(
+            client,
+            {'Alice': 'A'} if exclude else {'Alice': 'A', 'Nested': 'Override'},
+            exclude=['Nested'] if exclude else [],
+        )
+    )
+    await finish(mapping.apply(track(root), lambda _t, _r: pytest.fail('Unexpected failure')))
+    assert not nested_query.called
+    assert {meta.value for meta in mapping.metadata[CSLArtistSample.from_json(root)]} == (
+        {'A'} if exclude else {'A', 'Override'}
+    )
+
+
+@pytest.mark.parametrize('client', ['async'], indirect=True)
+async def test_nested_group_requests_run_in_parallel(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    assert isinstance(client, AsyncDBClient)
+    root, left, right = [artist(name, group=True) for name in ('Root', 'Left', 'Right')]
+    a = artist('Alice')
+    mock_search(router, [a])
+    _ = router.get('/api/artist/Root') % Response(200, json=group_details(root, [left, right]))
+    arrived: set[str] = set()
+    both_started = asyncio.Event()
+
+    async def get_nested(req: Request) -> Response:
+        group_id = req.url.path.rsplit('/', 1)[-1]
+        arrived.add(group_id)
+        if len(arrived) == 2:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=2)
+        sample = left if group_id == 'Left' else right
+        return Response(200, json=group_details(sample, [a]))
+
+    router.get(url__regex=r'/api/artist/(Left|Right)').mock(side_effect=get_nested)
+    mock_metadata(router)
+    mapping = await cm.compact_make_artist_to_meta(client, {'Alice': 'A'})
+    await mapping.apply(track(root))
+    assert arrived == {'Left', 'Right'}
+    assert len(mapping.metadata) == 4 and len(client.queue) == 1
+
+
+async def test_nested_group_query_failure_leaves_mapping_and_queue_unchanged(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    root, nested, a = artist('Root', group=True), artist('Nested', group=True), artist('Alice')
+    mock_search(router, [a])
+    _ = router.get('/api/artist/Root') % Response(200, json=group_details(root, [a, nested]))
+    nested_query = router.get('/api/artist/Nested') % Response(500)
+    metadata = mock_metadata(router)
+    mapping = await finish(cm.compact_make_artist_to_meta(client, {'Alice': 'A'}))
+    with pytest.raises(HTTPStatusError):
+        await finish(mapping.apply(track(root), lambda _t, _r: pytest.fail('Query failure called the callback')))
+    assert nested_query.called and not metadata.called
+    assert len(mapping.metadata) == 1 and not mapping.excluded_artists and not client.queue
 
 
 async def test_exclusion_keeps_additions_and_all_stale_deletions(
@@ -369,7 +531,7 @@ async def test_concurrent_apply_shares_exclusion(
     assert len(calls) == 1
 
 
-async def test_cached_group_can_be_used_as_member_without_recursion(
+async def test_cached_group_can_be_used_as_member_without_refetching(
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
