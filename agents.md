@@ -153,7 +153,8 @@ real network requests in tests). Fixtures/resources live in
   only open a PR when explicitly asked.
 - Check `git log` and follow the existing commit conventions: a concise
   conventional title (such as `feat: ...` or `fix: ...`) and a meaningful,
-  short description of the change and relevant validation.
+  short description of the change using bullet points.
+- Do not include validation summaries or a `Validation` section in commit messages.
 - Include `Implemented with Codex.` in commit descriptions for changes
   made by Codex.
 - Split unrelated changes into reasonable commits when useful; a single
