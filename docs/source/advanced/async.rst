@@ -89,3 +89,14 @@ Here is an async script doing the same thing:
     logger = logging.getLogger('Async')
     setup_logging()
     asyncio.run(main(logger))
+
+Request limit
+-------------
+
+The async client's ``max_request_count`` controls how many requests run at once (default 15,
+range 1–50). You can change it while the client is running. Lowering it lets active requests
+finish and holds new requests until there is room; raising it lets waiting requests start.
+
+The limit is shared by queries, edits, and audio uploads made through the same client.
+Separate client instances each have their own limit. See :doc:`http` for timeouts and other
+HTTP request behavior.

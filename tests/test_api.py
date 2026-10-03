@@ -1000,6 +1000,7 @@ async def test_parallel_uploads_preserve_limit_and_do_not_retry(
     active = 0
     peak = 0
     both_started = asyncio.Event()
+    release = asyncio.Event()
 
     async def upload_response(request: niquests.PreparedRequest) -> niquests.Response:
         nonlocal active, peak
@@ -1008,7 +1009,7 @@ async def test_parallel_uploads_preserve_limit_and_do_not_retry(
         if active == 2:
             both_started.set()
         try:
-            await asyncio.wait_for(both_started.wait(), timeout=1)
+            await asyncio.wait_for(release.wait(), timeout=1)
             raise niquests.Timeout('Upload stalled', request=request)
         finally:
             active -= 1
@@ -1018,8 +1019,16 @@ async def test_parallel_uploads_preserve_limit_and_do_not_retry(
     )
     for _ in range(3):
         await client.add_audio(track, audio, queue=True)
-    with pytest.raises(niquests.Timeout, match='Upload stalled'):
-        await client.commit()
+    task = asyncio.create_task(client.commit())
+    try:
+        await asyncio.wait_for(both_started.wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert active == 2
+        assert upload.call_count == 2
+    finally:
+        release.set()
+        with pytest.raises(niquests.Timeout, match='Upload stalled'):
+            await task
     assert peak == 2
     assert active == 0
     assert upload.call_count == 3
@@ -1222,3 +1231,116 @@ async def test_queued_upload_does_not_open_file_before_transport_slot(
         assert body.closed
     await task
     assert body.closed
+
+
+@pytest.mark.parametrize('client', ['async'], indirect=True)
+@pytest.mark.parametrize('initial_limit, new_limit', [(1, 3), (3, 1)])
+async def test_request_limit_changes_with_active_and_waiting_requests(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+    initial_limit: int,
+    new_limit: int,
+) -> None:
+    assert isinstance(client, AsyncDBClient)
+    client.max_request_count = initial_limit
+    started = [asyncio.Event() for _ in range(5)]
+    release = [asyncio.Event() for _ in range(5)]
+    active = 0
+
+    def response_for(idx: int):
+        async def response(request: niquests.PreparedRequest) -> niquests.Response:
+            nonlocal active
+            active += 1
+            started[idx].set()
+            try:
+                await release[idx].wait()
+                return mock_response()
+            finally:
+                active -= 1
+
+        return response
+
+    for idx in range(5):
+        router.get(f'/api/limit-test/{idx}').mock(side_effect=response_for(idx))
+    tasks = [
+        asyncio.create_task(
+            client._send_request(  # type: ignore[reportPrivateUsage]
+                build_request(client.client, 'GET', f'/api/limit-test/{idx}')
+            )
+        )
+        for idx in range(5)
+    ]
+    try:
+        await asyncio.wait_for(started[initial_limit - 1].wait(), timeout=1)
+        await asyncio.sleep(0)
+        assert active == initial_limit
+        assert not started[initial_limit].is_set()
+        client.max_request_count = new_limit
+        assert client.max_request_count == new_limit
+        if new_limit > initial_limit:
+            await asyncio.wait_for(started[new_limit - 1].wait(), timeout=1)
+            assert active == new_limit
+            assert not started[new_limit].is_set()
+            release[0].set()
+            await tasks[0]
+            await asyncio.wait_for(started[new_limit].wait(), timeout=1)
+            assert active == new_limit
+        else:
+            for idx in range(initial_limit - 1):
+                release[idx].set()
+                await tasks[idx]
+                await asyncio.sleep(0)
+                assert active == initial_limit - idx - 1
+                assert not started[initial_limit].is_set()
+            release[initial_limit - 1].set()
+            await tasks[initial_limit - 1]
+            await asyncio.wait_for(started[initial_limit].wait(), timeout=1)
+            assert active == new_limit
+            assert not started[initial_limit + 1].is_set()
+    finally:
+        for event in release:
+            event.set()
+        await asyncio.gather(*tasks)
+    assert active == 0
+    assert all(event.is_set() for event in started)
+
+
+@pytest.mark.parametrize('client', ['async'], indirect=True)
+async def test_cancelling_waiting_requests_does_not_lose_capacity(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    assert isinstance(client, AsyncDBClient)
+    client.max_request_count = 1
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def response(request: niquests.PreparedRequest) -> niquests.Response:
+        started.set()
+        await release.wait()
+        return mock_response()
+
+    router.get('/api/limit-test/active').mock(side_effect=response)
+    waiting = router.get('/api/limit-test/waiting').respond()
+    after = router.get('/api/limit-test/after').respond()
+
+    async def send(path: str) -> niquests.Response:
+        return await client._send_request(  # type: ignore[reportPrivateUsage]
+            build_request(client.client, 'GET', path)
+        )
+
+    active = asyncio.create_task(send('/api/limit-test/active'))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    cancelled = asyncio.create_task(send('/api/limit-test/waiting'))
+    next_request = asyncio.create_task(send('/api/limit-test/after'))
+    try:
+        await asyncio.sleep(0)
+        assert waiting.call_count == after.call_count == 0
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+    finally:
+        release.set()
+        await asyncio.gather(active, next_request)
+    assert waiting.call_count == 0
+    assert after.call_count == 1

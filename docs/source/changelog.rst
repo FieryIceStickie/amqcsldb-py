@@ -21,6 +21,7 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Allow changing :py:attr:`~amqcsl.AsyncDBClient.max_request_count` while requests are running.
 #. Stream audio uploads without buffering whole files in memory.
 #. Scope saved session cookies to the database over HTTPS and stop logging session IDs.
 

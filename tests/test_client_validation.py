@@ -47,6 +47,21 @@ def test_async_request_limit_boundaries(value: int) -> None:
     assert AsyncDBClient(max_request_count=value).max_request_count == value
 
 
+@pytest.mark.parametrize('value', [0, -1, 51])
+def test_invalid_request_limit_assignment_preserves_previous_limit(value: int) -> None:
+    client = AsyncDBClient(max_request_count=3)
+    with pytest.raises(ValueError):
+        client.max_request_count = value
+    assert client.max_request_count == 3
+
+
+@pytest.mark.parametrize('value', [1, 50])
+def test_request_limit_assignment_accepts_boundaries(value: int) -> None:
+    client = AsyncDBClient()
+    client.max_request_count = value
+    assert client.max_request_count == value
+
+
 def test_session_path_accepts_string_or_path(
     client_class: type[DBClient] | type[AsyncDBClient],
     tmp_path: Path,

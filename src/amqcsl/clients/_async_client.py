@@ -12,7 +12,7 @@ import niquests
 from attrs import define, field
 from attrs.validators import gt, le
 
-from amqcsl.clients._http_utils import MultipartUpload, reject_redirect, request_options
+from amqcsl.clients._http_utils import MultipartUpload, RequestSemaphore, reject_redirect, request_options
 from amqcsl.clients.bundles._core import Items, StreamingBundle
 from amqcsl.clients.bundles._misc import (
     AddAudioBundle,
@@ -93,8 +93,7 @@ class AsyncDBClient:
     max_batch_size: int = field(default=100, validator=gt(0))
     #: Maximum number of queries when iterating
     max_query_size: int = field(default=1500, validator=gt(0))
-    #: Maximum number of concurrent requests
-    max_request_count: int = field(default=15, validator=[gt(0), le(50)])
+    _max_request_count: int = field(default=15, alias='max_request_count', validator=[gt(0), le(50)])
 
     _lists: CSLLists = field(factory=dict)
     _groups: CSLGroups = field(factory=dict)
@@ -108,9 +107,20 @@ class AsyncDBClient:
         """
         return False
 
+    @property
+    def max_request_count(self) -> int:
+        """Maximum concurrent requests, adjustable from 1 to 50 while the client is running."""
+        return self._max_request_count
+
+    @max_request_count.setter
+    def max_request_count(self, value: int) -> None:
+        """Update the limit; active requests finish before a lower limit takes effect."""
+        self._max_request_count = value
+        self._request_semaphore.resize(value)
+
     @cached_property
-    def _request_semaphore(self) -> asyncio.Semaphore:
-        return asyncio.Semaphore(self.max_request_count)
+    def _request_semaphore(self) -> RequestSemaphore:
+        return RequestSemaphore(self.max_request_count)
 
     @property
     def client(self) -> niquests.AsyncSession:

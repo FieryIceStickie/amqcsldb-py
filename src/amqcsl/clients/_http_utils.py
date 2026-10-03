@@ -2,11 +2,47 @@ import asyncio
 from collections.abc import AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO, TypedDict
+from types import TracebackType
+from typing import BinaryIO, Self, TypedDict
 from uuid import uuid4
 
 import niquests
+from attrs import define, field
 from niquests.typing import HttpMethodType, QueryParameterType
+
+
+@define
+class RequestSemaphore:
+    """Limit active requests while allowing the capacity to change safely."""
+
+    _limit: int = field(alias='limit')
+    _active: int = field(default=0, init=False)
+    _acquire_lock: asyncio.Lock = field(factory=asyncio.Lock, init=False, repr=False)
+    _changed: asyncio.Event = field(factory=asyncio.Event, init=False, repr=False)
+
+    def resize(self, limit: int) -> None:
+        """Wake waiting requests to recheck capacity without disturbing active ones."""
+        self._limit = limit
+        self._changed.set()
+
+    async def __aenter__(self) -> Self:
+        """Acquire a slot, preserving the order of waiting requests."""
+        async with self._acquire_lock:
+            while self._active >= self._limit:
+                self._changed.clear()
+                await self._changed.wait()
+            self._active += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Release a slot on completion, failure, or cancellation."""
+        self._active -= 1
+        self._changed.set()
 
 
 class MultipartUpload:
