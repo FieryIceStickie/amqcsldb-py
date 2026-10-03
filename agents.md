@@ -95,6 +95,43 @@ rather than editing it.
 
 **Formatting details:** ruff, line length 120, single-quote strings.
 
+### Maintainer's coding preferences
+
+- Prefer `idx` over `i` for loop indices.
+- Use `[*items]` instead of `list(items)` and `{*items}` instead of
+  `set(items)`. Use `set()` for an empty set. Named constructors are fine
+  where a callable is needed, such as an attrs field factory.
+- Prefer `(*inferred,) = dict.fromkeys(...)` over
+  `tuple(dict.fromkeys(...))` when deduplicating values.
+- Add trailing commas to longer function signatures so Ruff wraps them
+  onto multiple lines.
+- Prefer `match`/`case` over chains of `isinstance` checks where practical,
+  especially in client stream processing. Keep the match statements used
+  to convert JSON into objects.
+- Add useful docstrings to private methods too; an underscore prefix does
+  not mean a method should be undocumented.
+- Keep intentional formatting comments. If Ruff rejects an empty comment,
+  use `# :)` rather than deleting it.
+- Share sync/async workflow logic through bundles and keep compatibility
+  wrappers small. Keep bundles out of ordinary user-facing interfaces.
+- Keep async network requests outside locks used to protect shared writes;
+  recheck cached state before updating it.
+- Prefer static type checking over runtime type validators. Keep checks
+  for meaningful value constraints.
+- Keep logging useful and sparse, matching the existing workflow messages.
+
+### Documentation preferences
+
+- Match the maintainer's existing informal, direct writing style.
+- User documentation should explain how to use the library without
+  introducing bundle internals.
+- Keep `docs/source/reference/` as API reference directives; put explanatory
+  prose in the guides.
+- Write concise changelog entries for readers who know the codebase.
+  Describe the changes without explaining the implementation, and link
+  relevant APIs or documentation wherever possible.
+- Add changes to the appropriate release section of the changelog.
+
 **Tests:** pytest + pytest-asyncio + respx (mocks HTTP calls — don't make
 real network requests in tests). Fixtures/resources live in
 `tests/resources/`.
@@ -115,6 +152,13 @@ real network requests in tests). Fixtures/resources live in
 - Always work on a branch, never commit directly to `main`.
 - PRs are optional. The maintainer can review changes in the current session;
   only open a PR when explicitly asked.
+- Check `git log` and follow the existing commit conventions: a concise
+  conventional title (such as `feat: ...` or `fix: ...`) and a meaningful,
+  short description of the change and relevant validation.
+- Include `Implemented with Codex.` in commit descriptions for changes
+  made by Codex.
+- Split unrelated changes into reasonable commits when useful; a single
+  coherent change can use one commit.
 
 ## Boundaries
 
