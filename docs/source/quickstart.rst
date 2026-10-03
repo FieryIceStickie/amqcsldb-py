@@ -52,7 +52,6 @@ to the console in 50 track batches::
     LIVE with a smile!
     LIVE with a smile!
     [2025-06-03 00:06:46,965|amqcsl.client]:INFO: Page exhausted
-    [2025-06-03 00:06:46,965|amqcsl.client]:INFO: Querying next page
 
 This is the client fetching each page of the search result and automatically chaining them
 together, so you don't need to worry about iterating over pages yourself. Before we get into the
@@ -90,7 +89,7 @@ You can create groups and lists,
     # Don't actually run this it'll make a new group in the db
     new_group = client.create_group('new group') 
 
-    # This creates a list called test by containing tracks from lists rat and game
+    # This creates a list called test containing tracks from lists rat and game
     new_list = client.create_list('test', client.lists['rat'], client.lists['game'])
 
 and add/remove tracks from these lists:
@@ -98,14 +97,30 @@ and add/remove tracks from these lists:
 .. code-block:: python
 
     # Remove all existing tracks
-    client.list_remove(new_list, *client.iter_tracks(active_list=new_list))
+    client.list_edit(new_list, remove=client.iter_tracks(active_list=new_list))
     # Add all idoly pride tracks
-    client.list_add(new_list, *client.iter_tracks(groups=[client.groups['IDOLY PRIDE']]))
+    client.list_edit(new_list, add=client.iter_tracks(groups=[client.groups['IDOLY PRIDE']]))
 
     # Or equivalently,
     new_tracks = [*client.iter_tracks(groups=[client.groups['IDOLY PRIDE']])]
-    existing_tracks = [*client.iter_tracks(active_list=new_list])]
-    client.list_edit(new_list, new_tracks, existing_tracks)
+    existing_tracks = [*client.iter_tracks(active_list=new_list)]
+    client.list_edit(new_list, add=new_tracks, remove=existing_tracks)
+
+You can also rename a list with ``client.list_edit(new_list, name='new name')``, or delete it with
+:py:meth:`list_delete <amqcsl.DBClient.list_delete>`:
+
+.. code-block:: python
+
+    client.list_delete(new_list)
+
+If you already have a track's ID, you don't need to fetch the whole track to add or remove it.
+You can use :py:class:`CSLTrackRef <amqcsl.objects.CSLTrackRef>` instead:
+
+.. code-block:: python
+
+    from amqcsl.objects import CSLTrackRef
+
+    client.list_edit(rat_list, add=[CSLTrackRef('track-id')])
 
 .. _iter-info:
 
@@ -160,7 +175,7 @@ etc. This is supported via the following methods:
     for song in client.iter_songs('Shuka Saitou'):
         song = client.get_song(song)
     for artist in client.iter_artists('Aoi Nagatsuki'):
-        artist = client.get_artist(song)
+        artist = client.get_artist(artist)
     for track in client.iter_tracks('You Watanabe'):
         meta = client.get_metadata(track)
 
@@ -169,6 +184,7 @@ looks different to the other methods. See
 :py:class:`CSLSong <amqcsl.objects.CSLSong>`,
 :py:class:`CSLArtist <amqcsl.objects.CSLArtist>`, and
 :py:class:`CSLMetadata <amqcsl.objects.CSLMetadata>` for more information.
+If a track doesn't have metadata, ``get_metadata`` returns ``None``.
 
 Editing Tracks
 --------------
@@ -191,12 +207,13 @@ For metadata, you can add/remove them with
     from amqcsl.objects import ExtraMetadata
 
     terraria = client.groups['Terraria']
-    game_meta = ExtraMetadata('Game', False, 'Terraria')
+    game_meta = ExtraMetadata(is_artist=False, type='Game', value='Terraria')
     for track in client.iter_tracks(groups=[terraria]):
-        meta = track.get_metadata(track)
-        # This is just an example, don't actually do this
-        for m in meta.extra_metas:
-            client.track_remove_metadata(track, m)
+        meta = client.get_metadata(track)
+        if meta is not None:
+            for m in meta.extra_metas:
+                if m.key == 'Game' and m.value != 'Terraria':
+                    client.track_remove_metadata(track, m)
         client.track_add_metadata(track, game_meta, existing_meta=meta)
 
 You can pass in multiple metadata objects to 
@@ -219,21 +236,69 @@ after confirming your changes:
 .. code-block:: python
    
     from amqcsl.objects import ExtraMetadata
-    from amqcsl.utils import prompt
+    from amqcsl.workflows.character import prompt
 
     terraria = client.groups['Terraria']
-    game_meta = ExtraMetadata('Game', False, 'Terraria')
+    game_meta = ExtraMetadata(is_artist=False, type='Game', value='Terraria')
     for track in client.iter_tracks(groups=[terraria]):
-        meta = track.get_metadata(track)
+        meta = client.get_metadata(track)
         client.track_add_metadata(track, game_meta, existing_meta=meta, queue=True)
 
     if prompt(client.queue):
         client.commit()
 
-Adding Albums and Adding Audio
-------------------------------
+Creating Albums and Adding Audio
+--------------------------------
 
-You can upload albums with :py:meth:`add_album <amqcsl.DBClient.add_album>`,
-as well as upload audio with :py:meth:`add_audio <amqcsl.DBClient.add_audio>`. The functionality
-for this is very basic right now, and a new workflow for doing this will be introduced next
-version, so probably don't worry about this yet.
+You can create albums with :py:meth:`create_album <amqcsl.DBClient.create_album>`. Pass in the tracks
+as a list of discs, where each disc is a list of :py:class:`AlbumTrack <amqcsl.objects.AlbumTrack>` objects:
+
+.. code-block:: python
+
+    from amqcsl.objects import AlbumTrack
+
+    client.create_album(
+        name='My album',
+        original_name='My album',
+        year=2025,
+        groups=[sunshine_group],
+        tracks=[[AlbumTrack('Track name', 'Original track name', 'Artist name')]],
+    )
+
+To upload an audio file for an existing track, use :py:meth:`add_audio <amqcsl.DBClient.add_audio>`:
+
+.. code-block:: python
+
+    track = next(client.iter_tracks('Track name'))
+    client.add_audio(track, 'audio.flac')
+
+If another track already has the audio you want, you can copy it with
+:py:meth:`import_audio <amqcsl.DBClient.import_audio>`:
+
+.. code-block:: python
+
+    source_track = next(client.iter_tracks('Track with audio'))
+    client.import_audio(track, source_track)
+
+These three methods also accept ``queue=True`` if you'd like to review the changes first.
+
+Using the Async Client
+----------------------
+
+If you're using :py:class:`AsyncDBClient <amqcsl.AsyncDBClient>`, use ``async with`` and ``async for``,
+and await the methods that make requests:
+
+.. code-block:: python
+
+    async with amqcsl.AsyncDBClient(
+        username=os.getenv('AMQ_USERNAME'),
+        password=os.getenv('AMQ_PASSWORD'),
+    ) as client:
+        sunshine_group = client.groups['Love Live! Sunshine!!']
+        async for track in client.iter_tracks(groups=[sunshine_group]):
+            meta = await client.get_metadata(track)
+            pprint(meta)
+
+Lists and groups are still accessed through ``client.lists`` and ``client.groups`` without awaiting.
+You'll also need to await edits with ``queue=True``, and ``client.commit()``. See :doc:`advanced/async`
+for a full script example.
