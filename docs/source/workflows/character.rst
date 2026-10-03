@@ -232,4 +232,4 @@ If you have an existing callback, replace ``True`` with ``cm.ExcludeDecision.EXC
 An excluded artist is treated as if they weren't on the track, so the other artists are processed
 as usual. If a group is incomplete, none of its metadata is used; it won't just add the characters
 it knows about. Stale character metadata will still be removed, but unrelated metadata is left alone.
-If everything is already correct, nothing is queued. Off-vocal tracks are skipped.
+If everything is already correct, nothing is queued. Off-vocal and instrumental tracks are skipped.

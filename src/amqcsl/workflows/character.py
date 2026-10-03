@@ -369,7 +369,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         groups = (
             artist
             for artist in self._credited_artists.values()
-            if self.track.type != 'OffVocal'
+            if self.track.type not in ('OffVocal', 'Instrumental')
             and artist.id not in self.excluded_artists
             and artist.to_sample() not in self.metadata
             and artist.type == 'Group'
@@ -378,7 +378,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
 
     def prepare(self, fetched: Sequence[CSLArtist]) -> _CharacterMetadataBundle | None:
         """Update caches and decide whether to process the track, without making requests."""
-        if self.track.type == 'OffVocal':
+        if self.track.type in ('OffVocal', 'Instrumental'):
             return None
         group_by_id = {group.id: group for group in fetched}
         reasons: list[Reason] = []

@@ -272,14 +272,19 @@ async def test_only_deletions_and_no_changes(
     assert delete.called
 
 
-async def test_off_vocal_skips_queries_and_callback(
+@pytest.mark.parametrize('type_id', [1, 2], ids=['off_vocal', 'instrumental'])
+async def test_non_vocal_tracks_skip_queries_and_callback(
     client: DBClient | AsyncDBClient,
     router: Router,
+    type_id: int,
 ) -> None:
     mapping = await finish(cm.compact_make_artist_to_meta(client, {}))
     get_meta = mock_metadata(router)
-    await finish(mapping.apply(evolve(track(artist('Unknown')), type_id=1), lambda _track, _reasons: pytest.fail()))
-    assert not get_meta.called and not client.queue
+    get_group = router.get('/api/artist/Group') % Response(500)
+    t = evolve(track(artist('Unknown'), artist('Group', group=True)), type_id=type_id)
+    await finish(mapping.apply(t, lambda _track, _reasons: pytest.fail('Skipped track called the callback')))
+    assert not get_meta.called and not get_group.called and not client.queue
+    assert not mapping.metadata and not mapping.excluded_artists
 
 
 async def test_disambiguation_and_pagination(
