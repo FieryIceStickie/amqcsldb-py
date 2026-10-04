@@ -52,6 +52,7 @@ def test_make_copies_each_template(
     assert "logging.getLogger('script')" in source
     if template is Templates.character:
         assert 'cm.make_artist_to_meta(' in source
+        assert 'async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:' in source
         assert 'characters: cm.CharacterDict' not in source
     compile(source, str(script), 'exec')
 

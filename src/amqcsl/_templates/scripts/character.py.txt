@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from contextlib import aclosing
 
 from dotenv import load_dotenv
 from log import setup_logging
@@ -26,8 +27,9 @@ async def main(logger: logging.Logger) -> None:
         )
         my_group = client.groups['INSERT GROUP NAME HERE']
         tracks = client.iter_tracks(groups=[my_group], batch_size=100)
-        async for bundle in artist_to_meta.iter_edits(tracks):
-            client.enqueue(bundle)
+        async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:
+            async for bundle in edits:
+                client.enqueue(bundle)
 
         if cm.prompt(client.queue):
             await client.commit()

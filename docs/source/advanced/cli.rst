@@ -24,7 +24,7 @@ This command creates directories ``log/``, ``logs/``, ``scripts/``, and files ``
 If there is an existing directory called ``log/``, the command will terminate early. For the files, data will be appended if the files already exist, and added to a new file if it doesn't.
 
 make
-~~~~
+----
 
 Create a new script from a template.
 

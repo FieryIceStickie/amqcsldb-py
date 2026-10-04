@@ -21,6 +21,8 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Close pending character workflow tasks when generated scripts stop iterating.
+
 #. Consolidate character scripts into the ``character`` template and
    :py:func:`~amqcsl.workflows.character.make_artist_to_meta`, using character names directly.
    Remove ``character_compact``, ``compact_make_artist_to_meta``, and ``CharacterDict``.
