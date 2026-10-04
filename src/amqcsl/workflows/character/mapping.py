@@ -5,20 +5,21 @@ import inspect
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Iterable, Iterator, Sequence
 from typing import Self, overload
 
-from attrs import define, field
+from attrs import define, evolve, field
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.clients.bundles._core import Bundle
+from amqcsl.clients.bundles._misc import GetMetadataBundle
 from amqcsl.objects._db_types import CSLArtist, CSLArtistSample, CSLTrack, ExtraMetadata
 
-from .bundles import ApplyArtistToMetaBundle, CharacterMetadataBundle, MakeArtistToMetaBundle
+from .bundles import ApplyArtistToMetaBundle, MakeArtistToMetaBundle
 from .prompts import async_prompt_should_exclude, prompt_should_exclude
 from .types import ArtistDict, ArtistKey, ArtistToMeta, AsyncShouldExclude, ExcludeDecision, ShouldExclude
 
 type _ExclusionRequest = tuple[
     ApplyArtistToMetaBundle,
     Sequence[CSLArtist],
-    asyncio.Future[CharacterMetadataBundle | None],
+    asyncio.Future[Bundle[None] | None],
 ]
 
 
@@ -114,7 +115,7 @@ class AsyncArtistToMeta(ArtistToMeta):
         bundle: ApplyArtistToMetaBundle,
         fetched: Sequence[CSLArtist],
         should_exclude: AsyncShouldExclude,
-    ) -> CharacterMetadataBundle | None:
+    ) -> Bundle[None] | None:
         """Serialize decisions and recheck shared caches without holding locks across input."""
         async with self._lock:
             reasons, metas = bundle.analyze(fetched)
@@ -124,11 +125,11 @@ class AsyncArtistToMeta(ArtistToMeta):
             async with self._lock:
                 reasons, metas = bundle.analyze(fetched)
             if reasons:
-                result = should_exclude(bundle.track, reasons)
+                result = should_exclude(bundle.track, reasons, bundle.existing_metadata)
                 decision = await result if inspect.isawaitable(result) else result
                 async with self._lock:
                     reasons, metas = bundle.analyze(fetched)
-                    return bundle.resolve(reasons, metas, lambda _track, _reasons: decision)
+                    return bundle.resolve(reasons, metas, lambda _track, _reasons, _existing: decision)
             return bundle.resolve(reasons, metas, bundle.should_exclude)
 
     async def _edit(
@@ -138,13 +139,17 @@ class AsyncArtistToMeta(ArtistToMeta):
         decisions: asyncio.Queue[_ExclusionRequest] | None = None,
     ) -> Bundle[None] | None:
         """Fetch track dependencies, obtain a decision, and build unqueued edits."""
+        if track.type in ('OffVocal', 'Instrumental'):
+            return None
         bundle = ApplyArtistToMetaBundle(
             track,
             self.metadata,
             self.excluded_artists,
-            lambda _track, _reasons: ExcludeDecision.ERROR,
+            lambda _track, _reasons, _existing: ExcludeDecision.ERROR,
         )
         fetched = await self._client.process(bundle.group_queries())
+        existing = await self._client.process(GetMetadataBundle(track))
+        bundle = evolve(bundle, existing_metadata=existing)
         if decisions is None:
             prepared = await self._prepare(bundle, fetched, should_exclude)
         else:
@@ -152,10 +157,10 @@ class AsyncArtistToMeta(ArtistToMeta):
                 reasons, metas = bundle.analyze(fetched)
                 prepared = bundle.resolve(reasons, metas, bundle.should_exclude) if not reasons else None
             if reasons:
-                future: asyncio.Future[CharacterMetadataBundle | None] = asyncio.get_running_loop().create_future()
+                future: asyncio.Future[Bundle[None] | None] = asyncio.get_running_loop().create_future()
                 await decisions.put((bundle, fetched, future))
                 prepared = await future
-        return await self._client.process(prepared) if prepared is not None else None
+        return prepared
 
     async def apply(
         self,

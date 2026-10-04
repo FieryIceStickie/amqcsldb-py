@@ -170,11 +170,12 @@ You can also pass a ``should_exclude`` function to ``iter_edits`` to make the de
 .. code-block:: python
 
     from collections.abc import Sequence
-    from amqcsl.objects import CSLTrack
+    from amqcsl.objects import CSLMetadata, CSLTrack
 
     def should_exclude(
         track: CSLTrack,
         reasons: Sequence[cm.Reason],
+        existing_metadata: CSLMetadata | None,
     ) -> cm.ExcludeDecision:
         for failure in reasons:
             print(failure.artist.name)
@@ -188,8 +189,10 @@ You can also pass a ``should_exclude`` function to ``iter_edits`` to make the de
         async for bundle in edits:
             client.enqueue(bundle)
 
-The callback gets the track and its unresolved artists as :py:class:`~amqcsl.workflows.character.Reason`
-objects. Each object has an ``artist`` and a ``reason``:
+The callback takes ``(track, reasons, existing_metadata)``. The third argument contains the track's
+current metadata, or ``None`` if it has none. Existing character metadata is also shown in the default
+exclusion prompt. The unresolved artists are :py:class:`~amqcsl.workflows.character.Reason` objects,
+each with an ``artist`` and a ``reason``:
 
 * ``UNKNOWN_ARTIST`` means the artist has no character metadata in the mapping.
 * ``INCOMPLETE_GROUP`` reports the credited group, with unresolved members in ``artists`` and resolved

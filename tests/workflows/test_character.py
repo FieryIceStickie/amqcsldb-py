@@ -10,7 +10,7 @@ from niquests_mock import MockRoute as Route
 from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
-from amqcsl.objects import CSLTrack
+from amqcsl.objects import CSLMetadata, CSLTrack
 from amqcsl.workflows import character as cm
 
 artists: cm.ArtistDict = {
@@ -122,6 +122,7 @@ class ArtistHandler:
         self,
         track: CSLTrack,
         unknown_artists: Sequence[cm.Reason],
+        _existing: CSLMetadata | None,
     ) -> cm.ExcludeDecision:
         self.unknown_artists[track.id] = [reason.artist.id for reason in unknown_artists]
         return cm.ExcludeDecision.ERROR

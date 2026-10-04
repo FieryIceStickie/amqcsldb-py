@@ -10,14 +10,18 @@ from rich.table import Column, Table
 from rich.text import Text
 
 from amqcsl.exceptions import QuitError
-from amqcsl.objects._db_types import CSLTrack
+from amqcsl.objects._db_types import CSLMetadata, CSLTrack
 
 from .types import INCOMPLETE_GROUP, ExcludeDecision, Reason
 
 _EXCLUSION_QUESTION = '[Y] Exclude  [N] Error  [I] Ignore track  [Q] Quit › '
 
 
-def _exclusion_panel(track: CSLTrack, artists: Sequence[Reason]) -> Panel:
+def _exclusion_panel(
+    track: CSLTrack,
+    artists: Sequence[Reason],
+    existing_metadata: CSLMetadata | None,
+) -> Panel:
     """Build a panel showing the track and unresolved artist metadata."""
     details = Table.grid(
         Column(style='dim', no_wrap=True),
@@ -31,6 +35,12 @@ def _exclusion_panel(track: CSLTrack, artists: Sequence[Reason]) -> Panel:
         'Artists',
         Text(', '.join(dict.fromkeys(credit.artist.name for credit in track.artist_credits)), style='cyan'),
     )
+    characters = (
+        dict.fromkeys(meta.value for meta in existing_metadata.extra_metas if meta.key == 'Character')
+        if existing_metadata is not None
+        else {}
+    )
+    details.add_row('Existing characters', Text(', '.join(characters) if characters else 'None', style='green'))
     reasons: list[Text] = []
     for failure in artists:
         reason = Text('⚠ ', style='yellow')
@@ -66,9 +76,13 @@ def _parse_exclusion(answer: str) -> ExcludeDecision | None:
             return None
 
 
-def prompt_should_exclude(track: CSLTrack, artists: Sequence[Reason]) -> ExcludeDecision:
+def prompt_should_exclude(
+    track: CSLTrack,
+    artists: Sequence[Reason],
+    existing_metadata: CSLMetadata | None,
+) -> ExcludeDecision:
     """Ask whether to exclude unresolved artists, raise an error, or ignore the track."""
-    rich.print(_exclusion_panel(track, artists))
+    rich.print(_exclusion_panel(track, artists, existing_metadata))
     while True:
         decision = _parse_exclusion(input(_EXCLUSION_QUESTION))
         if decision is not None:
@@ -95,9 +109,13 @@ async def _read_exclusion() -> str:
     return task.result()
 
 
-async def async_prompt_should_exclude(track: CSLTrack, artists: Sequence[Reason]) -> ExcludeDecision:
+async def async_prompt_should_exclude(
+    track: CSLTrack,
+    artists: Sequence[Reason],
+    existing_metadata: CSLMetadata | None,
+) -> ExcludeDecision:
     """Ask for an exclusion decision without blocking async network requests."""
-    rich.print(_exclusion_panel(track, artists))
+    rich.print(_exclusion_panel(track, artists, existing_metadata))
     while True:
         decision = _parse_exclusion(await _read_exclusion())
         if decision is not None:

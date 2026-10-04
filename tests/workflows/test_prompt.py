@@ -8,6 +8,8 @@ from rich.console import Console
 
 from amqcsl.exceptions import QuitError
 from amqcsl.objects import (
+    CSLExtraMetadata,
+    CSLMetadata,
     CSLTrack,
     from_json,
 )
@@ -83,7 +85,9 @@ def test_exclusion_prompt_decisions(
         return answer
 
     monkeypatch.setattr('builtins.input', read)
-    assert cm.prompt_should_exclude(from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack), []) is expected
+    assert (
+        cm.prompt_should_exclude(from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack), [], None) is expected
+    )
 
 
 @pytest.mark.parametrize('answer', ['q', 'QUIT'])
@@ -93,7 +97,7 @@ def test_exclusion_prompt_quit(monkeypatch: pytest.MonkeyPatch, answer: str) -> 
 
     monkeypatch.setattr('builtins.input', read)
     with pytest.raises(QuitError):
-        cm.prompt_should_exclude(from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack), [])
+        cm.prompt_should_exclude(from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack), [], None)
 
 
 def test_exclusion_prompt_retries_invalid_answers(
@@ -109,7 +113,7 @@ def test_exclusion_prompt_retries_invalid_answers(
 
     monkeypatch.setattr('builtins.input', read)
     t = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
-    assert cm.prompt_should_exclude(t, []) is cm.ExcludeDecision.IGNORE
+    assert cm.prompt_should_exclude(t, [], None) is cm.ExcludeDecision.IGNORE
     assert len(prompts) == 3
     output = capsys.readouterr().out
     assert t.id in output
@@ -132,17 +136,19 @@ async def test_async_exclusion_prompt_retries_and_parses(
     track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     if answer == 'quit':
         with pytest.raises(QuitError):
-            await cm.async_prompt_should_exclude(track, [])
+            await cm.async_prompt_should_exclude(track, [], None)
     else:
-        assert await cm.async_prompt_should_exclude(track, []) is cm.ExcludeDecision.IGNORE
+        assert await cm.async_prompt_should_exclude(track, [], None) is cm.ExcludeDecision.IGNORE
     assert capsys.readouterr().out.count('Unknown answer. Choose Y, N, I, or Q.') == 2
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('use_async', [False, True])
+@pytest.mark.parametrize('metadata_kind', ['missing', 'unrelated', 'characters'])
 async def test_exclusion_display_is_compact_and_preserves_literal_names(
     monkeypatch: pytest.MonkeyPatch,
     use_async: bool,
+    metadata_kind: str,
 ) -> None:
     output = StringIO()
     console = Console(file=output, width=70, color_system=None)
@@ -166,10 +172,22 @@ async def test_exclusion_display_is_compact_and_preserves_literal_names(
         artist_credits=[evolve(credit, artist=artist) for artist in [recognised, recognised, unknown, group]],
     )
     reasons = [cm.Reason(unknown, cm.UNKNOWN_ARTIST), cm.Reason(group, cm.INCOMPLETE_GROUP([member], [recognised]))]
+    existing = None
+    if metadata_kind != 'missing':
+        metas = [CSLExtraMetadata('language', 1, 'Language', 'Japanese')]
+        if metadata_kind == 'characters':
+            metas.extend(
+                [
+                    CSLExtraMetadata('first', 2, 'Character', 'Saki [bold]Hanami[/bold]'),
+                    CSLExtraMetadata('duplicate', 2, 'Character', 'Saki [bold]Hanami[/bold]'),
+                    CSLExtraMetadata('second', 2, 'Character', 'Temari'),
+                ]
+            )
+        existing = CSLMetadata(False, [], metas, len(metas), [])
     if use_async:
-        assert await cm.async_prompt_should_exclude(track, reasons) is cm.ExcludeDecision.IGNORE
+        assert await cm.async_prompt_should_exclude(track, reasons, existing) is cm.ExcludeDecision.IGNORE
     else:
-        assert cm.prompt_should_exclude(track, reasons) is cm.ExcludeDecision.IGNORE
+        assert cm.prompt_should_exclude(track, reasons, existing) is cm.ExcludeDecision.IGNORE
     rendered = output.getvalue()
     assert '╭─ Unknown metadata found' in rendered and '╰' in rendered
     assert 'test-track-id' in rendered and 'Test song' in rendered
@@ -178,4 +196,10 @@ async def test_exclusion_display_is_compact_and_preserves_literal_names(
     assert 'Special Unit — incomplete group' in rendered
     assert 'Known members: Known [bold]artist[/bold]' in rendered
     assert 'Members without character metadata: Another Singer' in rendered
+    assert 'Existing characters' in rendered and 'Japanese' not in rendered
+    if metadata_kind == 'characters':
+        assert rendered.count('Saki [bold]Hanami[/bold]') == 1
+        assert 'Temari' in rendered
+    else:
+        assert 'Existing characters  None' in rendered
     assert 'CSLTrack(' not in rendered and 'type_id' not in rendered and 'original_name' not in rendered

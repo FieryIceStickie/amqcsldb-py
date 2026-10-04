@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast, override
 
 import rich.repr
-from attrs import frozen
+from attrs import evolve, frozen
 
 from amqcsl.clients.bundles._core import Bundle, MixedVendor, MultiVendor, httpClient
 from amqcsl.clients.bundles._misc import (
@@ -173,6 +173,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
     excluded_artists: set[str]
     should_exclude: ShouldExclude
+    existing_metadata: CSLMetadata | None = None
 
     def _process_group(
         self,
@@ -230,7 +231,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         ]
         return _GroupGraphBundle(groups, self.metadata, self.excluded_artists)
 
-    def prepare(self, fetched: Sequence[CSLArtist]) -> CharacterMetadataBundle | None:
+    def prepare(self, fetched: Sequence[CSLArtist]) -> Bundle[None] | None:
         """Update caches and decide whether to process the track, without making requests."""
         reasons, metas = self.analyze(fetched)
         return self.resolve(reasons, metas, self.should_exclude)
@@ -265,12 +266,12 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         reasons: Sequence[Reason],
         metas: set[ExtraMetadata],
         should_exclude: ShouldExclude,
-    ) -> CharacterMetadataBundle | None:
+    ) -> Bundle[None] | None:
         """Apply an exclusion decision and build the metadata operation."""
         if self.track.type in ('OffVocal', 'Instrumental'):
             return None
         if reasons:
-            match should_exclude(self.track, reasons):
+            match should_exclude(self.track, reasons, self.existing_metadata):
                 case ExcludeDecision.EXCLUDE:
                     self.excluded_artists.update(reason.artist.id for reason in reasons)
                 case ExcludeDecision.ERROR:
@@ -279,41 +280,34 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
                     logger.info(f'Ignoring track {self.track.name}')
                     return None
 
-        return CharacterMetadataBundle(self.track, metas)
+        return _character_edits(self.track, metas, self.existing_metadata)
 
     @override
     def vendor(self, client: httpClient) -> MixedVendor[Bundle[None] | None]:
-        fetched = yield from cast(MixedVendor[list[CSLArtist]], self.group_queries().vendor(client))
-        prepared = self.prepare(fetched)
-        if prepared is None:
+        if self.track.type in ('OffVocal', 'Instrumental'):
             return None
-        return (yield from prepared.vendor(client))
-
-    @override
-    def __rich_repr__(self) -> rich.repr.Result:
-        yield 'track', self.track.simp
-
-
-@frozen
-class CharacterMetadataBundle(Bundle[Bundle[None] | None]):
-    """Fetch existing metadata and build queued edits after artist decisions are complete."""
-
-    track: CSLTrack
-    metas: set[ExtraMetadata]
-
-    @override
-    def vendor(self, client: httpClient) -> MixedVendor[Bundle[None] | None]:
+        fetched = yield from cast(MixedVendor[list[CSLArtist]], self.group_queries().vendor(client))
         existing = yield from cast(MixedVendor[CSLMetadata | None], GetMetadataBundle(self.track).vendor(client))
-        add = TrackAddMetadataBundle(self.track, self.metas, existing_meta=existing)
-        bundles: list[MetadataBundle] = [add] if add else []
-        if existing is not None:
-            bundles.extend(
-                TrackDeleteMetadataBundle(self.track, meta)
-                for meta in existing.extra_metas
-                if meta.key == 'Character' and ExtraMetadata.simplify(meta) not in self.metas
-            )
-        return parallel_actions(bundles) if bundles else None
+        prepared = evolve(self, existing_metadata=existing).prepare(fetched)
+        return prepared
 
     @override
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'track', self.track.simp
+
+
+def _character_edits(
+    track: CSLTrack,
+    metas: set[ExtraMetadata],
+    existing_metadata: CSLMetadata | None,
+) -> Bundle[None] | None:
+    """Build unqueued edits using metadata fetched before artist decisions."""
+    add = TrackAddMetadataBundle(track, metas, existing_meta=existing_metadata)
+    bundles: list[MetadataBundle] = [add] if add else []
+    if existing_metadata is not None:
+        bundles.extend(
+            TrackDeleteMetadataBundle(track, meta)
+            for meta in existing_metadata.extra_metas
+            if meta.key == 'Character' and ExtraMetadata.simplify(meta) not in metas
+        )
+    return parallel_actions(bundles) if bundles else None

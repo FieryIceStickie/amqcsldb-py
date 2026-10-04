@@ -21,6 +21,9 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Show existing character metadata in exclusion prompts and pass existing metadata as the third
+   argument to :py:func:`~amqcsl.workflows.character.prompt_should_exclude` and custom exclusion callbacks.
+
 #. Close pending character workflow tasks when generated scripts stop iterating.
 
 #. Consolidate character scripts into the ``character`` template and

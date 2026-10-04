@@ -6,7 +6,7 @@ from typing import Self, overload, override
 
 from attrs import frozen
 
-from amqcsl.objects._db_types import CSLArtistSample, CSLTrack, ExtraMetadata
+from amqcsl.objects._db_types import CSLArtistSample, CSLMetadata, CSLTrack, ExtraMetadata
 
 
 class _Wildcard:
@@ -96,10 +96,12 @@ class ExcludeDecision(Enum):
     IGNORE = auto()
 
 
-type ShouldExclude = Callable[[CSLTrack, Sequence[Reason]], ExcludeDecision]
+type ShouldExclude = Callable[[CSLTrack, Sequence[Reason], CSLMetadata | None], ExcludeDecision]
 
 
-type AsyncShouldExclude = Callable[[CSLTrack, Sequence[Reason]], ExcludeDecision | Awaitable[ExcludeDecision]]
+type AsyncShouldExclude = Callable[
+    [CSLTrack, Sequence[Reason], CSLMetadata | None], ExcludeDecision | Awaitable[ExcludeDecision]
+]
 
 
 class ArtistToMeta(Mapping[CSLArtistSample, Sequence[ExtraMetadata]]):
