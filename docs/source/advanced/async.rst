@@ -3,8 +3,7 @@ Async
 
 In addition to the default synchronous client, there is also the asynchronous :py:class:`amqcsl.AsyncDBClient`.
 The async client contains the same methods as :py:class:`amqcsl.DBClient`, but most methods will require awaiting.
-There is an ``async`` template for a basic script using the async client, and the ``character`` and ``character_compact`` templates
-are both async.
+There is an ``async`` template for a basic script using the async client. The ``character`` template is also async.
 
 Usage
 -----

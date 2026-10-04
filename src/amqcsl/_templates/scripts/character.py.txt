@@ -11,8 +11,6 @@ from amqcsl.workflows import character as cm
 
 _ = load_dotenv()
 
-characters: cm.CharacterDict = {}
-
 artists: cm.ArtistDict = {}
 
 
@@ -23,7 +21,6 @@ async def main(logger: logging.Logger) -> None:
     ) as client:
         artist_to_meta = await cm.make_artist_to_meta(
             client,
-            characters,
             artists,
             [],
         )

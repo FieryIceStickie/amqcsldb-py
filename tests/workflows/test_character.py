@@ -13,7 +13,7 @@ from amqcsl import AsyncDBClient, DBClient
 from amqcsl.objects import CSLTrack
 from amqcsl.workflows import character as cm
 
-compact_characters: cm.ArtistDict = {
+artists: cm.ArtistDict = {
     'Sayuri Date': 'Kanon Shibuya',
     'Liyuu': 'Keke Tang',
     'Naomi Payton': 'Sumire Heanna',
@@ -26,38 +26,6 @@ compact_characters: cm.ArtistDict = {
     'Yuina': 'Margarete Wien',
     'Sakura Sakakura': 'Tomari Onitsuka',
 }
-
-characters: cm.CharacterDict = {
-    'kanon': 'Kanon Shibuya',
-    'keke': 'Keke Tang',
-    'sumire': 'Sumire Heanna',
-    'chisato': 'Chisato Arashi',
-    'ren': 'Ren Hazuki',
-    'kinako': 'Kinako Sakurakouji',
-    'natsumi': 'Natsumi Onitsuka',
-    'shiki': 'Shiki Wakana',
-    'mei': 'Mei Yoneme',
-    'margarete': 'Margarete Wien',
-    'tomari': 'Tomari Onitsuka',
-    'yuuna': 'Yuuna Hijirisawa',
-    'mao': 'Mao Hiiragi',
-}
-
-# fmt: off
-artists: cm.ArtistDict = {
-    'Sayuri Date': 'kanon',
-    'Liyuu': 'keke',
-    'Nako Misaki': 'chisato',
-    'Naomi Payton': 'sumire',
-    'Nagisa Aoyama': 'ren',
-    'Nozomi Suzuhara': 'kinako',
-    'Aya Emori': 'natsumi',
-    'Wakana Ookuma': 'shiki',
-    'Akane Yabushima': 'mei',
-    'Yuina': 'margarete',
-    'Sakura Sakakura': 'tomari',
-}
-# fmt: on
 
 
 expected_track_names = {
@@ -183,18 +151,12 @@ def assert_metadatas(req_content: bytes, expected_names: set[str]):
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.mark.parametrize('compact', [False, True])
 async def test_aspire(
     aspire_fixture: AspireFixture,
     client: DBClient | AsyncDBClient,
     artist_handler: ArtistHandler,
-    compact: bool,
 ) -> None:
-    artist_to_meta = await finish(
-        cm.compact_make_artist_to_meta(client, compact_characters, ['Liella!'])
-        if compact
-        else cm.make_artist_to_meta(client, characters, artists, ['Liella!'])
-    )
+    artist_to_meta = await finish(cm.make_artist_to_meta(client, artists, ['Liella!']))
     match client:
         case DBClient():
             for track in client.iter_tracks('Aspire'):
@@ -239,8 +201,8 @@ async def test_artist_to_meta(
         params={'searchTerm': re.compile(r'^(?!Liella!$)')},
     ).mock(side_effect=artist_route)
 
-    artist_to_meta = await finish(cm.make_artist_to_meta(client, characters, artists))
-    expected_artist_to_meta = await finish(cm.make_artist_to_meta(client, characters, artists, ['Liella!']))
+    artist_to_meta = await finish(cm.make_artist_to_meta(client, artists))
+    expected_artist_to_meta = await finish(cm.make_artist_to_meta(client, artists, ['Liella!']))
     assert artist_to_meta.metadata == expected_artist_to_meta.metadata
 
     assert route.call_count == 11

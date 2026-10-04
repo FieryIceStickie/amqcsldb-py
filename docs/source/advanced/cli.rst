@@ -54,12 +54,6 @@ Create a new script from a template.
          :language: python
          :caption: Character
 
-   .. tab-item:: character_compact
-
-      .. literalinclude:: ../../../src/amqcsl/_templates/scripts/character_compact.py.txt
-         :language: python
-         :caption: Compact Character
-
    .. tab-item:: async
 
       .. literalinclude:: ../../../src/amqcsl/_templates/scripts/async.py.txt

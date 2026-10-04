@@ -50,6 +50,9 @@ def test_make_copies_each_template(
     assert script.exists()
     source = script.read_text()
     assert "logging.getLogger('script')" in source
+    if template is Templates.character:
+        assert 'cm.make_artist_to_meta(' in source
+        assert 'characters: cm.CharacterDict' not in source
     compile(source, str(script), 'exec')
 
 
@@ -63,7 +66,7 @@ def test_make_refuses_existing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert path.read_text() == 'original'
 
 
-@pytest.mark.parametrize('template', [Templates.character, Templates.character_compact])
+@pytest.mark.parametrize('template', [Templates.character])
 @pytest.mark.parametrize('error_kind', ['direct', 'grouped', 'mixed'])
 def test_character_template_logs_quit_and_preserves_other_errors(
     tmp_path: Path,

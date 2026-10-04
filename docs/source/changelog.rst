@@ -6,7 +6,7 @@ Version 1.1.0
 
 #. Added changelog
 #. Added new ``workflows`` submodule and moved old ``utils`` into ``workflows/character``
-#. Added :py:meth:`add_album <amqcsl.DBClient.add_album>` and :py:meth:`add_audio <amqcsl.DBClient.add_audio>`
+#. Added :py:meth:`add_album <amqcsl.DBClient.create_album>` and :py:meth:`add_audio <amqcsl.DBClient.add_audio>`
 #. Added tests
 
 
@@ -21,11 +21,17 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Consolidate character scripts into the ``character`` template and
+   :py:func:`~amqcsl.workflows.character.make_artist_to_meta`, using character names directly.
+   Remove ``character_compact``, ``compact_make_artist_to_meta``, and ``CharacterDict``.
+
 #. Use the filename without its extension for generated script logger names.
 
-#. Add ``iter_edits`` to character mappings to yield edits for manual enqueueing.
+#. Add :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.iter_edits` and
+   :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.iter_edits` to yield edits for manual enqueueing.
    Async processing runs concurrently and keeps requests running during exclusion prompts.
-#. Character mapping ``apply`` now returns prepared edits instead of enqueueing them.
+#. :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.apply` and
+   :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.apply` now return prepared edits instead of enqueueing them.
 #. Groups with no members now resolve to empty character metadata without prompting.
 #. Show a compact character exclusion prompt with track details and unresolved artist names.
 
@@ -50,21 +56,24 @@ Version 1.1.2
 #. Added :py:meth:`~amqcsl.DBClient.import_audio` and :py:meth:`~amqcsl.DBClient.list_delete`.
 #. Added :py:class:`~amqcsl.objects.CSLTrackRef` for editing lists with track IDs.
 #. Added ``exclude`` to :py:func:`~amqcsl.workflows.character.make_artist_to_meta` and
-   :py:func:`~amqcsl.workflows.character.compact_make_artist_to_meta`.
+   ``compact_make_artist_to_meta``.
 
 #. Changed :py:func:`~amqcsl.workflows.character.make_artist_to_meta` and
-   :py:func:`~amqcsl.workflows.character.compact_make_artist_to_meta` to return
+   ``compact_make_artist_to_meta`` to return
    :py:class:`~amqcsl.workflows.character.SyncArtistToMeta` or
    :py:class:`~amqcsl.workflows.character.AsyncArtistToMeta` mappings.
 #. Added group metadata inference, cached exclusions, and parallel artist searches to the
    :doc:`character workflow <workflows/character>`.
 #. Added recursive group inference and cycle detection to
-   :py:meth:`~amqcsl.workflows.character.ArtistToMeta.apply`.
+   :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.apply` and
+   :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.apply`.
 #. Added :py:class:`~amqcsl.workflows.character.ExcludeDecision` with an option to ignore tracks.
-#. Skip instrumental tracks in :py:meth:`~amqcsl.workflows.character.ArtistToMeta.apply`.
+#. Skip instrumental tracks in :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.apply` and
+   :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.apply`.
 #. Parallelized group and metadata fetching in :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.apply`.
 #. Replaced ``queue_character_metadata`` with
-   :py:meth:`ArtistToMeta.apply <amqcsl.workflows.character.ArtistToMeta.apply>`.
+   :py:meth:`SyncArtistToMeta.apply <amqcsl.workflows.character.SyncArtistToMeta.apply>` and
+   :py:meth:`AsyncArtistToMeta.apply <amqcsl.workflows.character.AsyncArtistToMeta.apply>`.
 #. Added dictionary reads to :py:class:`~amqcsl.workflows.character.ArtistToMeta` and
    :py:meth:`~amqcsl.objects.CSLArtistSample.to_sample` to artist objects.
 #. Added :py:obj:`~amqcsl.objects.ArtistType`, :py:obj:`~amqcsl.objects.ExtraMetadataType`,

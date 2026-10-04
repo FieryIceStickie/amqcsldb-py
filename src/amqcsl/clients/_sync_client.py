@@ -384,7 +384,7 @@ class DBClient:
             Newly created list
 
         Raises:
-            ListCreateError: Error if the request gives an error, probably because the list already exists
+            niquests.HTTPError: The server rejected the request, for example because the list already exists
         """
         bundle = CreateListBundle(name, csl_lists)
         self.process(bundle)

@@ -58,7 +58,6 @@ def init(
 class Templates(StrEnum):
     simple = 'simple'
     character = 'character'
-    character_compact = 'character_compact'
     async_ = 'async'
 
 

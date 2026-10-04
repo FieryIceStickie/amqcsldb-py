@@ -4,7 +4,7 @@ Adding Character Metadata
 Creating the script
 -------------------
 
-To start, use the ``character`` template (or the ``character_compact`` template, see below) provided by the CLI:
+To start, use the ``character`` template provided by the CLI:
 
 .. code-block:: zsh
 
@@ -19,53 +19,7 @@ Filling in the info
 Firstly, replace ``INSERT GROUP NAME HERE`` with the group you want to search by,
 or edit the code to iterate over the tracks you want (see :ref:`iter-info`).
 
-After that, you'll want to fill in the two dictionaries. For characters, fill it with
-keys -> character names:
-
-.. code-block:: python
-
-    characters: cm.CharacterDict = {
-        'kotono': 'Kotono Nagase',
-        'nagisa': 'Nagisa Ibuki',
-        'saki': 'Saki Shiraishi',
-        'suzu': 'Suzu Narumiya',
-        'mei': 'Mei Hayasaka',
-        'fran': 'fran',
-        'rio': 'Rio Kanzaki',
-        'aoi': 'Aoi Igawa',
-    }
-
-For artists, fill it with artist name -> keys separated by spaces:
-
-.. code-block:: python
-
-    artists: cm.ArtistDict = {
-        'Mirai Tachibana': 'kotono',
-        ArtistName('Lynn', original_name='Lynn'): 'fran',
-        'Tsuki no Tempest': 'kotono nagisa saki suzu mei',
-        ('LizNoir', 'Idoly Pride (Anime)'): 'rio aoi',
-    }
-
-The key can come in three formats:
-
-1. name
-2. (name, disambiguation)
-3. :py:class:`ArtistName <amqcsl.workflows.character.ArtistName>` (name, original name, disambiguation)
-
-It's fine to not provide the full information as long as the result is unique; for example,
-we just did ``Tsuki no Tempest`` even though it has an original name and disambiguation, but for
-``Lynn`` we needed to provide the original name since there are two artists named ``Lynn`` in the database.
-The function will error if there are duplicates, so it's fine to be lazy at first and add more info if necessary.
-
-If necessary, you can use a different separator for the keys, which you'll need to pass into
-:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>` as ``sep``.
-
-A more compact way
--------------------
-
-Due to popular request, you can also input character names directly into artists. Instead of
-using the ``character`` template, use the ``character_compact`` template, and instead of keys,
-fill it out with character names separated by a comma and a space:
+Fill in the artist dictionary with artist names mapped to character names, separated by a comma and a space:
 
 .. code-block:: python
 
@@ -88,16 +42,33 @@ fill it out with character names separated by a comma and a space:
         'Minako Kotobuki': 'Ai Komiyama',
         'Aki Toyosaki': 'Kokoro Akazaki',
         'Sayaka Kanda': 'Mana Nagase',
-        'Sunny Peace': 'Sakura Kawasaki, Shizuku Hyoudou, Chisa Shiraishi, Rei Ichinose, Haruko Saeki',
-        'Tsuki no Tempest': 'Kotono Nagase, Nagisa Ibuki, Saki Shiraishi, Suzu Narumiya, Mei Hayasaka',
-        'TRINITYAiLE': 'Rui Tendou, Yuu Suzumura, Sumire Okuyama',
-        ('LizNoir', 'Idoly Pride'): 'Rio Kanzaki, Aoi Igawa, Ai Komiyama, Kokoro Akazaki',
-        ('LizNoir', 'Idoly Pride (Anime)'): 'Rio Kanzaki, Aoi Igawa',
     }
 
+If you've filled in the members of a group, you can leave the group itself out of the dictionary.
+When it shows up on a track, the mapping will fetch its members from the database and combine
+their character metadata. For example, if you've filled in all five members of ``Tsuki no Tempest``,
+you don't need to write out their characters again for the group.
+
+If you do provide an entry for the group, it'll just use that. Only forward relations of type
+``GroupMember`` are used to find members; other relations are ignored. If a member is itself a
+group, it'll fetch that group's members too, and keep going until it reaches artists already in the mapping.
+Nested groups are remembered too, so they don't need to be fetched again on later tracks.
+If groups contain each other in a cycle, it'll report the group as incomplete.
+
+The key can come in three formats:
+
+1. name
+2. (name, disambiguation)
+3. :py:class:`ArtistName <amqcsl.workflows.character.ArtistName>` (name, original name, disambiguation)
+
+It's fine to not provide the full information as long as the result is unique; for example,
+``Mirai Tachibana`` works without an original name or disambiguation if there is only one matching artist.
+For duplicate names, use a tuple or ``cm.ArtistName`` to narrow the match.
+The function will error if there are duplicates, so it's fine to be lazy at first and add more info if necessary.
+
 You can customize the separator by passing ``sep`` into
-:py:func:`compact_make_artist_to_meta <amqcsl.workflows.character.compact_make_artist_to_meta>`. If you're reusing
-character names a lot, the first method is preferable to minimize typos.
+:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>`.
+The ``character`` template uses this function directly.
 
 Running the script
 -------------------
@@ -110,22 +81,21 @@ those artists, ``n`` to raise an error, ``i`` to ignore the track, or ``q`` to q
 track's metadata as it is. Exclusions are remembered for later tracks.
 
 After processing all the tracks, it'll prompt you with all the queued metadata. Have a look through it,
-and if it's fine then type `y` and enter to make the changes, or type `n` to not commit the changes
+and if it's fine then type ``y`` and enter to make the changes, or type ``n`` to not commit the changes
 (or press ``q`` to quit, that works too).
 
 Search phrases
 --------------
 
 When creating the mapping,
-:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>` and
-:py:func:`compact_make_artist_to_meta <amqcsl.workflows.character.compact_make_artist_to_meta>`
-need to search the database to find your artists. Searching for a group like ``Hoshimi Production``
+:py:func:`make_artist_to_meta <amqcsl.workflows.character.make_artist_to_meta>`
+needs to search the database to find your artists. Searching for a group like ``Hoshimi Production``
 can get a lot of them in one go, which is faster than searching for each name individually.
-You can pass in a list of search phrases to both functions like this:
+You can pass in a list of search phrases like this:
 
 .. code-block:: python
 
-    artist_to_meta = cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
+    artist_to_meta = cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
 
 It's fine if the search phrases don't cover all artists; it'll search for any remaining names
 individually afterwards. If you pass in multiple phrases, it'll search them in parallel. You don't
@@ -135,24 +105,12 @@ need to provide any, but it'll speed things up if you're working with large grou
 Applying the mapping
 --------------------
 
-If you've filled in the members of a group, you can leave the group itself out of the dictionary.
-When it shows up on a track, the mapping will fetch its members from the database and combine
-their character metadata. For example, if you've filled in all five members of ``Tsuki no Tempest``,
-you don't need to write out their characters again for the group. It'll remember the result for
-later tracks too.
-
-If you do provide an entry for the group, it'll just use that. Only forward relations of type
-``GroupMember`` are used to find members; other relations are ignored. If a member is itself a
-group, it'll fetch that group's members too, and keep going until it reaches artists already in the mapping.
-Nested groups are remembered too, so they don't need to be fetched again on later tracks.
-If groups contain each other in a cycle, it'll report the group as incomplete.
-
-To use the mapping, call ``artist_to_meta.apply(track)`` for each track. It'll fetch the existing metadata
-and return a bundle of additions and deletions, or None if there are no edits:
+To use the mapping, call :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.apply` for each track. It'll fetch the existing metadata
+and return a bundle of additions and deletions, or ``None`` if there are no edits:
 
 .. code-block:: python
 
-    artist_to_meta = cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
+    artist_to_meta = cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
     for track in client.iter_tracks('My album'):
         bundle = artist_to_meta.apply(track)
         if bundle is not None:
@@ -163,7 +121,7 @@ If you're using ``AsyncDBClient``, you'll need to await these calls:
 
 .. code-block:: python
 
-    artist_to_meta = await cm.compact_make_artist_to_meta(client, artists, ['Hoshimi Production'])
+    artist_to_meta = await cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
     async for track in client.iter_tracks('My album'):
         bundle = await artist_to_meta.apply(track)
         if bundle is not None:
@@ -178,13 +136,13 @@ It's fine to pass in either an artist sample or a full artist object.
 The metadata is stored in ``artist_to_meta.metadata``, and excluded artist IDs are stored in
 ``artist_to_meta.excluded_artists``. Search phrases are only needed when creating the mapping.
 If you're updating an older script, replace ``queue_character_metadata`` with ``artist_to_meta.apply(track)``;
-enqueue the returned bundle when it is not None. You no longer need to fetch the track's metadata yourself.
+enqueue the returned bundle when it is not ``None``. You no longer need to fetch the track's metadata yourself.
 
 If you already know which artists to ignore, pass them in as ``exclude`` when creating the mapping:
 
 .. code-block:: python
 
-    artist_to_meta = cm.compact_make_artist_to_meta(
+    artist_to_meta = cm.make_artist_to_meta(
         client,
         artists,
         ['Hoshimi Production'],
@@ -248,7 +206,7 @@ If everything is already correct, nothing is queued. Off-vocal and instrumental 
 Processing multiple tracks
 --------------------------
 
-Use ``iter_edits`` to prepare changes and enqueue them yourself:
+Use :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.iter_edits` to prepare changes and enqueue them yourself:
 
 .. code-block:: python
 
@@ -256,7 +214,8 @@ Use ``iter_edits`` to prepare changes and enqueue them yourself:
         client.enqueue(edit)
     client.commit()
 
-With ``AsyncDBClient``, tracks are processed concurrently and edits are yielded as they finish:
+With :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.iter_edits`, tracks are processed concurrently
+and edits are yielded as they finish:
 
 .. code-block:: python
 
