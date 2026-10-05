@@ -18,6 +18,7 @@ AMQCSLdb is a Python api wrapper for the |AMQ| Custom Song List database.
    advanced/async
    advanced/http
    advanced/serialization
+   advanced/queues
    advanced/cli
 
 .. toctree::

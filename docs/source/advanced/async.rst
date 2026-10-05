@@ -10,7 +10,7 @@ Usage
 
 The main differences are the usual ones when going from sync to async: ``with`` and ``for`` become ``async with`` and ``async for``,
 calling methods require ``await``, and functions should be prefixed with ``async``. Lists and groups can be fetched with the same properties
-as the sync client, and queueing client operations still requires an await despite not making any network requests.
+as the sync client. Queue methods are synchronous; only ``await client.process_queue(queue)`` sends the queued edits.
 
 Here's an example script with the sync client that finds all tracks that has You Watanabe in the extra metadata:
 

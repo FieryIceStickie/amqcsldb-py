@@ -21,6 +21,16 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Consolidate object and bundle serialization in ``objects/_serialization.py``.
+
+#. Move bundles from ``amqcsl.clients.bundles`` to ``amqcsl.bundles``.
+
+#. Rename ``parallel_actions()`` to ``action_bundle_compose()``.
+
+#. Add independent :py:class:`~amqcsl.queues.StandardQueue` queues and
+   :py:meth:`~amqcsl.AsyncDBClient.process_queue`, replacing client queues and ``queue=True``.
+   Queues support review, JSON recovery, and retries; see :doc:`advanced/queues`.
+
 #. Show existing character metadata in exclusion prompts and pass existing metadata as the third
    argument to :py:func:`~amqcsl.workflows.character.prompt_should_exclude` and custom exclusion callbacks.
 
@@ -88,7 +98,7 @@ Version 1.1.2
 #. Fixed endpoint routing in :py:meth:`~amqcsl.DBClient.song_edit` and
    :py:meth:`~amqcsl.DBClient.song_delete_metadata`.
 #. Fixed HTTP error handling in :py:meth:`~amqcsl.DBClient.track_edit` and
-   :py:meth:`~amqcsl.AsyncDBClient.commit`.
+   ``commit()``.
 #. Fixed generator inputs losing their values before requests were built.
 #. Updated :doc:`character workflow documentation <workflows/character>`.
 #. Removed runtime type validators from :py:class:`~amqcsl.DBClient` and

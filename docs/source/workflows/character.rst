@@ -79,6 +79,9 @@ You can pass in a list of search phrases like this:
 
 .. code-block:: python
 
+    from amqcsl.queues import StandardQueue
+
+    queue = StandardQueue()
     artist_to_meta = cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
 
 It's fine if the search phrases don't cover all artists; it'll search for any remaining names
@@ -95,19 +98,22 @@ It prepares the character metadata changes and yields edits for you to enqueue, 
 .. code-block:: python
 
     from contextlib import aclosing
+    from amqcsl.queues import StandardQueue
+
+    queue = StandardQueue()
 
     artist_to_meta = await cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
     tracks = client.iter_tracks('My album')
     async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:
         async for bundle in edits:
-            client.enqueue(bundle)
+            queue.enqueue(bundle)
 
-    if cm.prompt(client.queue):
-        await client.commit()
+    if cm.prompt(queue.display()):
+        await client.process_queue(queue)
 
 The mapping uses the client that created it, so you'll want to run this inside your client's
-``async with`` block. Preparing and enqueueing edits doesn't send the changes to the database,
-so call ``client.commit()`` after you've checked the queue to apply them.
+``async with`` block. Preparing and queueing edits doesn't send the changes to the database,
+so call ``client.process_queue(queue)`` after you've checked the queue to apply them.
 
 When processing tracks:
 
@@ -127,12 +133,15 @@ If you're using ``DBClient`` instead, use
 
 .. code-block:: python
 
+    from amqcsl.queues import StandardQueue
+
+    queue = StandardQueue()
     artist_to_meta = cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
     for bundle in artist_to_meta.iter_edits(client.iter_tracks('My album')):
-        client.enqueue(bundle)
+        queue.enqueue(bundle)
 
-    if cm.prompt(client.queue):
-        client.commit()
+    if cm.prompt(queue.display()):
+        client.process_queue(queue)
 
 Unknown artists
 ---------------
@@ -187,7 +196,7 @@ You can also pass a ``should_exclude`` function to ``iter_edits`` to make the de
 
     async with aclosing(artist_to_meta.iter_edits(tracks, should_exclude)) as edits:
         async for bundle in edits:
-            client.enqueue(bundle)
+            queue.enqueue(bundle)
 
 The callback takes ``(track, reasons, existing_metadata)``. The third argument contains the track's
 current metadata, or ``None`` if it has none. Existing character metadata is also shown in the default
@@ -216,7 +225,7 @@ It returns an edit for you to enqueue, or ``None`` if the track doesn't need cha
 
     bundle = await artist_to_meta.apply(track)
     if bundle is not None:
-        client.enqueue(bundle)
+        queue.enqueue(bundle)
 
 With ``DBClient``, call :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.apply` without ``await``.
 You can pass the same ``should_exclude`` callback as with ``iter_edits``. Neither method enqueues or

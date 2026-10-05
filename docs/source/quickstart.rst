@@ -225,26 +225,28 @@ objects can either be
 Queueing Operations
 -------------------
 
-In many use cases, it's likely you'd want to see your changes before actually applying them. The
-client offers a queue for this case. When calling 
-:py:meth:`track_add_metadata <amqcsl.DBClient.track_add_metadata>` and 
-:py:meth:`track_remove_metadata <amqcsl.DBClient.track_remove_metadata>`, you can pass in a
-``queue=True`` keyword argument to add the edit to the queue, and then commit the queue at the end
-after confirming your changes:
+Use an independent :py:class:`~amqcsl.queues.StandardQueue` to review edits before sending them.
+Queue methods are synchronous, even when you use an async client:
 
 .. code-block:: python
-   
+
     from amqcsl.objects import ExtraMetadata
+    from amqcsl.queues import StandardQueue
     from amqcsl.workflows.character import prompt
 
+    queue = StandardQueue()
     terraria = client.groups['Terraria']
-    game_meta = ExtraMetadata(is_artist=False, type='Game', value='Terraria')
+    game_meta = ExtraMetadata(False, 'Game', 'Terraria')
     for track in client.iter_tracks(groups=[terraria]):
         meta = client.get_metadata(track)
-        client.track_add_metadata(track, game_meta, existing_meta=meta, queue=True)
+        queue.track_add_metadata(track, game_meta, existing_meta=meta)
 
-    if prompt(client.queue):
-        client.commit()
+    if prompt(queue.display()):
+        client.process_queue(queue)
+
+Use ``await client.process_queue(queue)`` with the async client. Successful edits are removed;
+failed and unattempted edits remain. The remaining queue is always written as JSON, defaulting
+to stdout. See :doc:`advanced/queues` for saving, loading, and error handling.
 
 Creating Albums and Adding Audio
 --------------------------------
@@ -279,7 +281,7 @@ If another track already has the audio you want, you can copy it with
     source_track = next(client.iter_tracks('Track with audio'))
     client.import_audio(track, source_track)
 
-These three methods also accept ``queue=True`` if you'd like to review the changes first.
+The queue has matching audio methods if you'd like to review the changes first.
 
 Using the Async Client
 ----------------------
@@ -299,5 +301,5 @@ and await the methods that make requests:
             pprint(meta)
 
 Lists and groups are still accessed through ``client.lists`` and ``client.groups`` without awaiting.
-You'll also need to await edits with ``queue=True``, and ``client.commit()``. See :doc:`advanced/async`
-for a full script example.
+Queue methods don't need awaiting; sending them with ``client.process_queue(queue)`` does.
+See :doc:`advanced/async` for a full script example.

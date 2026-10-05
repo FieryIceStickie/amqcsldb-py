@@ -8,6 +8,7 @@ from log import setup_logging
 
 import amqcsl
 from amqcsl.exceptions import QuitError
+from amqcsl.queues import StandardQueue
 from amqcsl.workflows import character as cm
 
 _ = load_dotenv()
@@ -16,6 +17,7 @@ artists: cm.ArtistDict = {}
 
 
 async def main(logger: logging.Logger) -> None:
+    queue = StandardQueue()
     async with amqcsl.AsyncDBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
@@ -29,10 +31,10 @@ async def main(logger: logging.Logger) -> None:
         tracks = client.iter_tracks(groups=[my_group], batch_size=100)
         async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:
             async for bundle in edits:
-                client.enqueue(bundle)
+                queue.enqueue(bundle)
 
-        if cm.prompt(client.queue):
-            await client.commit()
+        if cm.prompt(queue.display()):
+            await client.process_queue(queue)
 
 
 if __name__ == '__main__':
