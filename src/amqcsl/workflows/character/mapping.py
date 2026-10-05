@@ -8,8 +8,8 @@ from typing import Self, overload
 from attrs import define, evolve, field
 
 from amqcsl import AsyncDBClient, DBClient
-from amqcsl.clients.bundles._core import Bundle
-from amqcsl.clients.bundles._misc import GetMetadataBundle
+from amqcsl.bundles._core import Bundle
+from amqcsl.bundles._misc import GetMetadataBundle
 from amqcsl.objects._db_types import CSLArtist, CSLArtistSample, CSLTrack, ExtraMetadata
 
 from .bundles import ApplyArtistToMetaBundle, MakeArtistToMetaBundle

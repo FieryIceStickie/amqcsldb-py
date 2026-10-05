@@ -11,6 +11,7 @@ from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.objects import CSLMetadata, CSLTrack
+from amqcsl.queues import StandardQueue
 from amqcsl.workflows import character as cm
 
 artists: cm.ArtistDict = {
@@ -153,6 +154,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_aspire(
+    pending: StandardQueue,
     aspire_fixture: AspireFixture,
     client: DBClient | AsyncDBClient,
     artist_handler: ArtistHandler,
@@ -163,17 +165,17 @@ async def test_aspire(
             for track in client.iter_tracks('Aspire'):
                 bundle = await finish(artist_to_meta.apply(track, artist_handler))
                 if bundle is not None:
-                    client.enqueue(bundle)
+                    pending.enqueue(bundle)
         case AsyncDBClient():
             async for track in client.iter_tracks('Aspire'):
                 bundle = await finish(artist_to_meta.apply(track, artist_handler))
                 if bundle is not None:
-                    client.enqueue(bundle)
+                    pending.enqueue(bundle)
     assert not artist_handler.unknown_artists
     assert aspire_fixture.group_route.call_count == 1
-    assert len(client.queue) == aspire_fixture.num_tracks - 2
+    assert len([*pending]) == aspire_fixture.num_tracks - 2
 
-    await finish(client.commit())
+    await finish(client.process_queue(pending))
 
     for track_id, req_content in aspire_fixture.calls.items():
         assert track_id in expected_track_names

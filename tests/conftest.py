@@ -12,6 +12,7 @@ from niquests_mock import MockRouter as Router
 
 import amqcsl
 from amqcsl.clients._client_consts import DB_URL
+from amqcsl.queues import StandardQueue
 
 
 @pytest.fixture
@@ -106,3 +107,8 @@ async def client(
     else:
         async with amqcsl.AsyncDBClient(session_path=session_path) as client:
             yield client
+
+
+@pytest.fixture
+def pending() -> StandardQueue:
+    return StandardQueue()

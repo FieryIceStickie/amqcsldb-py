@@ -4,10 +4,12 @@ from ._core import (
     Items,
     MixedVendor,
     MultiVendor,
+    ParallelBundle,
     SingleVendor,
     StreamingBundle,
     StreamingVendor,
     Vendor,
+    action_bundle_compose,
     httpClient,
 )
 from ._misc import (
@@ -45,7 +47,6 @@ from ._pages import (
     RawPage,
     SyncPageStrategy,
 )
-from ._parallel import ParallelBundle, parallel_actions
 
 __all__ = [
     'AddAudioBundle',
@@ -89,6 +90,6 @@ __all__ = [
     'TrackDeleteMetadataBundle',
     'TrackEditBundle',
     'Vendor',
+    'action_bundle_compose',
     'httpClient',
-    'parallel_actions',
 ]

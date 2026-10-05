@@ -4,15 +4,14 @@ from contextlib import nullcontext
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, TextIO
 
 import niquests
 from attrs import define, field
 from attrs.validators import gt
 
-from amqcsl.clients._http_utils import MultipartUpload, reject_redirect, request_options
-from amqcsl.clients.bundles._core import Items, StreamingBundle
-from amqcsl.clients.bundles._misc import (
+from amqcsl.bundles._core import Items, StreamingBundle
+from amqcsl.bundles._misc import (
     AddAudioBundle,
     AuthBundle,
     Bundle,
@@ -40,11 +39,12 @@ from amqcsl.clients.bundles._misc import (
     TrackDeleteMetadataBundle,
     TrackEditBundle,
 )
-from amqcsl.clients.bundles._pages import (
+from amqcsl.bundles._pages import (
     IterArtistsBundle,
     IterSongsBundle,
     IterTracksBundle,
 )
+from amqcsl.clients._http_utils import MultipartUpload, reject_redirect, request_options
 from amqcsl.exceptions import ClientDoesNotExistError
 from amqcsl.objects._db_types import (
     AlbumTrack,
@@ -64,6 +64,7 @@ from amqcsl.objects._db_types import (
     TrackPutArtistCredit,
 )
 from amqcsl.objects._obj_consts import TrackType
+from amqcsl.queues._core import Queue, QueueGroup, save_recovery
 
 from ._client_consts import (
     DB_URL,
@@ -94,7 +95,6 @@ class DBClient:
 
     _lists: CSLLists | None = None
     _groups: CSLGroups | None = None
-    _queue: list[Bundle[Any]] = field(factory=list)
 
     def is_sync(self) -> bool:
         """Check for if client is synchronous
@@ -110,10 +110,6 @@ class DBClient:
         if self._client is None:
             raise ClientDoesNotExistError
         return self._client
-
-    @property
-    def queue(self) -> list[Bundle[Any]]:
-        return self._queue
 
     def _send_request(self, req: niquests.PreparedRequest) -> niquests.Response:
         """Send a prepared request with operation-specific timeouts and reject redirects."""
@@ -136,42 +132,85 @@ class DBClient:
         client = self.client
         g = bundle.vendor(client)
         res: niquests.Response | Sequence[niquests.Response] | None = None
-        while True:
-            try:
-                req = g.send(res)  # type: ignore[reportArgumentType]
-            except StopIteration as e:
-                return e.value
-            match req:
-                case Items():
-                    g.close()
-                    raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
-                case niquests.PreparedRequest():
-                    res = self._send_request(req)
-                case reqs:
-                    res = [self._send_request(req) for req in reqs]
+        try:
+            while True:
+                try:
+                    req = g.send(res)  # type: ignore[reportArgumentType]
+                except StopIteration as e:
+                    return e.value
+                match req:
+                    case Items():
+                        raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
+                    case niquests.PreparedRequest():
+                        res = self._send_request(req)
+                    case reqs:
+                        res = [self._send_request(req) for req in reqs]
+        finally:
+            g.close()
 
-    def enqueue(self, bundle: Bundle[None]):
-        """Add an object to the queue
+    def _process_queue_group(
+        self,
+        queue: Queue[Any],
+        group: QueueGroup,
+        *,
+        stop_if_err: bool,
+    ) -> None:
+        """Execute children sequentially, skipping the rest after a request error.
 
         Args:
-            obj: An object wrapper around a request
+            queue: Queue to update after each successful child.
+            group: Ordered snapshot of pending children.
+            stop_if_err: Whether request errors propagate instead of being logged.
         """
-        self._queue.append(bundle)
-
-    def commit(self, *, stop_if_err: bool = True):
-        """Commit changes in the queue
-
-        Args:
-            stop_if_err: Stop sending requests if one of them errors
-        """
-        logger.info(f'Commiting {len(self._queue)} changes')
-        for bundle in self._queue:
+        for bundle in group.bundles:
             try:
                 self.process(bundle)
             except niquests.exceptions.RequestException:
+                logger.exception('Queued bundle %r failed', bundle)
                 if stop_if_err:
                     raise
-        self.queue.clear()
+                return
+            queue.complete(bundle)
+
+    def process_queue(
+        self,
+        queue: Queue[Any],
+        *,
+        save_to: TextIO | None = None,
+        stop_if_err: bool = True,
+    ) -> None:
+        """Send pending groups sequentially and save unfinished work to a text stream.
+
+        A failed group skips its remaining children. Successful bundles are removed
+        immediately; failed and unattempted bundles remain queued.
+
+        Args:
+            queue: Independent queue to process and update.
+            save_to: Recovery output stream, or None for the current stdout. Written
+                at its current position and left open, including after success.
+            stop_if_err: Propagate request errors when True. When False, log them
+                and continue with other groups. Programming errors always propagate.
+
+        Raises:
+            RuntimeError: The queue is already processing.
+            ExceptionGroup: Execution and recovery output both fail.
+        """
+        with queue.processing() as groups:
+            changes_lists, changes_groups = queue.changes_lists(), queue.changes_groups()
+            logger.info('Processing %s queued edits', len(queue))
+            error: BaseException | None = None
+            try:
+                for group in groups:
+                    self._process_queue_group(queue, group, stop_if_err=stop_if_err)
+            except BaseException as caught:
+                error = caught
+                raise
+            finally:
+                if changes_lists:
+                    self._lists = None
+                if changes_groups:
+                    self._groups = None
+                save_recovery(queue, save_to, error)
 
     # --- Initialization ---
 
@@ -434,7 +473,7 @@ class DBClient:
         bundle = CreateGroupBundle(name)
         return self.process(bundle)
 
-    def group_edit(self, group: CSLGroup, name: str, *, queue: bool = False) -> None:
+    def group_edit(self, group: CSLGroup, name: str) -> None:
         """Edit a group
 
         Args:
@@ -442,30 +481,22 @@ class DBClient:
             name: New name of the group
         """
         bundle = GroupEditBundle(group, name)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
-    def group_delete(self, group: CSLGroup, *, queue: bool = False) -> None:
+    def group_delete(self, group: CSLGroup) -> None:
         """Delete a group
 
         Args:
             group: CSLGroup
         """
         bundle = GroupDeleteBundle(group)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def song_edit(
         self,
         song: CSLSong,
         name: str | None = None,
         disambiguation: str | None = None,
-        *,
-        queue: bool = False,
     ) -> None:
         """Edit a song
 
@@ -475,60 +506,44 @@ class DBClient:
             disambiguation: New disambiguation
         """
         bundle = SongEditBundle(song, name, disambiguation)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
-    def song_delete(self, song: CSLSong, *, queue: bool = False) -> None:
+    def song_delete(self, song: CSLSong) -> None:
         """Delete a song
 
         Args:
             song: CSLSong
         """
         bundle = SongDeleteBundle(song)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def song_add_metadata(
         self,
         song: CSLSong,
         *metas: Metadata,
-        queue: bool = False,
     ) -> None:
         """Add metadata to a song
 
         Args:
             song: CSLSong
             *metas: Metadata to add
-            queue: Whether to queue the request, defaults to False
         """
         bundle = SongAddMetadataBundle(song, metas)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def song_delete_metadata(
         self,
         song: CSLSong,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
-        queue: bool = False,
     ) -> None:
         """Remove metadata from a song
 
         Args:
             song: CSLSong
             meta: Metadata to remove
-            queue: Whether to queue the request, defaults to False
         """
         bundle = SongDeleteMetadataBundle(song, meta)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def track_add_metadata(
         self,
@@ -536,7 +551,6 @@ class DBClient:
         *metas: Metadata,
         override: bool | None = None,
         existing_meta: CSLMetadata | None = None,
-        queue: bool = False,
     ) -> None:
         """Add metadata to a track
 
@@ -545,36 +559,26 @@ class DBClient:
             *metas: Metadata to add
             override: Change metadata to override or append
             existing_meta: Existing metadata on the track, pass in to avoid duplicating metadata
-            queue: Whether to queue the request, defaults to False
 
         Raises:
             ValueError: If non-metadata is passed into metas
         """
         bundle = TrackAddMetadataBundle(track, metas, override, existing_meta)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def track_remove_metadata(
         self,
         track: CSLTrack,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
-        *,
-        queue: bool = False,
     ) -> None:
         """Remove metadata from a track
 
         Args:
             track: CSLTrack
             meta: Metadata to remove
-            queue: Whether to queue the request, defaults to False
         """
         bundle = TrackDeleteMetadataBundle(track, meta)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def track_edit(
         self,
@@ -587,7 +591,6 @@ class DBClient:
         original_name: str | None = None,
         song: NewSong | CSLSongSample | None = None,
         type: TrackType | None = None,
-        queue: bool = False,
     ) -> None:
         """Edit a track
 
@@ -600,16 +603,12 @@ class DBClient:
             original_name: New track original name
             song: New song
             type: New track type
-            queue: Whether to queue the request, defaults to False
 
         Returns:
             Newly edited track
         """
         bundle = TrackEditBundle(track, artist_credits, groups, name, original_artist, original_name, song, type)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     # --- Album Creation ---
 
@@ -620,8 +619,6 @@ class DBClient:
         year: int,
         groups: Iterable[CSLGroup],
         tracks: Sequence[Sequence[AlbumTrack]],
-        *,
-        queue: bool = False,
     ) -> None:
         """Create an album
 
@@ -631,53 +628,37 @@ class DBClient:
             year: Year album was created
             groups: Groups associated with album
             tracks: CSLTrack[][], where each CSLTrack[] is a disc
-            queue: Whether to queue the request, defaults to False
         """
         bundle = CreateAlbumBundle(name, original_name, year, groups, tracks)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def add_audio(
         self,
         track: CSLTrack,
         audio_path: str | PathLike[str],
-        *,
-        queue: bool = False,
     ) -> None:
         """Add audio to a track
 
         Args:
             track: CSLTrack
             audio_path: Path to the audio file
-            queue: Whether to queue the request, defaults to False
 
         Raises:
             QueryError: Audio path is invalid
         """
         bundle = AddAudioBundle(track, audio_path)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)
 
     def import_audio(
         self,
         track: CSLTrack,
         track_to_import_from: CSLTrack,
-        *,
-        queue: bool = False,
     ) -> None:
         """Import audio from an existing track
 
         Args:
             track: CSLTrack
             track_to_import_from: Other track to import audio from
-            queue: Whether to queue the request, defaults to False
         """
         bundle = ImportAudioBundle(track, track_to_import_from)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            self.process(bundle)
+        self.process(bundle)

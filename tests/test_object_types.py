@@ -29,7 +29,6 @@ from amqcsl.objects import (
     from_json,
     to_json,
 )
-from amqcsl.objects._conversion import DatabaseObject
 from amqcsl.objects._json_types import (
     JSONAlbumTrack,
     JSONArtist,
@@ -51,6 +50,7 @@ from amqcsl.objects._json_types import (
     MetadataPostExtraMetadata,
     TrackNewSong,
 )
+from amqcsl.objects._serialization import DatabaseObject
 
 
 def test_artist_to_sample_strips_relations():

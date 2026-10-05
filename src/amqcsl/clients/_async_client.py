@@ -1,20 +1,20 @@
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Iterator, Sequence
 from contextlib import aclosing, nullcontext
+from contextvars import ContextVar
 from functools import cached_property
 from os import PathLike
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self
+from typing import Any, Self, TextIO
 
 import niquests
 from attrs import define, field
 from attrs.validators import gt, le
 
-from amqcsl.clients._http_utils import MultipartUpload, RequestSemaphore, reject_redirect, request_options
-from amqcsl.clients.bundles._core import Items, StreamingBundle
-from amqcsl.clients.bundles._misc import (
+from amqcsl.bundles._core import Items, StreamingBundle
+from amqcsl.bundles._misc import (
     AddAudioBundle,
     AuthBundle,
     Bundle,
@@ -42,11 +42,12 @@ from amqcsl.clients.bundles._misc import (
     TrackDeleteMetadataBundle,
     TrackEditBundle,
 )
-from amqcsl.clients.bundles._pages import (
+from amqcsl.bundles._pages import (
     IterArtistsBundle,
     IterSongsBundle,
     IterTracksBundle,
 )
+from amqcsl.clients._http_utils import MultipartUpload, RequestSemaphore, reject_redirect, request_options
 from amqcsl.exceptions import ClientDoesNotExistError
 from amqcsl.objects._db_types import (
     AlbumTrack,
@@ -66,6 +67,7 @@ from amqcsl.objects._db_types import (
     TrackPutArtistCredit,
 )
 from amqcsl.objects._obj_consts import TrackType
+from amqcsl.queues._core import GroupAbortedError, GroupState, Queue, QueueGroup, save_recovery
 
 from ._client_consts import (
     DB_URL,
@@ -73,6 +75,23 @@ from ._client_consts import (
 )
 
 logger = logging.getLogger('amqcsl.client')
+
+
+@define
+class QueueRunState:
+    """Share scheduling decisions across workers in one queue run.
+
+    Attributes:
+        pending: Groups waiting to be assigned to a worker.
+        stop_if_err: Whether request errors stop scheduling new groups.
+        failures: Errors reported by individual bundles.
+        stopped: Whether workers should stop taking groups.
+    """
+
+    pending: Iterator[QueueGroup]
+    stop_if_err: bool
+    failures: list[Exception] = field(factory=list)
+    stopped: bool = False
 
 
 @define
@@ -97,7 +116,6 @@ class AsyncDBClient:
 
     _lists: CSLLists = field(factory=dict)
     _groups: CSLGroups = field(factory=dict)
-    _queue: list[Bundle[Any]] = field(factory=list)
 
     def is_sync(self) -> bool:
         """Check for if client is synchronous
@@ -129,18 +147,49 @@ class AsyncDBClient:
             raise ClientDoesNotExistError
         return self._client
 
-    @property
-    def queue(self) -> list[Bundle[Any]]:
-        return self._queue
+    @cached_property
+    def _queue_state(self) -> ContextVar[GroupState | None]:
+        """Carry group failure state through nested request tasks, scoped to this client."""
+        return ContextVar('queue_group', default=None)
 
     async def _send_request(self, req: niquests.PreparedRequest) -> niquests.Response:
         """Send within the concurrency limit using the shared transport policy."""
         async with self._request_semaphore:
-            body = req.body
-            with body.opened() if isinstance(body, MultipartUpload) else nullcontext():
-                response = await self.client.send(req, **request_options(req))
-            reject_redirect(response)
-            return response
+            state = self._queue_state.get()
+            if state is not None and state.failed:
+                raise GroupAbortedError('Another bundle in this group failed before this request started')
+            try:
+                body = req.body
+                with body.opened() if isinstance(body, MultipartUpload) else nullcontext():
+                    response = await self.client.send(req, **request_options(req))
+                reject_redirect(response)
+                return response
+            except Exception:
+                if state is not None:
+                    state.failed = True
+                raise
+
+    async def _send_requests(self, requests: Iterable[niquests.PreparedRequest]) -> list[niquests.Response]:
+        """Drain every request task before propagating a multi-request bundle failure.
+
+        Args:
+            requests: Prepared requests emitted together by a bundle.
+
+        Returns:
+            Responses in request insertion order.
+        """
+        tasks = [asyncio.create_task(self._send_request(request)) for request in requests]
+        try:
+            replies = await asyncio.gather(*tasks, return_exceptions=True)
+            errors = [reply for reply in replies if isinstance(reply, BaseException)]
+            if errors:
+                raise next((error for error in errors if not isinstance(error, GroupAbortedError)), errors[0])
+            return [reply for reply in replies if isinstance(reply, niquests.Response)]
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def process[R](self, bundle: Bundle[R]) -> R:
         """Processes a bundle (Mainly for internal use)
@@ -155,50 +204,230 @@ class AsyncDBClient:
         client = self.client
         g = bundle.vendor(client)
         res: niquests.Response | Sequence[niquests.Response] | None = None
-        while True:
+        try:
+            while True:
+                try:
+                    req = g.send(res)  # type: ignore[reportArgumentType]
+                except StopIteration as e:
+                    return e.value
+                match req:
+                    case Items():
+                        raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
+                    case niquests.PreparedRequest():
+                        res = await self._send_request(req)
+                    case reqs:
+                        res = await self._send_requests(reqs)
+        finally:
+            g.close()
+
+    async def _process_queued_bundle(
+        self,
+        queue: Queue[Any],
+        bundle: Bundle[Any],
+        group_state: GroupState,
+        run: QueueRunState,
+    ) -> None:
+        """Execute a queued bundle and remove it from the queue on success.
+
+        On failure, retain the bundle, record the error, and mark its group as
+        failed so unsent requests are skipped. Stop scheduling new groups when
+        required by the error policy. Already-aborted bundles remain queued.
+
+        Args:
+            queue: Queue containing the pending bundle.
+            bundle: Leaf bundle to execute.
+            group_state: Failure state shared by requests in this group.
+            run: Scheduling and error state shared by the workers.
+        """
+        try:
+            await self.process(bundle)
+            queue.complete(bundle)
+        except GroupAbortedError:
+            pass
+        except asyncio.CancelledError:
+            group_state.failed = True
+            run.stopped = True
+            raise
+        except Exception as error:  # noqa: BLE001 -- collect child errors without cancelling in-flight siblings
+            group_state.failed = True
+            run.failures.append(error)
+            logger.error('Queued bundle %r failed: %r', bundle, error)
+            if run.stop_if_err or not isinstance(error, niquests.exceptions.RequestException):
+                run.stopped = True
+
+    async def _process_queue_group(
+        self,
+        queue: Queue[Any],
+        group: QueueGroup,
+        run: QueueRunState,
+    ) -> None:
+        """Start a group's child tasks in insertion order with shared failure state.
+
+        Args:
+            queue: Queue to update as children complete.
+            group: Snapshot of the group's pending bundles.
+            run: Scheduling and error state shared by the workers.
+        """
+        state = GroupState()
+        token = self._queue_state.set(state)
+        children: list[asyncio.Task[None]] = []
+        try:
+            async with asyncio.TaskGroup() as tasks:
+                for bundle in group.bundles:
+                    children.append(tasks.create_task(self._process_queued_bundle(queue, bundle, state, run)))
+            # TaskGroup treats individually cancelled children as successful exits
+            if any(child.cancelled() for child in children):
+                raise asyncio.CancelledError
+        finally:
+            self._queue_state.reset(token)
+
+    async def _queue_worker(
+        self,
+        queue: Queue[Any],
+        run: QueueRunState,
+    ) -> None:
+        """Take groups until work ends or a failure stops scheduling.
+
+        Args:
+            queue: Queue whose groups this worker processes.
+            run: Iterator and scheduling state shared by the workers.
+        """
+        while not run.stopped:
+            group = next(run.pending, None)
+            if group is None:
+                return
+            await self._process_queue_group(queue, group, run)
+
+    async def _process_queue_groups(
+        self,
+        queue: Queue[Any],
+        groups: tuple[QueueGroup, ...],
+        *,
+        stop_if_err: bool,
+    ) -> None:
+        """Run the configured workers and drain them before propagating errors.
+
+        Args:
+            queue: Queue supplying the worker count and completion updates.
+            groups: Ordered execution snapshot.
+            stop_if_err: Whether request errors stop scheduling and propagate.
+
+        Raises:
+            ValueError: A nonempty queue supplies fewer than one worker.
+            ExceptionGroup: Multiple bundle errors need to propagate.
+        """
+        run = QueueRunState(iter(groups), stop_if_err)
+        workers: list[asyncio.Task[None]] = []
+        try:
+            count = queue.num_workers(self.max_request_count)
+            if groups and count < 1:
+                raise ValueError('A nonempty queue must provide at least one worker')
+            workers = [asyncio.create_task(self._queue_worker(queue, run)) for _ in range(min(count, len(groups)))]
+            await asyncio.gather(*workers)
+            propagated = [
+                error
+                for error in run.failures
+                if stop_if_err or not isinstance(error, niquests.exceptions.RequestException)
+            ]
+            if len(propagated) == 1:
+                raise propagated[0]
+            if propagated:
+                raise ExceptionGroup('Queued bundles failed', propagated)
+        finally:
+            for task in workers:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+
+    async def _finish_queue(
+        self,
+        queue: Queue[Any],
+        *,
+        changes_lists: bool,
+        changes_groups: bool,
+        save_to: TextIO | None,
+        error: BaseException | None,
+    ) -> None:
+        """Refresh changed caches and save recovery output without hiding errors.
+
+        Args:
+            queue: Remaining work to save.
+            changes_lists: Whether this run could change the list cache.
+            changes_groups: Whether this run could change the group cache.
+            save_to: Output stream, or None for the current stdout.
+            error: Execution error already being propagated, if any.
+
+        Raises:
+            ExceptionGroup: Execution and cache refresh both fail.
+        """
+        # Async caches cannot refresh on property access, clear them before refreshing
+        # so cancellation or a refresh error leaves no stale data
+        if changes_lists:
+            self._lists = {}
+        if changes_groups:
+            self._groups = {}
+        try:
+            if not isinstance(error, asyncio.CancelledError):
+                if changes_lists:
+                    await self.refresh_lists()
+                if changes_groups:
+                    await self.refresh_groups()
+        except BaseException as cache_error:
+            if isinstance(cache_error, asyncio.CancelledError):
+                error = cache_error
+                raise
+            if error is None:
+                error = cache_error
+                raise
+            if isinstance(error, Exception) and isinstance(cache_error, Exception):
+                error = ExceptionGroup('Queue processing and cache refresh failed', [error, cache_error])
+                raise error from None
+            logger.exception('Could not refresh changed queue caches')
+        finally:
+            save_recovery(queue, save_to, error)
+
+    async def process_queue(
+        self,
+        queue: Queue[Any],
+        *,
+        save_to: TextIO | None = None,
+        stop_if_err: bool = True,
+    ) -> None:
+        """Process concurrent groups and save unfinished work.
+
+        Successful children are removed immediately. A failed group skips unsent
+        requests while requests already in flight finish. Cancellation drains all
+        workers before saving the remaining queue and propagating.
+
+        Args:
+            queue: Independent queue to process and update.
+            save_to: Recovery output stream, or None for the current stdout. Written
+                at its current position and left open, including after success.
+            stop_if_err: Stop taking new groups and propagate request errors when
+                True. When False, log request errors and continue with other groups.
+                Programming errors always propagate.
+
+        Raises:
+            RuntimeError: The queue is already processing.
+            ExceptionGroup: Multiple execution, cache refresh, or save errors occur.
+        """
+        with queue.processing() as groups:
+            changes_lists, changes_groups = queue.changes_lists(), queue.changes_groups()
+            logger.info('Processing %s queued edits', len(queue))
+            error: BaseException | None = None
             try:
-                req = g.send(res)  # type: ignore[reportArgumentType]
-            except StopIteration as e:
-                return e.value
-            match req:
-                case Items():
-                    g.close()
-                    raise TypeError('Use a streaming iterator or .collect() for streaming bundles')
-                case niquests.PreparedRequest():
-                    res = await self._send_request(req)
-                case reqs:
-                    res = await asyncio.gather(*map(self._send_request, reqs))
-
-    def enqueue(self, bundle: Bundle[None]):
-        """Add an object to the queue
-
-        Args:
-            obj: An object wrapper around a request
-        """
-        self._queue.append(bundle)
-
-    async def commit(self, *, stop_if_err: bool = True):
-        """Commit changes in the queue
-
-        Args:
-            stop_if_err: Propagate HTTP errors after concurrent work finishes; otherwise log and ignore them.
-
-        Queued bundles run concurrently. The queue is retained when an error is propagated.
-        Errors other than HTTP errors always propagate.
-        """
-        logger.info(f'Commiting {len(self.queue)} changes')
-        results = await asyncio.gather(*map(self.process, self.queue), return_exceptions=True)
-        for task, result in zip(self.queue, results):
-            match result:
-                case niquests.exceptions.RequestException():
-                    logger.error(f'{task} failed: {result!r}')
-                    if stop_if_err:
-                        raise result
-                case BaseException():
-                    raise result
-                case _:
-                    pass
-        self.queue.clear()
+                await self._process_queue_groups(queue, groups, stop_if_err=stop_if_err)
+            except BaseException as caught:
+                error = caught
+                raise
+            finally:
+                await self._finish_queue(
+                    queue,
+                    changes_lists=changes_lists,
+                    changes_groups=changes_groups,
+                    save_to=save_to,
+                    error=error,
+                )
 
     # --- Initialization ---
 
@@ -536,39 +765,29 @@ class AsyncDBClient:
         self,
         song: CSLSong,
         *metas: Metadata,
-        queue: bool = False,
     ) -> None:
         """Add metadata to a song
 
         Args:
             song: CSLSong
             *metas: Metadata to add
-            queue: Whether to queue the request, defaults to False
         """
         bundle = SongAddMetadataBundle(song, metas)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)
 
     async def song_delete_metadata(
         self,
         song: CSLSong,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
-        queue: bool = False,
     ) -> None:
         """Remove metadata from a song
 
         Args:
             song: CSLSong
             meta: Metadata to remove
-            queue: Whether to queue the request, defaults to False
         """
         bundle = SongDeleteMetadataBundle(song, meta)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)
 
     async def track_add_metadata(
         self,
@@ -576,7 +795,6 @@ class AsyncDBClient:
         *metas: Metadata,
         override: bool | None = None,
         existing_meta: CSLMetadata | None = None,
-        queue: bool = False,
     ) -> None:
         """Add metadata to a track
 
@@ -585,35 +803,26 @@ class AsyncDBClient:
             *metas: Metadata to add
             override: Change metadata to override or append
             existing_meta: Existing metadata on the track, pass in to avoid duplicating metadata
-            queue: Whether to queue the request, defaults to False
 
         Raises:
             ValueError: If non-metadata is passed into metas
         """
         bundle = TrackAddMetadataBundle(track, metas, override, existing_meta)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)
 
     async def track_remove_metadata(
         self,
         track: CSLTrack,
         meta: CSLSongArtistCredit | CSLExtraMetadata,
-        queue: bool = False,
     ) -> None:
         """Remove metadata from a track
 
         Args:
             track: CSLTrack
             meta: Metadata to remove
-            queue: Whether to queue the request, defaults to False
         """
         bundle = TrackDeleteMetadataBundle(track, meta)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)
 
     async def track_edit(
         self,
@@ -626,7 +835,6 @@ class AsyncDBClient:
         original_name: str | None = None,
         song: NewSong | CSLSongSample | None = None,
         type: TrackType | None = None,
-        queue: bool = False,
     ) -> None:
         """Edit a track
 
@@ -639,16 +847,12 @@ class AsyncDBClient:
             original_name: New track original name
             song: New song
             type: New track type
-            queue: Whether to queue the request, defaults to False
 
         Raises:
             ValueError: New track type is not a valid track type
         """
         bundle = TrackEditBundle(track, artist_credits, groups, name, original_artist, original_name, song, type)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)
 
     # --- Album Creation ---
 
@@ -659,8 +863,6 @@ class AsyncDBClient:
         year: int,
         groups: Iterable[CSLGroup],
         tracks: Sequence[Sequence[AlbumTrack]],
-        *,
-        queue: bool = False,
     ) -> None:
         """Create an album
 
@@ -670,53 +872,37 @@ class AsyncDBClient:
             year: Year album was created
             groups: Groups associated with album
             tracks: CSLTrack[][], where each CSLTrack[] is a disc
-            queue: Whether to queue the request, defaults to False
         """
         bundle = CreateAlbumBundle(name, original_name, year, groups, tracks)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)
 
     async def add_audio(
         self,
         track: CSLTrack,
         audio_path: str | PathLike[str],
-        *,
-        queue: bool = False,
     ) -> None:
         """Add audio to a track
 
         Args:
             track: CSLTrack
             audio_path: Path to the audio file
-            queue: Whether to queue the request, defaults to False
 
         Raises:
             QueryError: Audio path is invalid
         """
         bundle = AddAudioBundle(track, audio_path)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)
 
     async def import_audio(
         self,
         track: CSLTrack,
         track_to_import_from: CSLTrack,
-        *,
-        queue: bool = False,
     ) -> None:
         """Import audio from an existing track
 
         Args:
             track: CSLTrack
             track_to_import_from: Other track to import audio from
-            queue: Whether to queue the request, defaults to False
         """
         bundle = ImportAudioBundle(track, track_to_import_from)
-        if queue:
-            self.enqueue(bundle)
-        else:
-            await self.process(bundle)
+        await self.process(bundle)

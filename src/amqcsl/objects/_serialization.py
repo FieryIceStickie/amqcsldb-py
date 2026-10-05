@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
+from functools import cache
 from operator import attrgetter
-from typing import Any, cast, get_origin, overload
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast, get_origin, overload
 
 from attrs import fields
 from cattrs import Converter
 from cattrs.cols import list_structure_factory
 from cattrs.errors import ClassValidationError, IterableValidationError
 from cattrs.gen import make_dict_structure_fn, make_dict_unstructure_fn, override
+from rich.pretty import pretty_repr
 
 from amqcsl.exceptions import QueryError
 
@@ -27,8 +32,10 @@ from ._db_types import (
     CSLTrack,
     CSLTrackArtistCredit,
     CSLTrackLink,
+    CSLTrackRef,
     ExtraMetadata,
     NewSong,
+    SimpleCSLTrack,
     TrackPutArtistCredit,
 )
 from ._json_types import (
@@ -51,6 +58,9 @@ from ._json_types import (
     MetadataPostExtraMetadata,
     TrackNewSong,
 )
+
+if TYPE_CHECKING:
+    from amqcsl.bundles._core import Bundle
 
 logger = logging.getLogger('amqcsl.object')
 
@@ -346,7 +356,206 @@ def to_json(obj: DatabaseObject | EditObject, **kwargs: Any) -> DatabaseJSON | E
         raise TypeError(f'to_json() got unexpected keyword arguments: {", ".join(sorted(unexpected))}')
     payload = cast(dict[str, Any], _converter.unstructure(obj))
     if isinstance(obj, TrackPutArtistCredit):
-        # Use the artist's name when _name is None, while preserving explicit empty names.
+        # Use the artist's name when _name is None, while preserving explicit empty names
         payload['name'] = obj.name
     payload.update({context_fields[key]: value for key, value in kwargs.items()})
     return cast(DatabaseJSON | EditJSON, payload)
+
+
+# Bundle snapshots preserve constructor inputs, including full artist references,
+# rather than the database's lossy edit-request payloads; only known types load
+@cache
+def _bundle_types() -> tuple[type[Bundle[Any]], ...]:
+    """Load supported bundle types once after object serialization is initialized.
+
+    Returns:
+        The bundle classes supported by snapshot serialization.
+    """
+    from amqcsl.bundles._misc import (
+        AddAudioBundle,
+        CreateAlbumBundle,
+        CreateGroupBundle,
+        CreateListBundle,
+        GroupDeleteBundle,
+        GroupEditBundle,
+        ImportAudioBundle,
+        ListDeleteBundle,
+        ListEditBundle,
+        SongAddMetadataBundle,
+        SongDeleteBundle,
+        SongDeleteMetadataBundle,
+        SongEditBundle,
+        TrackAddMetadataBundle,
+        TrackDeleteMetadataBundle,
+        TrackEditBundle,
+    )
+
+    return (
+        AddAudioBundle,
+        CreateAlbumBundle,
+        CreateGroupBundle,
+        CreateListBundle,
+        GroupDeleteBundle,
+        GroupEditBundle,
+        ImportAudioBundle,
+        ListDeleteBundle,
+        ListEditBundle,
+        SongAddMetadataBundle,
+        SongDeleteBundle,
+        SongDeleteMetadataBundle,
+        SongEditBundle,
+        TrackAddMetadataBundle,
+        TrackDeleteMetadataBundle,
+        TrackEditBundle,
+    )
+
+
+_OBJECT_TYPES = (
+    CSLSongSample,
+    CSLArtistSample,
+    CSLExtraMetadata,
+    CSLSongArtistCredit,
+    CSLSongRelation,
+    CSLTrackRef,
+    CSLTrackArtistCredit,
+    CSLTrackLink,
+    CSLList,
+    CSLGroup,
+    CSLArtist,
+    CSLSong,
+    SimpleCSLTrack,
+    CSLTrack,
+    CSLMetadata,
+    ArtistCredit,
+    ExtraMetadata,
+    NewSong,
+    TrackPutArtistCredit,
+    AlbumTrack,
+)
+
+
+@cache
+def _snapshot_types() -> dict[str, Any]:
+    """Build the shared constructor lookup once, avoiding circular bundle imports.
+
+    Returns:
+        Supported snapshot classes indexed by their serialized names.
+    """
+    return {target.__name__: target for target in (*_bundle_types(), *_OBJECT_TYPES)}
+
+
+@cache
+def _encodable_types() -> set[type[Any]]:
+    """Cache exact class membership for recursive snapshot encoding.
+
+    Returns:
+        Classes supported by bundle snapshot serialization.
+    """
+    return {*_snapshot_types().values()}
+
+
+def _encode(value: Any) -> Any:
+    """Encode only known constructor state, tagging objects to preserve unions.
+
+    Args:
+        value: A supported bundle, object, path, sequence, or primitive.
+
+    Returns:
+        JSON-compatible constructor state.
+
+    Raises:
+        TypeError: The value has no supported bundle encoding.
+    """
+    if type(value) in _encodable_types():
+        return {
+            'type': type(value).__name__,
+            'data': {
+                attribute.alias: _encode(getattr(value, attribute.name))
+                for attribute in fields(cast(Any, type(value)))
+                if attribute.init
+            },
+        }
+    match value:
+        case Path():
+            return {'type': 'Path', 'data': str(value)}
+        case str() | int() | float() | bool() | None:
+            return value
+        case list() | tuple():
+            return [_encode(item) for item in cast(list[Any], value)]
+        case _:
+            raise TypeError(f'Unsupported bundle object: {type(value).__name__}')
+
+
+def _decode(value: Any) -> Any:
+    """Reconstruct known types without importing or executing arbitrary classes.
+
+    Args:
+        value: Tagged constructor state or a JSON primitive.
+
+    Returns:
+        The restored value.
+
+    Raises:
+        ValueError: The object type, fields, or encoding are unsupported.
+    """
+    match value:
+        case {'type': 'Path', 'data': str(path)}:
+            return Path(path)
+        case {'type': str(name), 'data': dict()}:
+            data = cast(dict[str, Any], value['data'])
+            target = _snapshot_types().get(name)
+            if target is None:
+                raise ValueError(f'Unknown serialized object type: {name}')
+            expected = {attribute.alias for attribute in fields(target) if attribute.init}
+            if {*data} != expected:
+                raise ValueError(f'Invalid constructor fields for {name}')
+            return target(**{key: _decode(item) for key, item in data.items()})
+        case list():
+            return [_decode(item) for item in cast(list[Any], value)]
+        case str() | int() | float() | bool() | None:
+            return value
+        case _:
+            raise ValueError('Invalid bundle object encoding')
+
+
+def bundle_to_json(bundle: Bundle[Any]) -> dict[str, Any]:
+    """Try built-in serialization, preserving unsupported work for manual recovery.
+
+    Args:
+        bundle: The pending bundle to serialize.
+
+    Returns:
+        Tagged constructor state or a tagged Rich representation string.
+    """
+    try:
+        if type(bundle) not in _bundle_types():
+            raise TypeError(f'Unsupported bundle: {type(bundle).__name__}')
+        return cast(dict[str, Any], _encode(bundle))
+    except (TypeError, ValueError):
+        return {'type': type(bundle).__name__, 'repr': pretty_repr(bundle)}
+
+
+def bundle_from_json(data: Any) -> Bundle[Any]:
+    """Restore a built-in bundle or reject a manual-recovery fallback.
+
+    Args:
+        data: The serialized bundle entry.
+
+    Returns:
+        The reconstructed bundle.
+
+    Raises:
+        TypeError: The entry is not a JSON object.
+        ValueError: The entry is unsupported or contains a fallback string.
+    """
+    if not isinstance(data, dict):
+        raise TypeError('Expected a serialized bundle object')
+    data = cast(dict[str, Any], data)
+    if 'repr' in data:
+        raise ValueError(
+            f'Cannot restore {data.get("type", "custom bundle")}: implement serialization support; '
+            f'the saved Rich representation is available for manual recovery: {data["repr"]}'
+        )
+    if _snapshot_types().get(data.get('type')) not in _bundle_types():
+        raise ValueError(f'Unknown bundle type: {data.get("type")!r}')
+    return cast('Bundle[Any]', _decode(data))

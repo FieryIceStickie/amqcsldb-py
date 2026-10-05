@@ -1,4 +1,3 @@
-from ._conversion import from_json, to_json
 from ._db_types import (
     AlbumTrack,
     ArtistCredit,
@@ -22,6 +21,7 @@ from ._db_types import (
     TrackPutArtistCredit,
 )
 from ._obj_consts import ArtistType, ExtraMetadataType, SongRelationType, TrackType
+from ._serialization import bundle_from_json, bundle_to_json, from_json, to_json
 
 __all__ = [
     'AlbumTrack',
@@ -48,6 +48,8 @@ __all__ = [
     'SongRelationType',
     'TrackPutArtistCredit',
     'TrackType',
+    'bundle_from_json',
+    'bundle_to_json',
     'from_json',
     'to_json',
 ]

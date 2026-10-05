@@ -14,10 +14,6 @@ from attrs.validators import gt, min_len, optional
 from amqcsl.clients._client_consts import DB_URL
 from amqcsl.clients._http_utils import AsyncMultipartUpload, MultipartUpload, build_request
 from amqcsl.exceptions import LoginError, QueryError
-from amqcsl.objects._conversion import (
-    from_json,
-    to_json,
-)
 from amqcsl.objects._db_types import (
     AlbumTrack,
     ArtistCredit,
@@ -49,8 +45,12 @@ from amqcsl.objects._json_types import (
     TrackPutBody,
 )
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
+from amqcsl.objects._serialization import (
+    from_json,
+    to_json,
+)
 
-from ._core import Bundle, SingleVendor, httpClient, materialize
+from ._core import Bundle, SingleVendor, httpClient
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -295,7 +295,7 @@ class GetMetadataBundle(Bundle[CSLMetadata | None]):
 @frozen
 class CreateListBundle(Bundle[None]):
     name: str = field(validator=min_len(1))
-    csl_lists: list[CSLList] = field(factory=list[CSLList], converter=materialize)
+    csl_lists: list[CSLList] = field(factory=list[CSLList], converter=list)
 
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
@@ -318,8 +318,8 @@ class CreateListBundle(Bundle[None]):
 class ListEditBundle(Bundle[None]):
     csl_list: CSLList
     name: str | None = field(default=None, validator=optional(min_len(1)))
-    add: list[CSLTrackRef] = field(factory=list[CSLTrackRef], converter=materialize)
-    remove: list[CSLTrackRef] = field(factory=list[CSLTrackRef], converter=materialize)
+    add: list[CSLTrackRef] = field(factory=list[CSLTrackRef], converter=list)
+    remove: list[CSLTrackRef] = field(factory=list[CSLTrackRef], converter=list)
 
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
@@ -450,7 +450,7 @@ class SongDeleteBundle(Bundle[None]):
 @frozen
 class SongAddMetadataBundle(Bundle[None]):
     song: CSLSong
-    metas: list[Metadata] = field(converter=materialize)
+    metas: list[Metadata] = field(converter=list)
 
     @cached_property
     def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
@@ -504,7 +504,7 @@ class SongDeleteMetadataBundle(Bundle[None]):
 @frozen
 class TrackAddMetadataBundle(Bundle[None]):
     track: CSLTrack
-    metas: list[Metadata] = field(converter=materialize)
+    metas: list[Metadata] = field(converter=list)
     _override: bool | None = None
     existing_meta: CSLMetadata | None = None
 
@@ -639,7 +639,7 @@ class CreateAlbumBundle(Bundle[None]):
     name: str = field(validator=min_len(1))
     original_name: str = field(validator=min_len(1))
     year: int = field(validator=gt(0))
-    groups: list[CSLGroup] = field(converter=materialize)
+    groups: list[CSLGroup] = field(converter=list)
     tracks: Sequence[Sequence[AlbumTrack]]
 
     @override

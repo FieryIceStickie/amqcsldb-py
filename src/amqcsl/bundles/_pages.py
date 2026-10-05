@@ -11,7 +11,6 @@ from attrs.validators import gt
 
 from amqcsl.clients._http_utils import build_request
 from amqcsl.exceptions import QueryError
-from amqcsl.objects._conversion import from_json
 from amqcsl.objects._db_types import CSLArtistSample, CSLGroup, CSLList, CSLSongSample, CSLTrack
 from amqcsl.objects._json_types import (
     JSONArtistSample,
@@ -22,8 +21,9 @@ from amqcsl.objects._json_types import (
     QuerySong,
     QueryTrack,
 )
+from amqcsl.objects._serialization import from_json
 
-from ._core import Items, StreamingBundle, StreamingVendor, httpClient, materialize
+from ._core import Items, StreamingBundle, StreamingVendor, httpClient
 
 if TYPE_CHECKING:
     from amqcsl import AsyncDBClient, DBClient
@@ -175,7 +175,7 @@ def _from_active_list(
 @frozen
 class IterTracksBundle(PageBundle[CSLTrack]):
     search_term: str
-    groups: list[CSLGroup] = field(converter=materialize)
+    groups: list[CSLGroup] = field(converter=list)
     active_list: CSLList | None
     missing_audio: bool
     missing_info: bool

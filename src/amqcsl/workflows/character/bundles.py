@@ -8,15 +8,14 @@ from typing import cast, override
 import rich.repr
 from attrs import evolve, frozen
 
-from amqcsl.clients.bundles._core import Bundle, MixedVendor, MultiVendor, httpClient
-from amqcsl.clients.bundles._misc import (
+from amqcsl.bundles._core import Bundle, MixedVendor, MultiVendor, ParallelBundle, action_bundle_compose, httpClient
+from amqcsl.bundles._misc import (
     GetArtistBundle,
     GetMetadataBundle,
     TrackAddMetadataBundle,
     TrackDeleteMetadataBundle,
 )
-from amqcsl.clients.bundles._pages import AsyncPageStrategy, IterArtistsBundle
-from amqcsl.clients.bundles._parallel import ParallelBundle, parallel_actions
+from amqcsl.bundles._pages import AsyncPageStrategy, IterArtistsBundle
 from amqcsl.exceptions import AMQCSLError
 from amqcsl.objects._db_types import CSLArtist, CSLArtistSample, CSLMetadata, CSLTrack, ExtraMetadata
 
@@ -310,4 +309,4 @@ def _character_edits(
             for meta in existing_metadata.extra_metas
             if meta.key == 'Character' and ExtraMetadata.simplify(meta) not in metas
         )
-    return parallel_actions(bundles) if bundles else None
+    return action_bundle_compose(bundles) if bundles else None

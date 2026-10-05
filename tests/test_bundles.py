@@ -9,8 +9,7 @@ from helpers import finish, mock_response
 from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
-from amqcsl.clients._http_utils import build_request
-from amqcsl.clients.bundles import (
+from amqcsl.bundles import (
     AsyncPageStrategy,
     IterArtistsBundle,
     MixedVendor,
@@ -18,7 +17,8 @@ from amqcsl.clients.bundles import (
     ParallelBundle,
     SyncPageStrategy,
 )
-from amqcsl.clients.bundles._core import httpClient
+from amqcsl.bundles._core import SingleVendor, httpClient
+from amqcsl.clients._http_utils import build_request
 from amqcsl.objects import (
     CSLArtistSample,
     from_json,
@@ -75,6 +75,39 @@ def test_parallel_response_count_mismatch():
         assert len([*next(vendor)]) == 1
         with pytest.raises(ValueError, match='Response count'):
             vendor.send([])
+
+
+@pytest.mark.parametrize('fail', [False, True])
+def test_parallel_closes_unfinished_child_vendors(fail: bool) -> None:
+    closed: list[int] = []
+
+    def child(client: httpClient, idx: int) -> SingleVendor[int]:
+        try:
+            yield build_request(client, 'GET', f'/bundle/{idx}')
+            return idx
+        finally:
+            closed.append(idx)
+
+    @frozen
+    class HeldVendorBundle:
+        held: SingleVendor[int]
+
+        def vendor(self, client: httpClient) -> SingleVendor[int]:
+            return self.held
+
+        def __rich_repr__(self) -> rich.repr.Result:
+            yield from ()
+
+    with niquests.Session(base_url='https://example.test') as client:
+        children = [child(client, idx) for idx in range(2)]
+        vendor = ParallelBundle([HeldVendorBundle(held) for held in children]).vendor(client)
+        assert len([*next(vendor)]) == 2
+        if fail:
+            with pytest.raises(ValueError, match='Response count'):
+                vendor.send([])
+        else:
+            vendor.close()
+        assert closed == [0, 1]
 
 
 @pytest.mark.parametrize('strategy', [SyncPageStrategy, AsyncPageStrategy])

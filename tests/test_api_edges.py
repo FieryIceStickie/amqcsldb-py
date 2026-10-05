@@ -27,6 +27,7 @@ from amqcsl.objects import (
 )
 from amqcsl.objects._json_types import JSONArtist, JSONSong, JSONTrack
 from amqcsl.objects._obj_consts import EMPTY_ID, REVERSE_TRACK_TYPE, TrackType
+from amqcsl.queues import StandardQueue
 
 pytestmark = pytest.mark.asyncio
 
@@ -82,67 +83,49 @@ async def test_cached_collections_and_explicit_refresh(
 @pytest.mark.parametrize('queue', [False, True])
 @pytest.mark.parametrize('operation', ['edit', 'delete'])
 async def test_group_changes_immediate_or_queued(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     queue: bool,
     operation: str,
 ) -> None:
     group = client.groups['IDOLY PRIDE']
-    if isinstance(client, AsyncDBClient):
-        route = (
-            (router.put(f'/api/group/{group.id}').mock(return_value=mock_response(200)))
-            if operation == 'edit'
-            else (router.delete(f'/api/group/{group.id}').mock(return_value=mock_response(200)))
-        )
-        if queue:
-            method: Any = client.group_edit if operation == 'edit' else client.group_delete
-            args = (group, 'Renamed') if operation == 'edit' else (group,)
-            with pytest.raises(TypeError, match='queue'):
-                await method(*args, queue=True)
-            assert not route.called and not client.queue
-            return
+    route = (
+        router.put(f'/api/group/{group.id}', json={'id': EMPTY_ID, 'name': 'Renamed'})
+        if operation == 'edit'
+        else router.delete(f'/api/group/{group.id}')
+    ).mock(return_value=mock_response(200))
+    if queue:
         if operation == 'edit':
-            await client.group_edit(group, 'Renamed')
+            pending.group_edit(group, 'Renamed')
         else:
-            await client.group_delete(group)
-        assert route.call_count == 1
-        return
-    if operation == 'edit':
-        route = router.put(f'/api/group/{group.id}', json={'id': EMPTY_ID, 'name': 'Renamed'}).mock(
-            return_value=mock_response(200)
-        )
-        await finish(client.group_edit(group, 'Renamed', queue=queue))
+            pending.group_delete(group)
+    elif operation == 'edit':
+        await finish(client.group_edit(group, 'Renamed'))
     else:
-        route = router.delete(f'/api/group/{group.id}').mock(return_value=mock_response(200))
-        await finish(client.group_delete(group, queue=queue))
+        await finish(client.group_delete(group))
     assert route.call_count == (0 if queue else 1)
-    assert len(client.queue) == (1 if queue else 0)
-    await finish(client.commit())
-    assert route.call_count == 1
-    assert not client.queue
+    assert len(pending) == int(queue)
+    await finish(client.process_queue(pending))
+    assert route.call_count == 1 and not pending
 
 
 @pytest.mark.parametrize('queue', [False, True])
 async def test_song_delete_immediate_or_queued(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     song: CSLSong,
     queue: bool,
 ) -> None:
     route = router.delete(f'/api/song/{song.id}').mock(return_value=mock_response(200))
-    if isinstance(client, AsyncDBClient):
-        if queue:
-            method: Any = client.song_delete
-            with pytest.raises(TypeError, match='queue'):
-                await method(song, queue=True)
-            assert not route.called and not client.queue
-            return
-        await client.song_delete(song)
+    if queue:
+        pending.song_delete(song)
     else:
-        client.song_delete(song, queue=queue)
+        await finish(client.song_delete(song))
     assert route.call_count == (0 if queue else 1)
-    await finish(client.commit())
-    assert route.call_count == 1 and not client.queue
+    await finish(client.process_queue(pending))
+    assert route.call_count == 1 and not pending
 
 
 async def test_song_metadata_accepts_both_metadata_types(
@@ -353,6 +336,7 @@ async def test_invalid_query_batch_sizes_fail_before_requests(
     ],
 )
 async def test_empty_names_fail_before_requests(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     operation: str,
@@ -362,7 +346,7 @@ async def test_empty_names_fail_before_requests(
     before = len(router.calls)
     with pytest.raises(error):
         await finish(getattr(client, operation)(**kwargs))
-    assert len(router.calls) == before and not client.queue
+    assert len(router.calls) == before and not pending
 
 
 @pytest.mark.parametrize(
@@ -493,7 +477,8 @@ async def test_malformed_query_responses_are_rejected(
 
 @pytest.mark.parametrize('stop_if_err', [False, True])
 @pytest.mark.parametrize('client', ['sync'], indirect=True)
-async def test_sync_commit_error_policy(
+async def test_sync_process_queue_error_policy(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     stop_if_err: bool,
@@ -506,13 +491,13 @@ async def test_sync_commit_error_policy(
     )
     failure = router.delete(f'/api/track/{track.id}/metadata/{first.id}').mock(return_value=mock_response(500))
     success = router.delete(f'/api/track/{track.id}/metadata/{second.id}').mock(return_value=mock_response(200))
-    client.track_remove_metadata(track, first, queue=True)
-    client.track_remove_metadata(track, second, queue=True)
+    pending.track_remove_metadata(track, first)
+    pending.track_remove_metadata(track, second)
     if stop_if_err:
         with pytest.raises(HTTPError):
-            client.commit(stop_if_err=True)
+            client.process_queue(pending, stop_if_err=True)
         assert not success.called
     else:
-        client.commit(stop_if_err=False)
-        assert success.called and not client.queue
+        client.process_queue(pending, stop_if_err=False)
+        assert success.called and len(pending) == 1
     assert failure.call_count == 1

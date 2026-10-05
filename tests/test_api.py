@@ -34,6 +34,7 @@ from amqcsl.objects import (
 from amqcsl.objects._db_types import ArtistCredit, CSLArtistSample
 from amqcsl.objects._json_types import JSONArtist, JSONArtistSample, JSONMetadata, JSONSong, JSONTrack
 from amqcsl.objects._obj_consts import EMPTY_ID
+from amqcsl.queues import StandardQueue
 
 pytestmark = pytest.mark.asyncio
 
@@ -533,6 +534,7 @@ async def test_track_remove_metadata(
 
 
 async def test_track_metadata_queue(
+    pending: StandardQueue,
     router: Router,
     client: DBClient | AsyncDBClient,
 ) -> None:
@@ -560,9 +562,9 @@ async def test_track_metadata_queue(
     meta = await finish(client.get_metadata(track))
     assert meta is not None
     assert len(meta.extra_metas) == 1
-    await finish(client.track_remove_metadata(track, meta.extra_metas[0], queue=True))
+    pending.track_remove_metadata(track, meta.extra_metas[0])
     assert route.call_count == 0
-    await finish(client.commit())
+    await finish(client.process_queue(pending))
     assert route.call_count == 1
 
 
@@ -665,7 +667,8 @@ async def test_add_audio(
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
-async def test_async_commit_raises_when_requested(
+async def test_async_process_queue_raises_when_requested(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -673,13 +676,14 @@ async def test_async_commit_raises_when_requested(
     track = from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
     meta = CSLExtraMetadata('meta-id', 1, 'Language', 'Japanese')
     _ = router.delete(f'/api/track/{track.id}/metadata/{meta.id}').mock(return_value=mock_response(500))
-    await client.track_remove_metadata(track, meta, queue=True)
+    pending.track_remove_metadata(track, meta)
     with pytest.raises(HTTPError):
-        await client.commit(stop_if_err=True)
+        await client.process_queue(pending, stop_if_err=True)
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
-async def test_async_commit_can_continue_past_http_errors(
+async def test_async_process_queue_can_continue_past_http_errors(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -691,10 +695,10 @@ async def test_async_commit_can_continue_past_http_errors(
     )
     _ = router.delete(f'/api/track/{track.id}/metadata/{first.id}').mock(return_value=mock_response(500))
     success = router.delete(f'/api/track/{track.id}/metadata/{second.id}').mock(return_value=mock_response(200))
-    await client.track_remove_metadata(track, first, queue=True)
-    await client.track_remove_metadata(track, second, queue=True)
-    await client.commit(stop_if_err=False)
-    assert success.called and not client.queue
+    pending.track_remove_metadata(track, first)
+    pending.track_remove_metadata(track, second)
+    await client.process_queue(pending, stop_if_err=False)
+    assert success.called and len(pending) == 1
 
 
 @pytest.mark.parametrize('operation', ['search', 'list_edit', 'list_remove', 'album'])
@@ -732,7 +736,8 @@ async def test_iterable_inputs_preserve_members(
 
 @pytest.mark.parametrize('stop_if_err', [False, True])
 @pytest.mark.parametrize('client', ['async'], indirect=True)
-async def test_async_commit_propagates_non_http_errors(
+async def test_async_process_queue_propagates_non_http_errors(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     tmp_path: Path,
@@ -747,13 +752,14 @@ async def test_async_commit_propagates_non_http_errors(
     _ = router.post(f'/api/track/{track.id}/presigned-upload').mock(
         return_value=mock_response(200, json={'sessionId': 's', 'key': 'k', 'url': 'https://upload.test'})
     )
-    await client.add_audio(track, path, queue=True)
+    pending.add_audio(track, path)
     with pytest.raises(QueryError, match='not an audio file'):
-        await client.commit(stop_if_err=stop_if_err)
+        await client.process_queue(pending, stop_if_err=stop_if_err)
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
-async def test_async_commit_finishes_siblings_before_raising(
+async def test_async_process_queue_finishes_siblings_before_raising(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -774,10 +780,10 @@ async def test_async_commit_finishes_siblings_before_raising(
 
     _ = router.delete(f'/api/track/{track.id}/metadata/{first.id}').mock(return_value=mock_response(500))
     router.delete(f'/api/track/{track.id}/metadata/{second.id}').mock(side_effect=finish_second)
-    await client.track_remove_metadata(track, first, queue=True)
-    await client.track_remove_metadata(track, second, queue=True)
+    pending.track_remove_metadata(track, first)
+    pending.track_remove_metadata(track, second)
     with pytest.raises(HTTPError):
-        await client.commit()
+        await client.process_queue(pending)
     assert completed.is_set()
 
 
@@ -785,7 +791,7 @@ async def test_bundle_metadata_generators_and_list_imports_preserve_values(
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
-    from amqcsl.clients.bundles import CreateListBundle, SongAddMetadataBundle, TrackAddMetadataBundle
+    from amqcsl.bundles import CreateListBundle, SongAddMetadataBundle, TrackAddMetadataBundle
     from amqcsl.objects import ExtraMetadata
 
     song = from_json(cast(JSONSong, load('idolypride/songs/blueskysummer')), CSLSong)
@@ -808,6 +814,7 @@ async def test_bundle_metadata_generators_and_list_imports_preserve_values(
 @pytest.mark.parametrize('queue', [False, True])
 @pytest.mark.parametrize('status', [200, 500])
 async def test_import_audio(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     queue: bool,
@@ -818,13 +825,13 @@ async def test_import_audio(
     route = router.post(f'/api/track/{target.id}/audio-import').mock(return_value=mock_response(status))
     before = len(router.calls)
     if queue:
-        await finish(client.import_audio(target, source, queue=True))
+        pending.import_audio(target, source)
         assert len(router.calls) == before
-        assert len(client.queue) == 1
+        assert len([*pending]) == 1
 
     async def operation() -> None:
         if queue:
-            await finish(client.commit())
+            await finish(client.process_queue(pending))
         else:
             await finish(client.import_audio(target, source))
 
@@ -833,7 +840,7 @@ async def test_import_audio(
             await operation()
     else:
         await operation()
-        assert not client.queue
+        assert not pending
     assert route.call_count == 1
     assert json.loads(request_body(route.calls[-1].request)) == {
         'id': target.id,
@@ -988,6 +995,7 @@ async def test_uploads_receive_longer_timeouts(
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_parallel_uploads_preserve_limit_and_do_not_retry(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     tmp_path: Path,
@@ -1021,8 +1029,8 @@ async def test_parallel_uploads_preserve_limit_and_do_not_retry(
         side_effect=upload_response
     )
     for _ in range(3):
-        await client.add_audio(track, audio, queue=True)
-    task = asyncio.create_task(client.commit())
+        pending.add_audio(track, audio)
+    task = asyncio.create_task(client.process_queue(pending))
     try:
         await asyncio.wait_for(both_started.wait(), timeout=1)
         await asyncio.sleep(0)
@@ -1030,11 +1038,14 @@ async def test_parallel_uploads_preserve_limit_and_do_not_retry(
         assert upload.call_count == 2
     finally:
         release.set()
-        with pytest.raises(niquests.Timeout, match='Upload stalled'):
+        with pytest.raises(ExceptionGroup) as caught:
             await task
+        assert len(caught.value.exceptions) == 2
+        assert all(isinstance(error, niquests.Timeout) for error in caught.value.exceptions)
     assert peak == 2
     assert active == 0
-    assert upload.call_count == 3
+    assert upload.call_count == 2
+    assert len(pending) == 3
 
 
 @pytest.mark.parametrize('client_type', [DBClient, AsyncDBClient])

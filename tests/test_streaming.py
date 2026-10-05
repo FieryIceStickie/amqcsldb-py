@@ -10,9 +10,9 @@ from helpers import collect, finish, first, mock_response
 from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
+from amqcsl.bundles import Items, ParallelBundle, StreamingBundle, StreamingVendor
+from amqcsl.bundles._core import httpClient
 from amqcsl.clients._http_utils import build_request
-from amqcsl.clients.bundles import Items, ParallelBundle, StreamingBundle, StreamingVendor
-from amqcsl.clients.bundles._core import httpClient
 from amqcsl.exceptions import QueryError
 
 

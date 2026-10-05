@@ -16,10 +16,7 @@ from niquests_mock import MockRoute as Route
 from niquests_mock import MockRouter as Router
 
 from amqcsl import AsyncDBClient, DBClient
-from amqcsl.clients.bundles._core import Bundle
-from amqcsl.clients.bundles._parallel import (
-    _ParallelActionsBundle,  # pyright: ignore[reportPrivateUsage] -- inspect queued actions
-)
+from amqcsl.bundles._core import Bundle
 from amqcsl.exceptions import AMQCSLError, QueryError
 from amqcsl.objects import (
     CSLArtist,
@@ -30,6 +27,7 @@ from amqcsl.objects import (
     from_json,
 )
 from amqcsl.objects._json_types import JSONArtist, JSONArtistSample, JSONTrack, JSONType
+from amqcsl.queues import QueueGroup, StandardQueue
 from amqcsl.workflows import character as cm
 
 pytestmark = pytest.mark.asyncio
@@ -112,13 +110,13 @@ def mock_metadata(router: Router, extra: Sequence[dict[str, JSONType]] = ()) -> 
 
 
 async def enqueue_edit(
-    client: DBClient | AsyncDBClient,
+    pending: StandardQueue,
     result: Bundle[None] | None | Awaitable[Bundle[None] | None],
 ) -> None:
-    """Explicitly enqueue prepared edits in tests that exercise committing them."""
+    """Explicitly enqueue prepared edits in tests that exercise processing them."""
     bundle = await finish(result)
     if bundle is not None:
-        client.enqueue(bundle)
+        pending.enqueue(bundle)
 
 
 async def finish[T](result: T | Awaitable[T]) -> T:
@@ -126,6 +124,7 @@ async def finish[T](result: T | Awaitable[T]) -> T:
 
 
 async def test_infer_group_and_cache(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -143,7 +142,7 @@ async def test_infer_group_and_cache(
     for t in [track(g, a), track(g, track_id='second')]:
         await finish(
             enqueue_edit(
-                client, mapping.apply(t, lambda _track, _reasons, _existing: pytest.fail('Unexpected failure'))
+                pending, mapping.apply(t, lambda _track, _reasons, _existing: pytest.fail('Unexpected failure'))
             )
         )
     assert get_group.call_count == 1
@@ -152,13 +151,14 @@ async def test_infer_group_and_cache(
         *mapping.metadata[from_json(cast(JSONArtistSample, a), CSLArtistSample)],
         *mapping.metadata[from_json(cast(JSONArtistSample, b), CSLArtistSample)],
     ]
-    await finish(client.commit())
+    await finish(client.process_queue(pending))
     assert add.call_count == 2
     for call in cast(Sequence[Call], add.calls):
         assert {meta['value'] for meta in json.loads(request_body(call.request))['extraMetadatas']} == {'A', 'B'}
 
 
 async def test_explicit_group_overrides_members(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -167,12 +167,13 @@ async def test_explicit_group_overrides_members(
     get_group = router.get(path='/api/artist/Group').mock(return_value=mock_response(500))
     mock_metadata(router)
     mapping = await finish(cm.make_artist_to_meta(client, {'Group': 'Override'}, ['all']))
-    await finish(enqueue_edit(client, mapping.apply(track(g))))
+    await finish(enqueue_edit(pending, mapping.apply(track(g))))
     assert not get_group.called
-    assert len(client.queue) == 1
+    assert len([*pending]) == 1
 
 
 async def test_callback_collates_failures_and_caches_exclusions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -191,8 +192,8 @@ async def test_callback_collates_failures_and_caches_exclusions(
 
     mapping = await finish(cm.make_artist_to_meta(client, {'Alice': 'A'}, ['all']))
     first = track(g, unknown, unknown, a)
-    await finish(enqueue_edit(client, mapping.apply(first, should_exclude)))
-    await finish(enqueue_edit(client, mapping.apply(track(unknown, g, a, track_id='second'), should_exclude)))
+    await finish(enqueue_edit(pending, mapping.apply(first, should_exclude)))
+    await finish(enqueue_edit(pending, mapping.apply(track(unknown, g, a, track_id='second'), should_exclude)))
     assert len(calls) == 1
     assert calls[0][0] is first
     reasons = calls[0][1]
@@ -207,10 +208,11 @@ async def test_callback_collates_failures_and_caches_exclusions(
     assert reasons[1].reason is cm.UNKNOWN_ARTIST
     assert mapping.excluded_artists == {'Group', 'Unknown'}
     assert get_group.call_count == 1
-    assert len(client.queue) == 2
+    assert len([*pending]) == 2
 
 
 async def test_rejected_exclusion_raises_without_queueing(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -221,16 +223,17 @@ async def test_rejected_exclusion_raises_without_queueing(
         with pytest.raises(AMQCSLError, match='Cannot infer'):
             await finish(
                 enqueue_edit(
-                    client, mapping.apply(track(unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.ERROR)
+                    pending, mapping.apply(track(unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.ERROR)
                 )
             )
     assert not mapping.excluded_artists
-    assert not client.queue
+    assert not pending
     assert get_meta.call_count == 2
 
 
 @pytest.mark.parametrize('members', [[], [artist('Nested', group=True)]])
 async def test_empty_groups_resolve_to_empty_metadata(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     members: list[dict[str, JSONType]],
@@ -250,7 +253,7 @@ async def test_empty_groups_resolve_to_empty_metadata(
     assert not mapping.excluded_artists
     assert get_group.called
     assert nested.called == bool(members)
-    assert not client.queue
+    assert not pending
 
     await finish(
         mapping.apply(track(g, track_id='cached'), lambda _t, _r, _existing: pytest.fail('Cached group prompted'))
@@ -259,6 +262,7 @@ async def test_empty_groups_resolve_to_empty_metadata(
 
 
 async def test_nested_group_with_explicit_metadata(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -268,7 +272,7 @@ async def test_nested_group_with_explicit_metadata(
     nested_query = router.get(path='/api/artist/Nested').mock(return_value=mock_response(500))
     mock_metadata(router)
     mapping = await finish(cm.make_artist_to_meta(client, {'Nested': 'Character'}))
-    await finish(enqueue_edit(client, mapping.apply(track(g))))
+    await finish(enqueue_edit(pending, mapping.apply(track(g))))
     assert not nested_query.called
     assert (
         mapping.metadata[from_json(cast(JSONArtistSample, g), CSLArtistSample)]
@@ -277,6 +281,7 @@ async def test_nested_group_with_explicit_metadata(
 
 
 async def test_recursive_groups_share_members_and_cache_all_levels(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -295,7 +300,7 @@ async def test_recursive_groups_share_members_and_cache_all_levels(
     for idx, sample in enumerate([root, shared, left, right, root]):
         await finish(
             enqueue_edit(
-                client,
+                pending,
                 mapping.apply(
                     track(sample, track_id=str(idx)), lambda _t, _r, _existing: pytest.fail('Unexpected failure')
                 ),
@@ -307,13 +312,14 @@ async def test_recursive_groups_share_members_and_cache_all_levels(
         values = mapping.metadata[from_json(cast(JSONArtistSample, sample), CSLArtistSample)]
         assert len(values) == 2
         assert {meta.value for meta in values} == {'A', 'B'}
-    await finish(client.commit())
+    await finish(client.process_queue(pending))
     assert add.call_count == 5
     for call in cast(Sequence[Call], add.calls):
         assert {meta['value'] for meta in json.loads(request_body(call.request))['extraMetadatas']} == {'A', 'B'}
 
 
 async def test_recursive_missing_members_are_collated_for_the_credited_group(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -333,7 +339,7 @@ async def test_recursive_missing_members_are_collated_for_the_credited_group(
         failures.extend(reasons)
         return cm.ExcludeDecision.EXCLUDE
 
-    await finish(enqueue_edit(client, mapping.apply(track(root, a), exclude)))
+    await finish(enqueue_edit(pending, mapping.apply(track(root, a), exclude)))
     assert len(failures) == 1
     assert failures[0].artist.id == 'Root'
     assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
@@ -341,7 +347,7 @@ async def test_recursive_missing_members_are_collated_for_the_credited_group(
     assert [member.name for member in failures[0].reason.known_artists] == ['Alice']
     assert len(mapping.metadata) == 1
     assert mapping.excluded_artists == {'Root'}
-    await finish(client.commit())
+    await finish(client.process_queue(pending))
     assert json.loads(request_body(add.calls[0].request))['extraMetadatas'] == [
         {'isArtist': True, 'type': 'Character', 'value': 'A'},
     ]
@@ -349,6 +355,7 @@ async def test_recursive_missing_members_are_collated_for_the_credited_group(
 
 @pytest.mark.parametrize('mutual', [False, True], ids=['self_cycle', 'mutual_cycle'])
 async def test_recursive_group_cycles_are_incomplete(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     mutual: bool,
@@ -369,18 +376,19 @@ async def test_recursive_group_cycles_are_incomplete(
         failures.extend(reasons)
         return cm.ExcludeDecision.IGNORE
 
-    await finish(enqueue_edit(client, mapping.apply(track(root), ignore)))
+    await finish(enqueue_edit(pending, mapping.apply(track(root), ignore)))
     assert root_query.call_count == 1
     assert nested_query.call_count == int(mutual)
     assert len(failures) == 1 and failures[0].artist.id == 'Root'
     assert isinstance(failures[0].reason, cm.INCOMPLETE_GROUP)
     assert [member.id for member in failures[0].reason.artists] == ['Root']
     assert len(mapping.metadata) == 1
-    assert metadata.call_count == 1 and not client.queue and not mapping.excluded_artists
+    assert metadata.call_count == 1 and not pending and not mapping.excluded_artists
 
 
 @pytest.mark.parametrize('exclude', [False, True], ids=['explicit_metadata', 'excluded_member'])
 async def test_nested_explicit_metadata_or_exclusion_stops_cycle_traversal(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     exclude: bool,
@@ -400,7 +408,7 @@ async def test_nested_explicit_metadata_or_exclusion_stops_cycle_traversal(
         )
     )
     await finish(
-        enqueue_edit(client, mapping.apply(track(root), lambda _t, _r, _existing: pytest.fail('Unexpected failure')))
+        enqueue_edit(pending, mapping.apply(track(root), lambda _t, _r, _existing: pytest.fail('Unexpected failure')))
     )
     assert not nested_query.called
     assert {meta.value for meta in mapping.metadata[from_json(cast(JSONArtistSample, root), CSLArtistSample)]} == (
@@ -410,6 +418,7 @@ async def test_nested_explicit_metadata_or_exclusion_stops_cycle_traversal(
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_nested_group_requests_run_in_parallel(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -435,12 +444,13 @@ async def test_nested_group_requests_run_in_parallel(
     router.get(url=re.compile(r'/api/artist/(Left|Right)')).mock(side_effect=get_nested)
     mock_metadata(router)
     mapping = await cm.make_artist_to_meta(client, {'Alice': 'A'})
-    await enqueue_edit(client, mapping.apply(track(root)))
+    await enqueue_edit(pending, mapping.apply(track(root)))
     assert arrived == {'Left', 'Right'}
-    assert len(mapping.metadata) == 4 and len(client.queue) == 1
+    assert len(mapping.metadata) == 4 and len([*pending]) == 1
 
 
 async def test_nested_group_query_failure_leaves_mapping_and_queue_unchanged(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -453,15 +463,16 @@ async def test_nested_group_query_failure_leaves_mapping_and_queue_unchanged(
     with pytest.raises(HTTPError):
         await finish(
             enqueue_edit(
-                client,
+                pending,
                 mapping.apply(track(root), lambda _t, _r, _existing: pytest.fail('Query failure called the callback')),
             )
         )
     assert nested_query.called and not metadata.called
-    assert len(mapping.metadata) == 1 and not mapping.excluded_artists and not client.queue
+    assert len(mapping.metadata) == 1 and not mapping.excluded_artists and not pending
 
 
 async def test_exclusion_keeps_additions_and_all_stale_deletions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -480,19 +491,20 @@ async def test_exclusion_keeps_additions_and_all_stale_deletions(
     mapping = await finish(cm.make_artist_to_meta(client, {'Alice': 'New'}))
     await finish(
         enqueue_edit(
-            client, mapping.apply(track(a, unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.EXCLUDE)
+            pending, mapping.apply(track(a, unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.EXCLUDE)
         )
     )
-    assert len(client.queue) == 1
-    assert isinstance(client.queue[0], _ParallelActionsBundle)
-    assert len(client.queue[0].bundles) == 3
-    assert not add.called and not delete1.called  # Only queued until commit.
-    await finish(client.commit())
+    assert len([*pending]) == 1
+    assert isinstance(next(iter(pending)), QueueGroup)
+    assert len(next(iter(pending)).bundles) == 3
+    assert not add.called and not delete1.called  # Only queued until processing
+    await finish(client.process_queue(pending))
     assert add.called and delete1.called and delete2.called
     assert not unrelated.called
 
 
 async def test_only_deletions_and_no_changes(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -501,21 +513,22 @@ async def test_only_deletions_and_no_changes(
     mock_metadata(router, [{'id': 'stale', 'type': 2, 'key': 'Character', 'value': 'Old'}])
     delete = router.delete('/api/track/test-track/metadata/stale').mock(return_value=mock_response(200))
     mapping = await finish(cm.make_artist_to_meta(client, {'Alice': 'Old'}))
-    await finish(enqueue_edit(client, mapping.apply(track(a))))
-    assert not client.queue
+    await finish(enqueue_edit(pending, mapping.apply(track(a))))
+    assert not pending
     await finish(
         enqueue_edit(
-            client, mapping.apply(track(unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.EXCLUDE)
+            pending, mapping.apply(track(unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.EXCLUDE)
         )
     )
-    assert isinstance(client.queue[0], _ParallelActionsBundle)
-    assert len(client.queue[0].bundles) == 1
-    await finish(client.commit())
+    assert isinstance(next(iter(pending)), QueueGroup)
+    assert len(next(iter(pending)).bundles) == 1
+    await finish(client.process_queue(pending))
     assert delete.called
 
 
 @pytest.mark.parametrize('type_id', [1, 2], ids=['off_vocal', 'instrumental'])
 async def test_non_vocal_tracks_skip_queries_and_callback(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     type_id: int,
@@ -526,11 +539,11 @@ async def test_non_vocal_tracks_skip_queries_and_callback(
     t = evolve(track(artist('Unknown'), artist('Group', group=True)), type_id=type_id)
     await finish(
         enqueue_edit(
-            client,
+            pending,
             mapping.apply(t, lambda _track, _reasons, _existing: pytest.fail('Skipped track called the callback')),
         )
     )
-    assert not get_meta.called and not get_group.called and not client.queue
+    assert not get_meta.called and not get_group.called and not pending
     assert not mapping.metadata and not mapping.excluded_artists
 
 
@@ -600,6 +613,7 @@ async def test_global_searches_run_in_parallel(
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_concurrent_apply_shares_exclusion(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -614,7 +628,7 @@ async def test_concurrent_apply_shares_exclusion(
 
     await asyncio.gather(
         *(
-            enqueue_edit(client, mapping.apply(track(artist('Unknown'), track_id=str(i)), should_exclude))
+            enqueue_edit(pending, mapping.apply(track(artist('Unknown'), track_id=str(i)), should_exclude))
             for i in range(3)
         )
     )
@@ -622,6 +636,7 @@ async def test_concurrent_apply_shares_exclusion(
 
 
 async def test_cached_group_can_be_used_as_member_without_refetching(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -635,8 +650,8 @@ async def test_cached_group_can_be_used_as_member_without_refetching(
     )
     mock_metadata(router)
     mapping = await finish(cm.make_artist_to_meta(client, {'Alice': 'A'}))
-    await finish(enqueue_edit(client, mapping.apply(track(nested))))
-    await finish(enqueue_edit(client, mapping.apply(track(parent, track_id='parent-track'))))
+    await finish(enqueue_edit(pending, mapping.apply(track(nested))))
+    await finish(enqueue_edit(pending, mapping.apply(track(parent, track_id='parent-track'))))
     assert nested_query.call_count == 1 and parent_query.call_count == 1
     assert (
         mapping.metadata[from_json(cast(JSONArtistSample, parent), CSLArtistSample)]
@@ -645,6 +660,7 @@ async def test_cached_group_can_be_used_as_member_without_refetching(
 
 
 async def test_full_artist_credit_uses_existing_group_details(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -655,13 +671,14 @@ async def test_full_artist_credit_uses_existing_group_details(
     mapping = await finish(cm.make_artist_to_meta(client, {'Alice': 'A'}))
     t = track(g)
     credit = evolve(t.artist_credits[0], artist=from_json(cast(JSONArtist, group_details(g, [a])), CSLArtist))
-    await finish(enqueue_edit(client, mapping.apply(evolve(t, artist_credits=[credit]))))
+    await finish(enqueue_edit(pending, mapping.apply(evolve(t, artist_credits=[credit]))))
     assert not get_group.called
     assert from_json(cast(JSONArtistSample, g), CSLArtistSample) in mapping.metadata
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_group_queries_for_one_track_run_in_parallel(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -682,7 +699,7 @@ async def test_group_queries_for_one_track_run_in_parallel(
     router.get(url=re.compile(r'/api/artist/[^/]+')).mock(side_effect=get_group)
     mock_metadata(router)
     mapping = await cm.make_artist_to_meta(client, {'Alice': 'A'})
-    await enqueue_edit(client, mapping.apply(track(g, h)))
+    await enqueue_edit(pending, mapping.apply(track(g, h)))
     assert len(mapping.metadata) == 3
 
 
@@ -690,7 +707,7 @@ async def test_metadata_bundle_handles_multiple_adds_deletes_and_noop(
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
-    from amqcsl.clients.bundles import TrackAddMetadataBundle, TrackDeleteMetadataBundle, parallel_actions
+    from amqcsl.bundles import TrackAddMetadataBundle, TrackDeleteMetadataBundle, action_bundle_compose
     from amqcsl.objects import CSLExtraMetadata, ExtraMetadata
 
     t = track(artist('Alice'))
@@ -704,7 +721,7 @@ async def test_metadata_bundle_handles_multiple_adds_deletes_and_noop(
         TrackAddMetadataBundle(t, [ExtraMetadata(True, 'Character', 'B')]),
         *[TrackDeleteMetadataBundle(t, CSLExtraMetadata(str(i), 2, 'Character', 'Old')) for i in range(2)],
     ]
-    await finish(client.process(parallel_actions(bundles)))
+    await finish(client.process(action_bundle_compose(bundles)))
     assert add.call_count == 2
     assert all(route.call_count == 1 for route in deletes)
 
@@ -766,6 +783,7 @@ async def test_search_phase_logging(
 @pytest.mark.parametrize('factory', ['make', 'class'])
 @pytest.mark.parametrize('global_search', [False, True])
 async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     factory: str,
@@ -790,11 +808,11 @@ async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
     for idx in range(2):
         await finish(
             enqueue_edit(
-                client,
+                pending,
                 mapping.apply(track(a, excluded, track_id=str(idx)), lambda _track, _reasons, _existing: pytest.fail()),
             )
         )
-    await finish(client.commit())
+    await finish(client.process_queue(pending))
     assert add.call_count == 2
     for call in cast(Sequence[Call], add.calls):
         assert [meta['value'] for meta in json.loads(request_body(call.request))['extraMetadatas']] == ['A']
@@ -802,6 +820,7 @@ async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
 
 @pytest.mark.parametrize('key_kind', ['name', 'tuple', 'artist_name'])
 async def test_exclude_only_mapping_resolves_names_and_skips_groups(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     key_kind: str,
@@ -821,14 +840,15 @@ async def test_exclude_only_mapping_resolves_names_and_skips_groups(
     mapping = await finish(cm.make_artist_to_meta(client, {}, exclude=[keys[key_kind]]))
     assert mapping.excluded_artists == {str(g['id'])}
     assert not mapping.metadata
-    await finish(enqueue_edit(client, mapping.apply(track(g), lambda _track, _reasons, _existing: pytest.fail())))
-    await finish(client.commit())
+    await finish(enqueue_edit(pending, mapping.apply(track(g), lambda _track, _reasons, _existing: pytest.fail())))
+    await finish(client.process_queue(pending))
     assert delete.called and not group_query.called
 
 
 @pytest.mark.parametrize('all_excluded', [False, True])
 @pytest.mark.parametrize('initial', [False, True])
 async def test_group_members_respect_initial_and_callback_exclusions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     all_excluded: bool,
@@ -848,12 +868,12 @@ async def test_group_members_respect_initial_and_callback_exclusions(
     if not initial:
         await finish(
             enqueue_edit(
-                client, mapping.apply(track(excluded), lambda _track, _reasons, _existing: cm.ExcludeDecision.EXCLUDE)
+                pending, mapping.apply(track(excluded), lambda _track, _reasons, _existing: cm.ExcludeDecision.EXCLUDE)
             )
         )
     await finish(
         enqueue_edit(
-            client,
+            pending,
             mapping.apply(
                 track(g), lambda _track, _reasons, _existing: pytest.fail('Excluded member reported missing')
             ),
@@ -865,11 +885,12 @@ async def test_group_members_respect_initial_and_callback_exclusions(
     assert mapping[from_json(cast(JSONArtistSample, g), CSLArtistSample)] == expected
     assert get_group.call_count == 1
     assert nested.call_count == int(not initial)
-    assert len(client.queue) == int(not all_excluded)
+    assert len([*pending]) == int(not all_excluded)
 
 
 @pytest.mark.parametrize('ambiguous', [False, True])
 async def test_excluded_names_must_resolve_uniquely(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     ambiguous: bool,
@@ -879,7 +900,7 @@ async def test_excluded_names_must_resolve_uniquely(
     )
     with pytest.raises(AMQCSLError, match='2 artists found' if ambiguous else 'Could not find artists: Ignored'):
         await finish(cm.make_artist_to_meta(client, {}, exclude=['Ignored']))
-    assert not client.queue
+    assert not pending
 
 
 async def test_missing_exclusions_are_reported_with_missing_metadata_names(
@@ -894,6 +915,7 @@ async def test_missing_exclusions_are_reported_with_missing_metadata_names(
 
 
 async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -911,8 +933,8 @@ async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
     )
     add = router.post(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=mock_response(200))
     mapping = await finish(cm.make_artist_to_meta(client, {'Alice': 'A'}, exclude=['Already excluded']))
-    await finish(enqueue_edit(client, mapping.apply(track(a, track_id='before'))))
-    queued = [*client.queue]
+    await finish(enqueue_edit(pending, mapping.apply(track(a, track_id='before'))))
+    queued = [*pending]
     calls: list[tuple[CSLTrack, Sequence[cm.Reason]]] = []
 
     def ignore(t: CSLTrack, reasons: Sequence[cm.Reason], _existing: CSLMetadata | None) -> cm.ExcludeDecision:
@@ -921,21 +943,21 @@ async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
 
     for idx in range(2):
         t = track(a, unknown, g, track_id=f'ignored-{idx}')
-        await finish(enqueue_edit(client, mapping.apply(t, ignore)))
+        await finish(enqueue_edit(pending, mapping.apply(t, ignore)))
         assert calls[-1][0] is t
         assert [reason.artist.id for reason in calls[-1][1]] == ['Unknown', 'Group']
-        assert client.queue == queued
+        assert [*pending] == queued
         assert mapping.excluded_artists == {'Already excluded'}
     assert len(calls) == 2 and get_group.call_count == 2
     assert ignored_metadata.call_count == 2
     with pytest.raises(AMQCSLError, match='Cannot infer'):
         await finish(
             enqueue_edit(
-                client, mapping.apply(track(unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.ERROR)
+                pending, mapping.apply(track(unknown), lambda _track, _reasons, _existing: cm.ExcludeDecision.ERROR)
             )
         )
-    await finish(enqueue_edit(client, mapping.apply(track(a, track_id='after'))))
-    await finish(client.commit())
+    await finish(enqueue_edit(pending, mapping.apply(track(a, track_id='after'))))
+    await finish(client.process_queue(pending))
     assert add.call_count == 2
     assert {urlsplit(request_url(call.request)).path for call in cast(Sequence[Call], add.calls)} == {
         '/api/track/before/metadata',
@@ -947,6 +969,7 @@ async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 @pytest.mark.parametrize('request_kind', ['groups', 'metadata'])
 async def test_track_application_requests_overlap_without_duplicate_exclusion_decisions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     request_kind: str,
@@ -990,7 +1013,7 @@ async def test_track_application_requests_overlap_without_duplicate_exclusion_de
 
     await asyncio.gather(
         *(
-            enqueue_edit(client, mapping.apply(track(group, unknown, track_id=str(idx)), exclude))
+            enqueue_edit(pending, mapping.apply(track(group, unknown, track_id=str(idx)), exclude))
             for idx, group in enumerate(groups)
         )
     )
@@ -998,12 +1021,13 @@ async def test_track_application_requests_overlap_without_duplicate_exclusion_de
     assert [failure.artist.id for failure in failures] == ['Unknown']
     assert mapping.excluded_artists == {'Unknown'}
     assert len(mapping.metadata) == 3
-    assert len(client.queue) == 2 and not add.called
-    await client.commit()
+    assert len([*pending]) == 2 and not add.called
+    await client.process_queue(pending)
     assert add.call_count == 2
 
 
 async def test_default_ignore_prompt_fetches_metadata_without_queueing(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     monkeypatch: pytest.MonkeyPatch,
@@ -1015,12 +1039,13 @@ async def test_default_ignore_prompt_fetches_metadata_without_queueing(
         return 'ignore'
 
     monkeypatch.setattr('builtins.input', read)
-    await finish(enqueue_edit(client, mapping.apply(track(artist('Unknown')))))
-    assert metadata.call_count == 1 and not client.queue and not mapping.excluded_artists
+    await finish(enqueue_edit(pending, mapping.apply(track(artist('Unknown')))))
+    assert metadata.call_count == 1 and not pending and not mapping.excluded_artists
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_concurrent_group_fetches_recheck_cached_exclusions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -1048,17 +1073,18 @@ async def test_concurrent_group_fetches_recheck_cached_exclusions(
         return cm.ExcludeDecision.EXCLUDE
 
     await asyncio.gather(
-        *(enqueue_edit(client, mapping.apply(track(a, g, track_id=str(idx)), exclude)) for idx in range(2))
+        *(enqueue_edit(pending, mapping.apply(track(a, g, track_id=str(idx)), exclude)) for idx in range(2))
     )
     assert started == 2
     assert [failure.artist.id for failure in failures] == ['Group']
     assert mapping.excluded_artists == {'Group'}
-    assert len(client.queue) == 2
+    assert len([*pending]) == 2
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 @pytest.mark.parametrize('cancel', [False, True])
 async def test_open_prompt_allows_requests_and_serializes_decisions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     monkeypatch: pytest.MonkeyPatch,
@@ -1083,14 +1109,14 @@ async def test_open_prompt_allows_requests_and_serializes_decisions(
         return 'yes'
 
     monkeypatch.setattr('builtins.input', read)
-    first = asyncio.create_task(enqueue_edit(client, mapping.apply(track(unknown, track_id='first'))))
+    first = asyncio.create_task(enqueue_edit(pending, mapping.apply(track(unknown, track_id='first'))))
     second: asyncio.Task[None] | None = None
     try:
         await asyncio.wait_for(started.wait(), timeout=2)
-        second = asyncio.create_task(enqueue_edit(client, mapping.apply(track(unknown, track_id='second'))))
+        second = asyncio.create_task(enqueue_edit(pending, mapping.apply(track(unknown, track_id='second'))))
         if cancel:
             first.cancel()
-        await asyncio.wait_for(enqueue_edit(client, mapping.apply(track(a, track_id='known'))), timeout=2)
+        await asyncio.wait_for(enqueue_edit(pending, mapping.apply(track(a, track_id='known'))), timeout=2)
         assert metadata.called
         assert calls == 1
         assert not first.done() and not second.done()
@@ -1101,10 +1127,11 @@ async def test_open_prompt_allows_requests_and_serializes_decisions(
     assert first.cancelled() is cancel
     assert second is not None and not second.cancelled() and second.exception() is None
     assert mapping.excluded_artists == {'Unknown'}
-    assert len(client.queue) == 1
+    assert len([*pending]) == 1
 
 
 async def test_iter_edits_leaves_enqueueing_to_caller(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -1127,14 +1154,15 @@ async def test_iter_edits_leaves_enqueueing_to_caller(
         edits = [edit async for edit in mapping.iter_edits(source(), ignore)]
     else:
         edits = [*mapping.iter_edits(tracks, ignore)]
-    assert len(edits) == 2 and not client.queue
+    assert len(edits) == 2 and not pending
     for edit in edits:
-        client.enqueue(edit)
-    assert len(client.queue) == 2
+        pending.enqueue(edit)
+    assert len([*pending]) == 2
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_iter_edits_serializes_async_callbacks_and_keeps_requests_running(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -1164,12 +1192,12 @@ async def test_iter_edits_serializes_async_callbacks_and_keeps_requests_running(
     try:
         edit = await asyncio.wait_for(anext(edits), timeout=2)
         assert started.is_set() and calls == 1 and metadata.called
-        assert not client.queue
+        assert not pending
         release.set()
         remaining = [item async for item in edits]
         assert len(remaining) == 2
         assert calls == 1 and mapping.excluded_artists == {'Unknown'}
-        client.enqueue(edit)
+        pending.enqueue(edit)
     finally:
         release.set()
         await edits.aclose()
@@ -1177,6 +1205,7 @@ async def test_iter_edits_serializes_async_callbacks_and_keeps_requests_running(
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_iter_edits_closing_cancels_pending_decisions(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -1203,11 +1232,12 @@ async def test_iter_edits_closing_cancels_pending_decisions(
     edits = mapping.iter_edits(source(), ignore)
     await asyncio.wait_for(anext(edits), timeout=2)
     await asyncio.wait_for(edits.aclose(), timeout=2)
-    assert cancelled.is_set() and not client.queue and not mapping.excluded_artists
+    assert cancelled.is_set() and not pending and not mapping.excluded_artists
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)
 async def test_iter_edits_propagates_decision_errors(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -1224,10 +1254,11 @@ async def test_iter_edits_propagates_decision_errors(
     with pytest.raises(ExceptionGroup) as caught:
         _ = [edit async for edit in mapping.iter_edits(source(), fail)]
     assert any(isinstance(error, ValueError) for error in caught.value.exceptions)
-    assert not client.queue
+    assert not pending
 
 
 async def test_apply_returns_unqueued_edits(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -1239,16 +1270,17 @@ async def test_apply_returns_unqueued_edits(
 
     bundle = await finish(mapping.apply(track(a)))
     assert bundle is not None
-    assert not client.queue and not add.called
+    assert not pending and not add.called
     ignored = await finish(mapping.apply(track(artist('Unknown')), lambda _t, _r, _existing: cm.ExcludeDecision.IGNORE))
-    assert ignored is None and not client.queue and not add.called
+    assert ignored is None and not pending and not add.called
 
-    client.enqueue(bundle)
-    await finish(client.commit())
+    pending.enqueue(bundle)
+    await finish(client.process_queue(pending))
     assert add.call_count == 1
 
 
 async def test_empty_group_prepares_stale_character_removal(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
@@ -1265,9 +1297,9 @@ async def test_empty_group_prepares_stale_character_removal(
     unrelated = router.delete('/api/track/test-track/metadata/language').mock(return_value=mock_response(500))
     mapping = await finish(cm.make_artist_to_meta(client, {}))
     bundle = await finish(mapping.apply(track(g), lambda _t, _r, _existing: pytest.fail('Empty group prompted')))
-    assert bundle is not None and not client.queue and not delete.called
-    client.enqueue(bundle)
-    await finish(client.commit())
+    assert bundle is not None and not pending and not delete.called
+    pending.enqueue(bundle)
+    await finish(client.process_queue(pending))
     assert delete.call_count == 1 and not unrelated.called
 
 
@@ -1298,6 +1330,7 @@ async def test_make_artist_to_meta_rejects_unsupported_client() -> None:
 @pytest.mark.parametrize('use_iterator', [False, True])
 @pytest.mark.parametrize('has_metadata', [False, True])
 async def test_exclusion_callbacks_receive_existing_metadata_without_refetching(
+    pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
     use_iterator: bool,
@@ -1359,9 +1392,9 @@ async def test_exclusion_callbacks_receive_existing_metadata_without_refetching(
         edit = mapping.apply(item, exclude)
         assert edit is not None
         edits = [edit]
-    assert calls == 1 and len(edits) == 1 and not client.queue
+    assert calls == 1 and len(edits) == 1 and not pending
     for edit in edits:
-        client.enqueue(edit)
-    await finish(client.commit())
+        pending.enqueue(edit)
+    await finish(client.process_queue(pending))
     assert metadata.call_count == 1 and add.call_count == 1
     assert delete.call_count == int(has_metadata)
