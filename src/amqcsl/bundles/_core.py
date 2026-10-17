@@ -1,5 +1,5 @@
 from collections.abc import Generator, Iterable, Iterator
-from typing import Any, Protocol, cast, override, runtime_checkable
+from typing import Any, Literal, Protocol, cast, override, runtime_checkable
 
 import niquests
 import rich.repr
@@ -21,6 +21,74 @@ class Bundle[R](Protocol):
     # and async clients
     def vendor(self, client: httpClient) -> Vendor[R]: ...
     def __rich_repr__(self) -> rich.repr.Result: ...
+
+
+@frozen
+class EntryEdit:
+    """Identify a field or metadata entry changed by a bundle.
+
+    Attributes:
+        target_type: Kind of database object being edited.
+        target_id: Database ID of the edited object.
+        entry: Comparable field or metadata key. None affects the entire object,
+            as with deletion, and overlaps every entry on that target.
+    """
+
+    target_type: Literal['track', 'song', 'artist']
+    target_id: str
+    entry: tuple[str | bool, ...] | None = None
+
+
+class HasEdit(Protocol):
+    """Describe work that reports the entries it changes."""
+
+    def affected_entries(self) -> set[EntryEdit]:
+        """Return the fields and metadata entries changed by this work.
+
+        Returns:
+            Comparable edit identities, independent of proposed values.
+        """
+        ...
+
+
+def has_overlap(
+    first: HasEdit,
+    second: HasEdit,
+) -> bool:
+    """Check whether two edits change the same entry on the same target.
+
+    Whole-object edits overlap any reported entry for that object. Metadata
+    identities ignore the operation, so adding and removing one entry overlap.
+
+    Args:
+        first: Work reporting its affected entries.
+        second: Other work to compare against it.
+
+    Returns:
+        Whether any affected entries conflict.
+    """
+    return bool(overlapping_entries(first.affected_entries(), second.affected_entries()))
+
+
+def overlapping_entries(
+    first: set[EntryEdit],
+    second: set[EntryEdit],
+) -> set[EntryEdit]:
+    """Find shared entry identities, including whole-object deletion conflicts.
+
+    Args:
+        first: Affected entries from one edit or accumulated group.
+        second: Other entries to compare against them.
+
+    Returns:
+        Shared entries and whole-object keys that conflict with the other set.
+    """
+    # Project entries to whole-object keys to detect deletions without pairwise comparisons
+    return (
+        (first & second)
+        | ({EntryEdit(entry.target_type, entry.target_id) for entry in first} & second)
+        | (first & {EntryEdit(entry.target_type, entry.target_id) for entry in second})
+    )
 
 
 @frozen

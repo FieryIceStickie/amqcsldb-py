@@ -1,6 +1,8 @@
 from ._core import (
     Bundle,
     CollectBundle,
+    EntryEdit,
+    HasEdit,
     Items,
     MixedVendor,
     MultiVendor,
@@ -10,6 +12,7 @@ from ._core import (
     StreamingVendor,
     Vendor,
     action_bundle_compose,
+    has_overlap,
     httpClient,
 )
 from ._misc import (
@@ -59,12 +62,14 @@ __all__ = [
     'CreateAlbumBundle',
     'CreateGroupBundle',
     'CreateListBundle',
+    'EntryEdit',
     'GetArtistBundle',
     'GetMetadataBundle',
     'GetSongBundle',
     'GroupBundle',
     'GroupDeleteBundle',
     'GroupEditBundle',
+    'HasEdit',
     'Items',
     'IterArtistsBundle',
     'IterSongsBundle',
@@ -91,5 +96,6 @@ __all__ = [
     'TrackEditBundle',
     'Vendor',
     'action_bundle_compose',
+    'has_overlap',
     'httpClient',
 ]

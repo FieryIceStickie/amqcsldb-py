@@ -3,6 +3,7 @@ import re
 # pyright: reportUnusedExpression=false
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import cast
 
 import niquests_mock
 import pytest
@@ -12,6 +13,8 @@ from niquests_mock import MockRouter as Router
 
 import amqcsl
 from amqcsl.clients._client_consts import DB_URL
+from amqcsl.objects import CSLTrack, from_json
+from amqcsl.objects._json_types import JSONTrack
 from amqcsl.queues import StandardQueue
 
 
@@ -112,3 +115,9 @@ async def client(
 @pytest.fixture
 def pending() -> StandardQueue:
     return StandardQueue()
+
+
+@pytest.fixture
+def track() -> CSLTrack:
+    """Load a fresh track snapshot for tests that need an existing database track."""
+    return from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)

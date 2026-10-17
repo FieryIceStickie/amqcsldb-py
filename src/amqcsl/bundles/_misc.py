@@ -1,9 +1,9 @@
 import logging
 import mimetypes
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from functools import cached_property
 from pathlib import Path
-from typing import cast, override
+from typing import Literal, cast, override
 from urllib.parse import urlsplit
 
 import niquests
@@ -50,9 +50,55 @@ from amqcsl.objects._serialization import (
     to_json,
 )
 
-from ._core import Bundle, SingleVendor, httpClient
+from ._core import Bundle, EntryEdit, SingleVendor, httpClient
 
 logger = logging.getLogger('amqcsl.client')
+
+
+def _metadata_entries(
+    target_type: Literal['track', 'song'],
+    target_id: str,
+    metas: Iterable[Metadata | CSLSongArtistCredit | CSLExtraMetadata],
+) -> set[EntryEdit]:
+    """Normalize added and removed metadata into comparable edit identities.
+
+    Artist links use artist ID and role, ignoring credited names. Extra metadata
+    uses its artist flag, category, and value. Addition and removal share keys.
+
+    Args:
+        target_type: Kind of object whose metadata is edited.
+        target_id: Database ID of that object.
+        metas: Proposed additions or existing metadata being removed.
+
+    Returns:
+        The metadata entries affected by the operation.
+    """
+    return {metadata_entry(target_type, target_id, meta) for meta in metas}
+
+
+def metadata_entry(
+    target_type: Literal['track', 'song'],
+    target_id: str,
+    meta: Metadata | CSLSongArtistCredit | CSLExtraMetadata,
+) -> EntryEdit:
+    """Return the edit identity shared by adding and removing a metadata entry.
+
+    Args:
+        target_type: Kind of object whose metadata is edited.
+        target_id: Database ID of that object.
+        meta: Proposed addition or existing metadata being removed.
+
+    Returns:
+        Artist ID and role, or the extra metadata category and value, on the target.
+    """
+    match meta:
+        case ArtistCredit() | CSLSongArtistCredit():
+            key = ('artist', meta.artist.id, meta.type)
+        case ExtraMetadata():
+            key = ('extra', meta.is_artist, meta.type, meta.value)
+        case CSLExtraMetadata():
+            key = ('extra', meta.type == 'Artist', meta.key, meta.value)
+    return EntryEdit(target_type, target_id, key)
 
 
 @frozen
@@ -414,6 +460,17 @@ class SongEditBundle(Bundle[None]):
     name: str | None
     disambiguation: str | None
 
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report both song fields written by the edit request.
+
+        Unspecified fields are sent using the song snapshot's current values,
+        so they can overwrite another queued edit too.
+
+        Returns:
+            Name and disambiguation entries for this song.
+        """
+        return {EntryEdit('song', self.song.id, (name,)) for name in ('name', 'disambiguation')}
+
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Editing song {self.song.name}')
@@ -435,6 +492,14 @@ class SongEditBundle(Bundle[None]):
 @frozen
 class SongDeleteBundle(Bundle[None]):
     song: CSLSong
+
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report deletion as affecting every entry on this song.
+
+        Returns:
+            A whole-song edit identity.
+        """
+        return {EntryEdit('song', self.song.id)}
 
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
@@ -464,6 +529,14 @@ class SongAddMetadataBundle(Bundle[None]):
                     extra_metadata.append(meta)
         return artist_credits, extra_metadata
 
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report the song metadata entries added by this bundle.
+
+        Returns:
+            Normalized extra metadata and artist link identities.
+        """
+        return _metadata_entries('song', self.song.id, self.metas)
+
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Queuing metadata edit on {self.song.name}')
@@ -488,6 +561,16 @@ class SongAddMetadataBundle(Bundle[None]):
 class SongDeleteMetadataBundle(Bundle[None]):
     song: CSLSong
     meta: CSLSongArtistCredit | CSLExtraMetadata
+
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report the song metadata entry removed by this bundle.
+
+        Returns:
+            The normalized identity of the removed metadata.
+        """
+        return _metadata_entries('song', self.song.id, [self.meta]) | {
+            EntryEdit('song', self.song.id, ('metadata_id', self.meta.id)),
+        }
 
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
@@ -538,6 +621,21 @@ class TrackAddMetadataBundle(Bundle[None]):
         artist_credits, extra_metadata = self.filtered_metas
         return len(artist_credits) + len(extra_metadata)
 
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report track metadata additions and any explicit override change.
+
+        Metadata already present in existing_meta is excluded, matching request
+        filtering. Override is a separate field from individual metadata entries.
+
+        Returns:
+            Normalized metadata identities and the override field when supplied.
+        """
+        artist_credits, extra_metadata = self.filtered_metas
+        entries = _metadata_entries('track', self.track.id, (*artist_credits, *extra_metadata))
+        if self._override is not None:
+            entries.add(EntryEdit('track', self.track.id, ('override',)))
+        return entries
+
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
         track = self.track
@@ -570,6 +668,16 @@ class TrackDeleteMetadataBundle(Bundle[None]):
     track: CSLTrack
     meta: CSLSongArtistCredit | CSLExtraMetadata
 
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report the track metadata entry removed by this bundle.
+
+        Returns:
+            The normalized identity of the removed metadata.
+        """
+        return _metadata_entries('track', self.track.id, [self.meta]) | {
+            EntryEdit('track', self.track.id, ('metadata_id', self.meta.id)),
+        }
+
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
         logger.info(f'Removing metadata {self.meta} from track {self.track.name}')
@@ -592,6 +700,26 @@ class TrackEditBundle(Bundle[None]):
     original_name: str | None = None
     song: NewSong | CSLSongSample | None = None
     type: TrackType | None = None
+
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report the track fields explicitly supplied by this edit.
+
+        Empty strings and empty lists still affect their fields. None leaves a
+        field unchanged and does not contribute an entry.
+
+        Returns:
+            Field identities for the supplied track changes.
+        """
+        values = {
+            'artist_credits': self.artist_credits,
+            'groups': self.groups,
+            'name': self.name,
+            'original_artist': self.original_artist,
+            'original_name': self.original_name,
+            'song': self.song,
+            'type': self.type,
+        }
+        return {EntryEdit('track', self.track.id, (name,)) for name, value in values.items() if value is not None}
 
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
@@ -689,6 +817,14 @@ class AddAudioBundle(Bundle[None]):
             raise QueryError(f'{self.audio_path.name} is not an audio file')
         return mime_type
 
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report the destination track's audio as changed by this upload.
+
+        Returns:
+            The audio field identity for the destination track.
+        """
+        return {EntryEdit('track', self.track.id, ('audio',))}
+
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
         track = self.track
@@ -727,6 +863,14 @@ class AddAudioBundle(Bundle[None]):
 class ImportAudioBundle(Bundle[None]):
     track: CSLTrack
     track_to_import_from: CSLTrack
+
+    def affected_entries(self) -> set[EntryEdit]:
+        """Report the destination track's audio as changed by this import.
+
+        Returns:
+            The audio field identity for the destination track.
+        """
+        return {EntryEdit('track', self.track.id, ('audio',))}
 
     @override
     def vendor(self, client: httpClient) -> SingleVendor[None]:
