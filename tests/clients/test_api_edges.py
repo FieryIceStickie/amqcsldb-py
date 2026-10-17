@@ -33,11 +33,6 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest.fixture
-def track() -> CSLTrack:
-    return from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
-
-
-@pytest.fixture
 def song() -> CSLSong:
     return from_json(cast(JSONSong, load('idolypride/songs/blueskysummer')), CSLSong)
 

@@ -195,7 +195,7 @@ class DBClient:
             RuntimeError: The queue is already processing.
             ExceptionGroup: Execution and recovery output both fail.
         """
-        with queue.processing() as groups:
+        with queue._processing() as groups:  # pyright: ignore[reportPrivateUsage]
             changes_lists, changes_groups = queue.changes_lists(), queue.changes_groups()
             logger.info('Processing %s queued edits', len(queue))
             error: BaseException | None = None

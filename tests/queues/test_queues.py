@@ -9,13 +9,22 @@ import niquests
 import pytest
 import rich.repr
 from attrs import frozen
-from helpers import finish, load, mock_response
+from helpers import finish, mock_response
 from niquests_mock import MockRouter as Router
 from rich.console import Console
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.bundles import Bundle, ParallelBundle, SingleVendor, action_bundle_compose, httpClient
-from amqcsl.bundles._misc import GroupEditBundle, TrackDeleteMetadataBundle
+from amqcsl.bundles._misc import (
+    GetArtistBundle,
+    GetMetadataBundle,
+    GetSongBundle,
+    GroupBundle,
+    GroupEditBundle,
+    ListBundle,
+    TrackDeleteMetadataBundle,
+    TrackEditBundle,
+)
 from amqcsl.bundles._pages import IterTracksBundle
 from amqcsl.objects import (
     AlbumTrack,
@@ -33,15 +42,9 @@ from amqcsl.objects import (
     ExtraMetadata,
     NewSong,
     TrackPutArtistCredit,
-    from_json,
 )
-from amqcsl.objects._json_types import JSONTrack
-from amqcsl.queues import QueueGroup, StandardQueue
-
-
-@pytest.fixture
-def track() -> CSLTrack:
-    return from_json(cast(JSONTrack, load('sunshine/tracks')[0]), CSLTrack)
+from amqcsl.queues import GroupedQueue, Queue, QueueGroup, StandardQueue
+from amqcsl.queues._core import is_queueable
 
 
 @pytest.fixture
@@ -71,7 +74,7 @@ class OneWorkerQueue(StandardQueue):
         return min(1, super().num_workers(max_request_count))
 
 
-def leaves(queue: StandardQueue) -> list[Bundle[Any]]:
+def leaves(queue: Queue[Any]) -> list[Bundle[Any]]:
     return [bundle for group in queue for bundle in group.bundles]
 
 
@@ -105,19 +108,79 @@ def test_action_bundle_compose_and_atomic_stream_rejection() -> None:
     assert len(queue) == 1
 
 
-def test_processing_guard_is_reset_on_error() -> None:
+@pytest.mark.parametrize('queue_type', [StandardQueue, GroupedQueue])
+def test_read_only_bundles_are_rejected_atomically(
+    queue_type: type[StandardQueue] | type[GroupedQueue],
+    track: CSLTrack,
+    song: CSLSong,
+) -> None:
+    queue = queue_type()
+    edit = TrackEditBundle(track, name='New')
+    reads: list[Bundle[Any]] = [
+        GetMetadataBundle(track),
+        GetSongBundle(song),
+        GetArtistBundle(CSLArtistSample('artist', 'Artist', '', None, 1)),
+        ListBundle(),
+        GroupBundle(),
+    ]
+    for read in reads:
+        assert not is_queueable(read)
+        assert not is_queueable(ParallelBundle([edit, read]))
+        with pytest.raises(TypeError, match='read-only'):
+            queue.enqueue(ParallelBundle([edit, read]))
+        assert not queue
+    assert is_queueable(edit)
+    assert is_queueable(ParallelBundle([ParallelBundle([edit])]))
+    assert is_queueable(ParallelBundle[Any]([]))
+
+
+def test_standard_batch_uses_default_enqueue_loop() -> None:
     queue = StandardQueue()
-    bundle = CustomBundle('pending')
-    queue.enqueue(bundle)
-    with pytest.raises(ValueError, match='test failure'), queue.processing():
+    first = CustomBundle('First')
+    second = CustomBundle('Second')
+    queue.enqueue_batch([first, second])
+    assert [group.bundles for group in queue] == [(first,), (second,)]
+    third = CustomBundle('Third')
+    with pytest.raises(TypeError, match='read-only'):
+        queue.enqueue_batch([third, ListBundle()])
+    assert leaves(queue) == [first, second, third]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('queue_type', [StandardQueue, GroupedQueue])
+@pytest.mark.parametrize('execution_fails', [False, True])
+async def test_processing_blocks_enqueue_and_releases_guard(
+    queue_type: type[StandardQueue] | type[GroupedQueue],
+    execution_fails: bool,
+    client: DBClient | AsyncDBClient,
+    router: Router,
+    track: CSLTrack,
+) -> None:
+    queue = queue_type()
+    queue.track_edit(track, name='Pending')
+    before = queue.to_json()
+
+    def respond(_: niquests.PreparedRequest) -> niquests.Response:
         with pytest.raises(RuntimeError, match='Cannot enqueue'):
-            queue.enqueue(CustomBundle('new'))
-        with pytest.raises(RuntimeError, match='already processing'), queue.processing():
-            pass
-        queue.complete(bundle)
-        raise ValueError('test failure')
-    queue.enqueue(CustomBundle('new'))
-    assert len(queue) == 1
+            queue.track_edit(track, name='Blocked')
+        with pytest.raises(RuntimeError, match='Cannot enqueue'):
+            queue.enqueue_batch([TrackEditBundle(track, name='Blocked')])
+        if isinstance(client, DBClient):
+            with pytest.raises(RuntimeError, match='already processing'):
+                client.process_queue(queue, save_to=StringIO())
+        assert queue.to_json() == before
+        return mock_response(500 if execution_fails else 200)
+
+    route = router.put(f'/api/track/{track.id}').mock(side_effect=respond)
+    if execution_fails:
+        with pytest.raises(niquests.HTTPError):
+            await finish(client.process_queue(queue, save_to=StringIO()))
+    else:
+        await finish(client.process_queue(queue, save_to=StringIO()))
+    assert route.call_count == 1
+    assert len(queue) == int(execution_fails)
+    queue.track_edit(track, original_name='Guard released')
+    assert len(queue) == (1 if queue_type is GroupedQueue else int(execution_fails) + 1)
 
 
 def test_display_uses_rich_repr() -> None:
@@ -131,33 +194,57 @@ def test_display_uses_rich_repr() -> None:
 
 
 @pytest.mark.parametrize(
-    'operation',
+    ('queue_type', 'operation'),
     [
-        'create_list',
-        'list_edit',
-        'list_delete',
-        'create_group',
-        'group_edit',
-        'group_delete',
-        'song_edit',
-        'song_delete',
-        'song_add_metadata',
-        'song_delete_metadata',
-        'track_add_metadata',
-        'track_remove_metadata',
-        'track_edit',
-        'create_album',
-        'add_audio',
-        'import_audio',
+        (queue_type, operation)
+        for queue_type, operations in [
+            (
+                StandardQueue,
+                (
+                    'create_list',
+                    'list_edit',
+                    'list_delete',
+                    'create_group',
+                    'group_edit',
+                    'group_delete',
+                    'song_edit',
+                    'song_delete',
+                    'song_add_metadata',
+                    'song_delete_metadata',
+                    'track_add_metadata',
+                    'track_remove_metadata',
+                    'track_edit',
+                    'create_album',
+                    'add_audio',
+                    'import_audio',
+                ),
+            ),
+            (
+                GroupedQueue,
+                (
+                    'song_edit',
+                    'song_delete',
+                    'song_add_metadata',
+                    'song_delete_metadata',
+                    'track_add_metadata',
+                    'track_remove_metadata',
+                    'track_edit',
+                    'add_audio',
+                    'import_audio',
+                ),
+            ),
+        ]
+        for operation in operations
     ],
 )
 def test_builtin_edits_round_trip(
     operation: str,
+    queue_type: type[StandardQueue] | type[GroupedQueue],
     track: CSLTrack,
     song: CSLSong,
     tmp_path: Path,
 ) -> None:
-    queue = StandardQueue()
+    queue = queue_type()
     artist = CSLArtistSample('artist', 'Artist', 'Original', None, 1)
     group = CSLGroup('group', 'Group')
     csl_list = CSLList('list', 'List', 1)
@@ -165,8 +252,6 @@ def test_builtin_edits_round_trip(
     credit = ArtistCredit(artist, 'Vocal', 'Credit')
     old_meta = CSLExtraMetadata('metadata', 2, 'Character', 'Old name')
     old_credit = CSLSongArtistCredit('credit', 'Vocal', artist)
-    audio = tmp_path / 'audio.flac'
-    audio.write_bytes(b'audio')
     match operation:
         case 'create_list':
             queue.create_list('New list', csl_list)
@@ -210,6 +295,8 @@ def test_builtin_edits_round_trip(
                 'Album', 'Original album', 2026, iter([group]), [[AlbumTrack('Track', 'Original', 'Artist')]]
             )
         case 'add_audio':
+            audio = tmp_path / 'audio.flac'
+            audio.write_bytes(b'audio')
             queue.add_audio(track, audio)
         case 'import_audio':
             queue.import_audio(track, track)
@@ -219,7 +306,7 @@ def test_builtin_edits_round_trip(
     queue.to_file(stream)
     assert not stream.closed
     stream.seek(0)
-    restored = StandardQueue.from_file(stream)
+    restored = queue_type.from_file(stream)
     assert restored.to_json() == queue.to_json()
     assert leaves(restored) == leaves(queue)
 
@@ -421,14 +508,16 @@ async def test_child_cancellation_propagates_and_saves_remaining(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('client', ['async'], indirect=True)
+@pytest.mark.parametrize('queue_type', [StandardQueue, GroupedQueue])
 async def test_cancellation_drains_workers_and_saves_remaining(
+    queue_type: type[StandardQueue] | type[GroupedQueue],
     client: DBClient | AsyncDBClient,
     router: Router,
     track: CSLTrack,
 ) -> None:
     assert isinstance(client, AsyncDBClient)
     client.max_request_count = 1
-    queue = StandardQueue()
+    queue = queue_type()
     queue.enqueue(
         ParallelBundle(
             [
@@ -455,7 +544,9 @@ async def test_cancellation_drains_workers_and_saves_remaining(
     task = asyncio.create_task(client.process_queue(queue, save_to=output))
     await asyncio.wait_for(started.wait(), timeout=1)
     with pytest.raises(RuntimeError, match='Cannot enqueue'):
-        queue.create_group('Blocked')
+        queue.track_edit(track, name='Blocked')
+    with pytest.raises(RuntimeError, match='Cannot enqueue'):
+        queue.enqueue_batch([TrackEditBundle(track, name='Blocked')])
     with pytest.raises(RuntimeError, match='already processing'):
         await client.process_queue(queue, save_to=StringIO())
     task.cancel()
@@ -463,8 +554,8 @@ async def test_cancellation_drains_workers_and_saves_remaining(
         await task
     assert drained.is_set() and not waiting.called and len(queue) == 2
     output.seek(0)
-    assert len(StandardQueue.from_file(output)) == 2
-    queue.create_group('Guard released')
+    assert len(queue_type.from_file(output)) == 2
+    queue.track_edit(track, name='Guard released')
     assert client._request_semaphore._active == 0  # pyright: ignore[reportPrivateUsage]
 
 
@@ -688,6 +779,6 @@ def test_custom_stream_is_rejected() -> None:
             yield 'kind', 'custom stream'
 
     queue = StandardQueue()
-    with pytest.raises(TypeError, match='Streaming bundles cannot be queued'):
+    with pytest.raises(TypeError, match='Streaming.*cannot be queued'):
         queue.enqueue(cast(Bundle[Any], CustomStream()))
     assert not queue

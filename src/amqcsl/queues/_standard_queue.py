@@ -8,7 +8,7 @@ from rich.pretty import Pretty
 from amqcsl.bundles._core import Bundle, flatten
 from amqcsl.objects._serialization import bundle_from_json, bundle_to_json
 
-from ._core import Queue, QueueGroup
+from ._core import Queue, QueueGroup, is_queueable
 
 
 class StandardQueueOptions(TypedDict):
@@ -27,6 +27,8 @@ class StandardQueue(Queue[StandardQueueOptions]):
     @override
     def enqueue(self, bundle: Bundle[Any]) -> None:
         self._check_mutable()
+        if not is_queueable(bundle):
+            raise TypeError('Streaming and read-only bundles cannot be queued')
         children = [*flatten(bundle)]
         if children:
             self._groups.append(children)

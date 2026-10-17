@@ -230,23 +230,18 @@ def action_bundle_compose(bundles: Iterable[Bundle[None]]) -> Bundle[None]:
 
 
 def flatten(bundle: Bundle[Any]) -> Iterator[Bundle[Any]]:
-    """Recursively flatten known parallel wrappers and reject streaming work.
+    """Recursively unpack parallel wrappers into their constituent bundles.
 
     Args:
         bundle: An ordinary bundle or nested parallel wrapper.
 
     Yields:
         Leaf bundles in child insertion order.
-
-    Raises:
-        TypeError: A child is a streaming bundle.
     """
     match bundle:
         case ParallelBundle() | ParallelActionBundle():
             children = cast(ParallelBundle[Any] | ParallelActionBundle, bundle).bundles
             for child in children:
                 yield from flatten(child)
-        case StreamingBundle():
-            raise TypeError('Streaming bundles cannot be queued')
         case _:
             yield bundle

@@ -10,15 +10,20 @@ from typing import Any, ClassVar, Self, TextIO, cast
 from attrs import define, field, frozen
 from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
-from amqcsl.bundles._core import Bundle
+from amqcsl.bundles._core import Bundle, ParallelActionBundle, ParallelBundle, StreamingBundle
 from amqcsl.bundles._misc import (
     AddAudioBundle,
     CreateAlbumBundle,
     CreateGroupBundle,
     CreateListBundle,
+    GetArtistBundle,
+    GetMetadataBundle,
+    GetSongBundle,
+    GroupBundle,
     GroupDeleteBundle,
     GroupEditBundle,
     ImportAudioBundle,
+    ListBundle,
     ListDeleteBundle,
     ListEditBundle,
     SongAddMetadataBundle,
@@ -47,6 +52,30 @@ from amqcsl.objects._db_types import (
 from amqcsl.objects._obj_consts import TrackType
 
 logger = logging.getLogger('amqcsl.queue')
+
+
+def is_queueable(bundle: Bundle[Any] | StreamingBundle[Any]) -> bool:
+    """Check whether a bundle contains work that can be queued.
+
+    Streaming and known read-only bundles are excluded. Parallel wrappers are
+    queueable only when all of their children are queueable.
+
+    Args:
+        bundle: Bundle or parallel composition to check.
+
+    Returns:
+        Whether the bundle and all its children can be queued.
+    """
+    match bundle:
+        case ParallelBundle() | ParallelActionBundle():
+            children = cast(ParallelBundle[Any] | ParallelActionBundle, bundle).bundles
+            return all(is_queueable(child) for child in children)
+        case (
+            StreamingBundle() | GetArtistBundle() | GetMetadataBundle() | GetSongBundle() | GroupBundle() | ListBundle()
+        ):
+            return False
+        case _:
+            return True
 
 
 @frozen
@@ -123,7 +152,7 @@ class Queue[O: Mapping[str, object]](RichQueueMixin):
             raise RuntimeError('Cannot enqueue while the queue is processing')
 
     @contextmanager
-    def processing(self) -> Generator[tuple[QueueGroup, ...]]:
+    def _processing(self) -> Generator[tuple[QueueGroup, ...]]:
         """Claim this queue until execution, recovery output, and cleanup finish.
 
         Yields:
@@ -142,16 +171,34 @@ class Queue[O: Mapping[str, object]](RichQueueMixin):
 
     @abstractmethod
     def enqueue(self, bundle: Bundle[Any]) -> None:
-        """Stage an ordinary bundle; streaming bundles cannot be queued.
+        """Stage an edit bundle; streaming and known read-only bundles cannot be queued.
 
         Args:
             bundle: Work to stage, with any return value discarded during processing.
 
         Raises:
             RuntimeError: The queue is currently processing.
-            TypeError: The bundle contains streaming work.
+            TypeError: The bundle contains streaming or known read-only work.
         """
         raise NotImplementedError
+
+    def enqueue_batch(self, bundles: Iterable[Bundle[Any]]) -> None:
+        """Add an iterable of bundles to the queue in insertion order.
+
+        The default implementation calls enqueue for each bundle. Earlier
+        additions remain if a later bundle or iteration fails. Concrete queues
+        can override this behavior to validate and add the whole batch atomically.
+
+        Args:
+            bundles: Bundles to enqueue in insertion order.
+
+        Raises:
+            RuntimeError: The queue is currently processing.
+            TypeError: A bundle cannot be queued.
+        """
+        self._check_mutable()
+        for bundle in bundles:
+            self.enqueue(bundle)
 
     @abstractmethod
     def __iter__(self) -> Iterator[QueueGroup]:
