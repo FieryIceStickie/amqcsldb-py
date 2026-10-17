@@ -6,6 +6,7 @@ API Reference
 
    client
    queues
+   bundles
    objects
    errors
    workflows/index

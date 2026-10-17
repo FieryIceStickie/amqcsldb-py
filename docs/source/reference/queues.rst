@@ -13,3 +13,10 @@ Queues
 
 .. autoclass:: amqcsl.queues.StandardQueueOptions
    :members:
+
+.. autoclass:: amqcsl.queues.GroupedQueue
+   :members:
+   :inherited-members:
+
+.. autoclass:: amqcsl.queues.GroupedQueueOptions
+   :members:
