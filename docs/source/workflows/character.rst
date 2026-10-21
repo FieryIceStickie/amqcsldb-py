@@ -173,6 +173,9 @@ If you already know which artists to ignore, pass them in as ``exclude`` when cr
 
 These use the same name formats as the artist dictionary and must match a unique artist. Exclusions
 take priority over dictionary entries, and excluded group members are skipped during inference.
+Exclusions are matched as artists are encountered, without searching for those names first.
+A plain name excludes every matching artist; use an original name or disambiguation to narrow it.
+Names that are never encountered are harmless.
 
 You can also pass a ``should_exclude`` function to ``iter_edits`` to make the decision yourself:
 

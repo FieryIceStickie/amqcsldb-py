@@ -28,6 +28,7 @@ from .types import (
     ExcludeDecision,
     Reason,
     ShouldExclude,
+    matches_exclusion,
 )
 
 logger = logging.getLogger('amqcsl.workflows.character_metadata')
@@ -45,6 +46,28 @@ def _match_artist(
             logger.error(artist)
         raise AMQCSLError(f'{len(matches)} artists found for {artist_name}')
     return matches[0] if matches else None
+
+
+def _excluded_definition(
+    key: ArtistKey,
+    rules: Sequence[ArtistName],
+) -> bool:
+    """Check whether an exclusion rule covers every artist a mapping key could match.
+
+    Args:
+        key: Explicit artist definition being considered for lookup.
+        rules: Exclusion rules compiled from user-supplied keys.
+
+    Returns:
+        Whether the definition can be skipped without a database lookup.
+    """
+    name = ArtistName.from_key(key)
+    return any(
+        rule.name == name.name
+        and (rule.original_name is None or rule.original_name == name.original_name)
+        and (rule.disambiguation is None or rule.disambiguation == name.disambiguation)
+        for rule in rules
+    )
 
 
 @frozen
@@ -78,10 +101,17 @@ class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMe
         self,
         client: httpClient,
     ) -> MultiVendor[tuple[dict[CSLArtistSample, Sequence[ExtraMetadata]], set[str]]]:
+        rules = [ArtistName.from_key(key) for key in dict.fromkeys(self.exclude)]
+        active = [key for key in self.artists if not _excluded_definition(key, rules)]
+        excluded: set[str] = set()
+        if self.artists and not active:
+            return {}, excluded
         if self.search_phrases:
             logger.info('Searching phrases for artists')
         results = yield from self._search(client, self.search_phrases)
-        discovered = {artist for result in results for artist in result}
+        discovered = {
+            artist for result in results for artist in result if not matches_exclusion(artist, excluded, rules)
+        }
         matched: dict[CSLArtistSample, ArtistKey] = {}
         missing: defaultdict[str, list[ArtistKey]] = defaultdict(list)
 
@@ -92,7 +122,7 @@ class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMe
                 )
             matched[artist] = key
 
-        for key in dict.fromkeys([*self.artists, *self.exclude]):
+        for key in active:
             name = ArtistName.from_key(key)
             artist = _match_artist(name, discovered)
             if artist is None:
@@ -105,8 +135,9 @@ class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMe
         results = yield from self._search(client, [*missing])
         not_found: list[ArtistName] = []
         for (name, keys), result in zip(missing.items(), results, strict=True):
+            candidates = {artist for artist in result if not matches_exclusion(artist, excluded, rules)}
             for key in keys:
-                artist = _match_artist(ArtistName.from_key(key), {*result})
+                artist = _match_artist(ArtistName.from_key(key), candidates)
                 if artist is None:
                     not_found.append(ArtistName.from_key(key))
                     continue
@@ -115,7 +146,6 @@ class MakeArtistToMetaBundle(Bundle[tuple[dict[CSLArtistSample, Sequence[ExtraMe
         if not_found:
             raise AMQCSLError(f'Could not find artists: {", ".join(str(name) for name in not_found)}')
 
-        excluded = {artist.id for artist, key in matched.items() if key in self.exclude}
         metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]] = {
             artist: [ExtraMetadata(True, 'Character', value) for value in self.artists[key].split(self.sep)]
             for artist, key in matched.items()
@@ -137,6 +167,7 @@ class _GroupGraphBundle(Bundle[list[CSLArtist]]):
     artists: Sequence[CSLArtistSample]
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
     excluded_artists: set[str]
+    exclude_rules: Sequence[ArtistName] = ()
 
     @override
     def vendor(self, client: httpClient) -> MultiVendor[list[CSLArtist]]:
@@ -146,7 +177,8 @@ class _GroupGraphBundle(Bundle[list[CSLArtist]]):
             groups = yield from ParallelBundle(
                 GetArtistBundle(artist)
                 for artist in pending.values()
-                if artist.id not in self.excluded_artists and artist.to_sample() not in self.metadata
+                if not matches_exclusion(artist, self.excluded_artists, self.exclude_rules)
+                and artist.to_sample() not in self.metadata
             ).vendor(client)
             fetched.update((group.id, group) for group in groups)
             pending = {
@@ -156,7 +188,7 @@ class _GroupGraphBundle(Bundle[list[CSLArtist]]):
                 if relation.type == 'GroupMember'
                 and relation.artist.type == 'Group'
                 and relation.artist.id not in fetched
-                and relation.artist.id not in self.excluded_artists
+                and not matches_exclusion(relation.artist, self.excluded_artists, self.exclude_rules)
                 and relation.artist.to_sample() not in self.metadata
             }
         return [*fetched.values()]
@@ -173,6 +205,11 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
     excluded_artists: set[str]
     should_exclude: ShouldExclude
     existing_metadata: CSLMetadata | None = None
+    exclude_rules: Sequence[ArtistName] = ()
+
+    def _is_excluded(self, artist: CSLArtistSample) -> bool:
+        """Match an encountered artist and cache its ID when an exclusion rule applies."""
+        return matches_exclusion(artist, self.excluded_artists, self.exclude_rules)
 
     def _process_group(
         self,
@@ -193,7 +230,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         known: dict[str, CSLArtistSample] = {}
         metas: list[ExtraMetadata] = []
         for member in members.values():
-            if member.id in self.excluded_artists:
+            if self._is_excluded(member):
                 continue
             result = self.metadata.get(member.to_sample())
             if result is None:
@@ -224,11 +261,11 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
             artist
             for artist in self._credited_artists.values()
             if self.track.type not in ('OffVocal', 'Instrumental')
-            and artist.id not in self.excluded_artists
+            and not self._is_excluded(artist)
             and artist.to_sample() not in self.metadata
             and artist.type == 'Group'
         ]
-        return _GroupGraphBundle(groups, self.metadata, self.excluded_artists)
+        return _GroupGraphBundle(groups, self.metadata, self.excluded_artists, self.exclude_rules)
 
     def prepare(self, fetched: Sequence[CSLArtist]) -> Bundle[None] | None:
         """Update caches and decide whether to process the track, without making requests."""
@@ -243,7 +280,7 @@ class ApplyArtistToMetaBundle(Bundle[Bundle[None] | None]):
         reasons: list[Reason] = []
         metas: set[ExtraMetadata] = set()
         for artist in self._credited_artists.values():
-            if artist.id in self.excluded_artists:
+            if self._is_excluded(artist):
                 continue
             key = artist.to_sample()
             if key in self.metadata:

@@ -64,6 +64,29 @@ type ArtistKey = ArtistName | tuple[str, str | None] | str
 type ArtistDict = Mapping[ArtistKey, str]
 
 
+def matches_exclusion(
+    artist: CSLArtistSample,
+    excluded_ids: set[str],
+    rules: Sequence[ArtistName],
+) -> bool:
+    """Match an encountered artist against exclusion rules and cache matching IDs.
+
+    Args:
+        artist: Artist from a track credit, search result, or group relation.
+        excluded_ids: Shared IDs already excluded by rules or user decisions.
+        rules: Name, original-name, and disambiguation rules to apply lazily.
+
+    Returns:
+        Whether the artist is already excluded or matches a supplied rule.
+    """
+    if artist.id in excluded_ids:
+        return True
+    if any(rule.match(artist) for rule in rules):
+        excluded_ids.add(artist.id)
+        return True
+    return False
+
+
 @frozen
 class _UnknownArtist:
     """The credited artist has no explicit metadata and is not a group."""

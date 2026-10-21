@@ -21,6 +21,9 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Match character workflow exclusions as artists are encountered, avoiding preparation searches
+   for excluded names. See :doc:`workflows/character`.
+
 #. Display grouped edits as compact target panels with colored field, artist, metadata, and audio changes.
    See :doc:`advanced/queues`.
 

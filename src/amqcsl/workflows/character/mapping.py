@@ -14,7 +14,7 @@ from amqcsl.objects._db_types import CSLArtist, CSLArtistSample, CSLTrack, Extra
 
 from .bundles import ApplyArtistToMetaBundle, MakeArtistToMetaBundle
 from .prompts import async_prompt_should_exclude, prompt_should_exclude
-from .types import ArtistDict, ArtistKey, ArtistToMeta, AsyncShouldExclude, ExcludeDecision, ShouldExclude
+from .types import ArtistDict, ArtistKey, ArtistName, ArtistToMeta, AsyncShouldExclude, ExcludeDecision, ShouldExclude
 
 type _ExclusionRequest = tuple[
     ApplyArtistToMetaBundle,
@@ -30,6 +30,7 @@ class SyncArtistToMeta(ArtistToMeta):
     _client: DBClient = field(repr=False, eq=False)
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
     excluded_artists: set[str] = field(factory=set[str])
+    _exclude_rules: tuple[ArtistName, ...] = field(default=(), repr=False)
 
     @classmethod
     def create(
@@ -50,7 +51,8 @@ class SyncArtistToMeta(ArtistToMeta):
                 exclude,
             )
         )
-        return cls(client, metadata, excluded)
+        rules = (*(ArtistName.from_key(key) for key in dict.fromkeys(exclude)),)
+        return cls(client, metadata, excluded, rules)
 
     def apply(
         self,
@@ -64,6 +66,7 @@ class SyncArtistToMeta(ArtistToMeta):
                 self.metadata,
                 self.excluded_artists,
                 should_exclude,
+                exclude_rules=self._exclude_rules,
             )
         )
 
@@ -86,6 +89,7 @@ class AsyncArtistToMeta(ArtistToMeta):
     _client: AsyncDBClient = field(repr=False, eq=False)
     metadata: dict[CSLArtistSample, Sequence[ExtraMetadata]]
     excluded_artists: set[str] = field(factory=set[str])
+    _exclude_rules: tuple[ArtistName, ...] = field(default=(), repr=False)
     _lock: asyncio.Lock = field(factory=asyncio.Lock, init=False, repr=False, eq=False)
     _prompt_lock: asyncio.Lock = field(factory=asyncio.Lock, init=False, repr=False, eq=False)
 
@@ -108,7 +112,8 @@ class AsyncArtistToMeta(ArtistToMeta):
                 exclude,
             )
         )
-        return cls(client, metadata, excluded)
+        rules = (*(ArtistName.from_key(key) for key in dict.fromkeys(exclude)),)
+        return cls(client, metadata, excluded, rules)
 
     async def _prepare(
         self,
@@ -146,6 +151,7 @@ class AsyncArtistToMeta(ArtistToMeta):
             self.metadata,
             self.excluded_artists,
             lambda _track, _reasons, _existing: ExcludeDecision.ERROR,
+            exclude_rules=self._exclude_rules,
         )
         fetched = await self._client.process(bundle.group_queries())
         existing = await self._client.process(GetMetadataBundle(track))
@@ -257,7 +263,7 @@ def make_artist_to_meta(
         artists: Artist names mapped to character names separated by ``sep``.
         search_phrases: Global searches run before querying unmatched names.
         sep: Separator for character names.
-        exclude: Artist names to ignore, including when inferring group metadata.
+        exclude: Artist rules matched as credits and group members are encountered, without extra searches.
 
     Returns:
         A sync mapping, or an awaitable yielding an async mapping.

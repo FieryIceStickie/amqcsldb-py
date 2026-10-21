@@ -802,9 +802,9 @@ async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
             mapping = cm.SyncArtistToMeta.create(client, definitions, phrases, exclude=['Ignored'])
         else:
             mapping = await cm.AsyncArtistToMeta.create(client, definitions, phrases, exclude=['Ignored'])
-    assert mapping.excluded_artists == {'Ignored'}
+    assert mapping.excluded_artists == ({'Ignored'} if global_search else set())
     assert from_json(cast(JSONArtistSample, excluded), CSLArtistSample) not in mapping
-    assert search.call_count == (1 if global_search else 2)
+    assert search.call_count == 1
     for idx in range(2):
         await finish(
             enqueue_edit(
@@ -819,7 +819,7 @@ async def test_initial_exclusions_override_metadata_and_apply_across_tracks(
 
 
 @pytest.mark.parametrize('key_kind', ['name', 'tuple', 'artist_name'])
-async def test_exclude_only_mapping_resolves_names_and_skips_groups(
+async def test_exclude_only_mapping_matches_names_lazily_and_skips_groups(
     pending: StandardQueue,
     client: DBClient | AsyncDBClient,
     router: Router,
@@ -828,7 +828,7 @@ async def test_exclude_only_mapping_resolves_names_and_skips_groups(
     g = artist('Group', group=True, disambiguation='one')
     other = artist('Group', group=True, disambiguation='two')
     samples = [g] if key_kind == 'name' else [g, other]
-    mock_search(router, samples)
+    search = mock_search(router, samples)
     group_query = router.get(url=re.compile(r'/api/artist/[^/]+')).mock(return_value=mock_response(500))
     mock_metadata(router, [{'id': 'stale', 'type': 2, 'key': 'Character', 'value': 'Old'}])
     delete = router.delete('/api/track/test-track/metadata/stale').mock(return_value=mock_response(200))
@@ -838,11 +838,12 @@ async def test_exclude_only_mapping_resolves_names_and_skips_groups(
         'artist_name': cm.ArtistName('Group', original_name='Group', disambiguation='one'),
     }
     mapping = await finish(cm.make_artist_to_meta(client, {}, exclude=[keys[key_kind]]))
-    assert mapping.excluded_artists == {str(g['id'])}
+    assert not mapping.excluded_artists and not search.called
     assert not mapping.metadata
     await finish(enqueue_edit(pending, mapping.apply(track(g), lambda _track, _reasons, _existing: pytest.fail())))
     await finish(client.process_queue(pending))
     assert delete.called and not group_query.called
+    assert mapping.excluded_artists == {str(g['id'])}
 
 
 @pytest.mark.parametrize('all_excluded', [False, True])
@@ -888,30 +889,60 @@ async def test_group_members_respect_initial_and_callback_exclusions(
     assert len([*pending]) == int(not all_excluded)
 
 
-@pytest.mark.parametrize('ambiguous', [False, True])
-async def test_excluded_names_must_resolve_uniquely(
-    pending: StandardQueue,
+async def test_exclusions_match_multiple_encountered_artists_without_searching(
     client: DBClient | AsyncDBClient,
     router: Router,
-    ambiguous: bool,
 ) -> None:
-    mock_search(
-        router, [artist('Ignored', disambiguation='one'), artist('Ignored', disambiguation='two')] if ambiguous else []
+    samples = [artist('Ignored', disambiguation='one'), artist('Ignored', disambiguation='two')]
+    search = mock_search(router, samples)
+    mock_metadata(router)
+    mapping = await finish(
+        cm.make_artist_to_meta(client, {'Ignored': 'Unused'}, ['all'], exclude=['Ignored', 'Nonexistent'])
     )
-    with pytest.raises(AMQCSLError, match='2 artists found' if ambiguous else 'Could not find artists: Ignored'):
-        await finish(cm.make_artist_to_meta(client, {}, exclude=['Ignored']))
-    assert not pending
+    assert not mapping.excluded_artists and not search.called
+    assert await finish(mapping.apply(track(*samples), lambda _track, _reasons, _existing: pytest.fail())) is None
+    assert mapping.excluded_artists == {'Ignoredone', 'Ignoredtwo'}
+    assert not search.called
 
 
-async def test_missing_exclusions_are_reported_with_missing_metadata_names(
+@pytest.mark.parametrize('narrow_by', ['original_name', 'disambiguation'])
+async def test_exclusion_rules_only_match_the_requested_artist(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+    narrow_by: str,
+) -> None:
+    matching = artist('Same', disambiguation='one')
+    other = artist('Same', disambiguation='two')
+    matching['originalName'] = 'Original'
+    rule = (
+        cm.ArtistName('Same', original_name='Original')
+        if narrow_by == 'original_name'
+        else cm.ArtistName('Same', disambiguation='one')
+    )
+    search = mock_search(router, [matching, other])
+    mock_metadata(router)
+    mapping = await finish(cm.make_artist_to_meta(client, {}, exclude=[rule]))
+    missing: list[str] = []
+
+    def ignore(_track: CSLTrack, reasons: Sequence[cm.Reason], _existing: CSLMetadata | None) -> cm.ExcludeDecision:
+        missing.extend(reason.artist.id for reason in reasons)
+        return cm.ExcludeDecision.IGNORE
+
+    assert await finish(mapping.apply(track(matching, other), ignore)) is None
+    assert missing == ['Sametwo']
+    assert mapping.excluded_artists == {'Sameone'}
+    assert not search.called
+
+
+async def test_only_missing_metadata_names_are_reported(
     client: DBClient | AsyncDBClient,
     router: Router,
 ) -> None:
     search = mock_search(router, [])
     with pytest.raises(AMQCSLError) as error:
         await finish(cm.make_artist_to_meta(client, {'Missing': 'A'}, exclude=['Ignored']))
-    assert 'Missing' in str(error.value) and 'Ignored' in str(error.value)
-    assert search.call_count == 2
+    assert 'Missing' in str(error.value) and 'Ignored' not in str(error.value)
+    assert search.call_count == 1
 
 
 async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
@@ -933,7 +964,7 @@ async def test_ignore_leaves_track_unchanged_without_caching_exclusions(
     )
     add = router.post(url=re.compile(r'/api/track/[^/]+/metadata')).mock(return_value=mock_response(200))
     mapping = await finish(cm.make_artist_to_meta(client, {'Alice': 'A'}, exclude=['Already excluded']))
-    await finish(enqueue_edit(pending, mapping.apply(track(a, track_id='before'))))
+    await finish(enqueue_edit(pending, mapping.apply(track(a, excluded, track_id='before'))))
     queued = [*pending]
     calls: list[tuple[CSLTrack, Sequence[cm.Reason]]] = []
 
