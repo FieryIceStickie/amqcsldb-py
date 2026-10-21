@@ -21,6 +21,9 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Display grouped edits as compact target panels with colored field, artist, metadata, and audio changes.
+   See :doc:`advanced/queues`.
+
 #. Reject overlapping grouped edits by default and merge compatible edits into shared requests.
    Opt in to replacing overlapping proposals with ``GroupedQueue(allow_overlapping_edits=True)``;
    see :doc:`advanced/queues`.

@@ -26,7 +26,7 @@ from amqcsl.bundles._misc import (
 from amqcsl.bundles._pages import IterTracksBundle
 from amqcsl.objects import CSLExtraMetadata, CSLGroup, CSLList, CSLSong, CSLTrack, ExtraMetadata, bundle_to_json
 from amqcsl.queues import GroupedQueue, StandardQueue
-from amqcsl.queues._grouped_queue import PreparedTask
+from amqcsl.queues.grouped._core import PreparedTask
 
 
 @frozen

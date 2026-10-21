@@ -5,8 +5,8 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from typing import Any, ClassVar, Literal, Self, TypedDict, cast, override
 
 from attrs import Attribute, define, field
-from rich.console import RenderableType
-from rich.pretty import Pretty
+from rich.console import Group, RenderableType
+from rich.text import Text
 
 from amqcsl.bundles._core import Bundle, EntryEdit, HasEdit, flatten, overlapping_entries
 from amqcsl.bundles._misc import (
@@ -23,7 +23,8 @@ from amqcsl.bundles._misc import (
 from amqcsl.objects._db_types import CSLArtistSample, CSLSongSample, CSLTrack
 from amqcsl.objects._serialization import bundle_from_json, bundle_to_json
 
-from ._core import Queue, QueueGroup, is_queueable
+from .._core import Queue, QueueGroup, is_queueable
+from ._display import display_group
 from ._merging import merge_bundle
 
 type GroupKind = Literal['tracks', 'songs', 'artists']
@@ -31,12 +32,18 @@ type GroupKey = tuple[GroupKind, str]
 type GroupTarget = CSLTrack | CSLSongSample | CSLArtistSample
 
 
-class GroupedQueueOptions(TypedDict):
-    """Display options reserved for the grouped queue."""
+class GroupedQueueOptions(TypedDict, total=False):
+    """Configure grouped queue panels.
+
+    Attributes:
+        width: Maximum panel width in columns; defaults to 100.
+    """
+
+    width: int
 
 
 @define
-class PendingGroup[T]:
+class PendingGroup[T: GroupTarget]:
     """Keep an object's pending edits together without changing the bundles.
 
     Attributes:
@@ -46,6 +53,17 @@ class PendingGroup[T]:
 
     target: T
     bundles: list[Bundle[Any]] = field(factory=list)
+
+    def display(self, width: int = 100) -> RenderableType:
+        """Render this target's current identity and pending edits in one panel.
+
+        Args:
+            width: Maximum panel width in columns.
+
+        Returns:
+            The Rich panel representing this pending group.
+        """
+        return display_group(self, width=width)
 
     def affected_entries(self) -> set[EntryEdit]:
         """Collect the entry identities affected by this group's pending requests.
@@ -374,18 +392,20 @@ class GroupedQueue(Queue[GroupedQueueOptions]):
 
     @override
     def display(self, options: GroupedQueueOptions | None = None) -> RenderableType:
-        """Build a Rich representation of the pending group snapshots.
-
-        This uses the existing bundle representations until custom grouped
-        display is implemented.
+        """Stack one identity-and-edits panel per pending target in appearance order.
 
         Args:
-            options: Reserved display options; currently unused.
+            options: Panel width, or None for the default width of 100 columns.
 
         Returns:
-            A Pretty renderable containing the pending groups.
+            The grouped panels, or a dim message when the queue is empty.
         """
-        return Pretty([*self])
+        width = options.get('width', 100) if options is not None else 100
+        if width <= 0:
+            raise ValueError('Display width must be positive')
+        if not self._order:
+            return Text('No pending edits', style='dim')
+        return Group(*(self._bucket(kind)[key].display(width) for kind, key in self._order))
 
     @override
     def to_json(self) -> dict[str, Any]:

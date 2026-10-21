@@ -71,8 +71,23 @@ If any child of a parallel bundle is unsupported, none of its edits are added. U
 operations cannot be queued in either queue type.
 
 Restore with ``GroupedQueue.from_file(stream)``. The JSON saves group order, remaining edits,
-the worker ratio, and the overlap option. Grouped queues currently use the existing Rich representations;
-custom grouped display is still to come.
+the worker ratio, and the overlap option.
+
+``console.print(queue)`` shows one panel per pending target, in appearance order. Track panels
+always show the current name, ID, and artist credits with their join phrases. Pending name,
+original name, original artist, and type changes appear underneath without another heading.
+Groups, artist credits, linked song, metadata, and audio each get
+a section only when affected. Song panels use the same style, including a prominent deletion
+message when applicable.
+
+Removals appear before additions, in red and green respectively. Proposed field values are
+yellow, referenced objects are cyan, and IDs are gray. Artist diffs include disambiguation,
+credited names when different, and join phrase changes. Long values wrap instead of losing
+their endings. Only merged pending proposals are displayed; display options are not saved.
+
+Use ``console.print(queue.display({'width': 80}))`` to set a maximum panel width; the default
+is 100 columns, constrained further by the terminal. Displaying a queue neither sends requests
+nor changes its pending edits.
 
 Saving and loading
 ------------------
