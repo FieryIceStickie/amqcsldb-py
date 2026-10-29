@@ -14,6 +14,7 @@ def main(logger: logging.Logger):
     with amqcsl.DBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
+        session_path=os.environ['SESSION_PATH'],
     ) as client:
         pprint('shiHib')
 

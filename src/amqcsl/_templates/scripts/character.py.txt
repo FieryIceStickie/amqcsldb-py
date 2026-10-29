@@ -21,6 +21,7 @@ async def main(logger: logging.Logger) -> None:
     async with amqcsl.AsyncDBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
+        session_path=os.environ['SESSION_PATH'],
     ) as client:
         artist_to_meta = await cm.make_artist_to_meta(
             client,

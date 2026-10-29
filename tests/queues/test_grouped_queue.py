@@ -180,7 +180,7 @@ def test_enqueue_batch_iteration_failure_does_not_modify_queue(track: CSLTrack) 
 
 def test_stream_rejection_is_atomic(track: CSLTrack) -> None:
     queue = GroupedQueue()
-    stream = cast(Bundle[Any], IterTracksBundle.from_client(DBClient(), ''))
+    stream = cast(Bundle[Any], IterTracksBundle.from_client(DBClient(session_path='unused-session.txt'), ''))
     with pytest.raises(TypeError, match='Streaming'):
         queue.enqueue(ParallelBundle([TrackEditBundle(track), stream]))
     assert not queue

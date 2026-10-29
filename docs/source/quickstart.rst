@@ -35,6 +35,7 @@ In summary, your code should now look like
     with amqcsl.DBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
+        session_path=os.environ['SESSION_PATH'],
     ) as client:
         sunshine_group = client.groups['Love Live! Sunshine!!']
         for track in client.iter_tracks(groups=[sunshine_group]):
@@ -294,6 +295,7 @@ and await the methods that make requests:
     async with amqcsl.AsyncDBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
+        session_path=os.environ['SESSION_PATH'],
     ) as client:
         sunshine_group = client.groups['Love Live! Sunshine!!']
         async for track in client.iter_tracks(groups=[sunshine_group]):

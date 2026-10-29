@@ -69,10 +69,7 @@ from amqcsl.objects._db_types import (
 from amqcsl.objects._obj_consts import TrackType
 from amqcsl.queues._core import GroupAbortedError, GroupState, Queue, QueueGroup, save_recovery
 
-from ._client_consts import (
-    DB_URL,
-    DEFAULT_SESSION_PATH,
-)
+from ._client_consts import DB_URL
 
 logger = logging.getLogger('amqcsl.client')
 
@@ -104,8 +101,8 @@ class AsyncDBClient:
     username: str | None = None
     #: DB password
     password: str | None = None
-    #: Filepath to look for/store session cookie in, defaults to amq_session.txt
-    session_path: Path = field(default=Path(DEFAULT_SESSION_PATH), converter=Path)
+    #: Required filepath to look for/store the session cookie
+    session_path: Path = field(converter=Path, kw_only=True)
     _client: niquests.AsyncSession | None = field(default=None, init=False, repr=False)
 
     #: Maximum batch size when querying db

@@ -54,6 +54,7 @@ def test_make_copies_each_template(
         assert 'cm.make_artist_to_meta(' in source
         assert 'async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:' in source
         assert 'characters: cm.CharacterDict' not in source
+    assert "session_path=os.environ['SESSION_PATH']," in source
     compile(source, str(script), 'exec')
 
 

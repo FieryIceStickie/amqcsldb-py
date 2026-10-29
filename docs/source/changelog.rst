@@ -21,6 +21,9 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. :py:class:`~amqcsl.DBClient` and :py:class:`~amqcsl.AsyncDBClient` now require ``session_path``.
+   Script templates read it from ``SESSION_PATH``.
+
 #. Match character workflow exclusions as artists are encountered, avoiding preparation searches
    for excluded names. See :doc:`workflows/character`.
 

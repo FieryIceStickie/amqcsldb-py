@@ -29,6 +29,7 @@ Here's an example script with the sync client that finds all tracks that has You
         with amqcsl.DBClient(
             username=os.getenv('AMQ_USERNAME'),
             password=os.getenv('AMQ_PASSWORD'),
+            session_path=os.environ['SESSION_PATH'],
         ) as client:
             group = client.groups['Love Live! Sunshine!!']
             my_list = client.lists['LoveLive']
@@ -66,6 +67,7 @@ Here is an async script doing the same thing:
         async with amqcsl.AsyncDBClient(
             username=os.getenv('AMQ_USERNAME'),
             password=os.getenv('AMQ_PASSWORD'),
+            session_path=os.environ['SESSION_PATH'],
         ) as client:
             group = client.groups['Love Live! Sunshine!!']
             my_list = client.lists['LoveLive']

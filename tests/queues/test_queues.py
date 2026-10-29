@@ -100,7 +100,7 @@ def test_action_bundle_compose_and_atomic_stream_rejection() -> None:
     first = GroupEditBundle(CSLGroup('group', 'Old'), 'New')
     queue.enqueue(action_bundle_compose([first]))
     assert leaves(queue) == [first]
-    stream = cast(Bundle[Any], IterTracksBundle.from_client(DBClient(), ''))
+    stream = cast(Bundle[Any], IterTracksBundle.from_client(DBClient(session_path='unused-session.txt'), ''))
     with pytest.raises(TypeError, match='Streaming'):
         queue.enqueue(ParallelBundle([first, stream]))
     assert leaves(queue) == [first]

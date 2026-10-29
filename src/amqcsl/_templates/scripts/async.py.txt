@@ -15,6 +15,7 @@ async def main(logger: logging.Logger):
     async with amqcsl.AsyncDBClient(
         username=os.getenv('AMQ_USERNAME'),
         password=os.getenv('AMQ_PASSWORD'),
+        session_path=os.environ['SESSION_PATH'],
     ) as client:
         pprint('shiHib')
 

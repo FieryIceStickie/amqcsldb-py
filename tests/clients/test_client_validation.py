@@ -33,23 +33,23 @@ def test_constructor_rejects_nonpositive_limits(
     error: type[Exception],
 ) -> None:
     with pytest.raises(error):
-        client_class(**kwargs)
+        client_class(session_path='unused-session.txt', **kwargs)
 
 
 @pytest.mark.parametrize('value, error', [(0, ValueError), (-1, ValueError), (51, ValueError)])
 def test_async_request_limit_validation(value: Any, error: type[Exception]) -> None:
     with pytest.raises(error):
-        AsyncDBClient(max_request_count=value)
+        AsyncDBClient(session_path='unused-session.txt', max_request_count=value)
 
 
 @pytest.mark.parametrize('value', [1, 50])
 def test_async_request_limit_boundaries(value: int) -> None:
-    assert AsyncDBClient(max_request_count=value).max_request_count == value
+    assert AsyncDBClient(session_path='unused-session.txt', max_request_count=value).max_request_count == value
 
 
 @pytest.mark.parametrize('value', [0, -1, 51])
 def test_invalid_request_limit_assignment_preserves_previous_limit(value: int) -> None:
-    client = AsyncDBClient(max_request_count=3)
+    client = AsyncDBClient(session_path='unused-session.txt', max_request_count=3)
     with pytest.raises(ValueError):
         client.max_request_count = value
     assert client.max_request_count == 3
@@ -57,7 +57,7 @@ def test_invalid_request_limit_assignment_preserves_previous_limit(value: int) -
 
 @pytest.mark.parametrize('value', [1, 50])
 def test_request_limit_assignment_accepts_boundaries(value: int) -> None:
-    client = AsyncDBClient()
+    client = AsyncDBClient(session_path='unused-session.txt')
     client.max_request_count = value
     assert client.max_request_count == value
 
@@ -74,7 +74,7 @@ def test_session_path_accepts_string_or_path(
 def test_underlying_client_unavailable_before_entry(
     client_class: type[DBClient] | type[AsyncDBClient],
 ) -> None:
-    client = client_class()
+    client = client_class(session_path='unused-session.txt')
     with pytest.raises(ClientDoesNotExistError):
         _ = client.client
 
@@ -259,3 +259,8 @@ async def test_async_initialization_failure_closes_session(
         assert error.value.response is not None
         assert error.value.response.status_code == 500
     assert closed_sessions == [client.client]
+
+
+def test_session_path_is_required(client_class: type[DBClient] | type[AsyncDBClient]) -> None:
+    with pytest.raises(TypeError, match='session_path'):
+        client_class()  # pyright: ignore[reportCallIssue]
