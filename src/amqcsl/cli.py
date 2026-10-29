@@ -7,7 +7,10 @@ from typing import Annotated
 
 import typer
 
+from ._cli_queue import app as queue_app
+
 app = typer.Typer(no_args_is_help=True)
+app.add_typer(queue_app, name='queue')
 
 
 @app.command()
@@ -95,5 +98,5 @@ def make(
 @app.callback()
 def callback():
     """
-    CLI script for setting up amqcsl script directory
+    Set up scripts and display or run saved queues.
     """

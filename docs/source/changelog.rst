@@ -21,6 +21,8 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Add ``amqcsl queue display`` and ``amqcsl queue run`` for saved queues. See :doc:`advanced/cli`.
+
 #. Record queue creation times in ``queue.created_at`` and saved queue files. See :doc:`advanced/queues`.
 
 #. :py:class:`~amqcsl.DBClient` and :py:class:`~amqcsl.AsyncDBClient` now require ``session_path``.
