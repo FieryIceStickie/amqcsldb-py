@@ -21,6 +21,8 @@ Version 1.1.1
 Version 1.1.2
 --------------
 
+#. Record queue creation times in ``queue.created_at`` and saved queue files. See :doc:`advanced/queues`.
+
 #. :py:class:`~amqcsl.DBClient` and :py:class:`~amqcsl.AsyncDBClient` now require ``session_path``.
    Script templates read it from ``SESSION_PATH``.
 

@@ -67,6 +67,7 @@ class StandardQueue(Queue[StandardQueueOptions]):
         return {
             'queue_type': self.queue_type,
             'version': '.'.join(map(str, self.version)),
+            'created_at': self.created_at.isoformat() if self.created_at is not None else None,
             'groups': [[bundle_to_json(bundle) for bundle in group] for group in self._groups],
         }
 
@@ -81,5 +82,6 @@ class StandardQueue(Queue[StandardQueueOptions]):
         if any(not isinstance(group, list) for group in groups):
             raise ValueError('Standard queue groups must be an array of arrays')
         result = cls()
+        result.created_at = cls._read_created_at(data)
         result._groups = [[bundle_from_json(bundle) for bundle in group] for group in groups if group]
         return result

@@ -4,6 +4,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from os import PathLike
 from typing import Any, ClassVar, Self, TextIO, cast
 
@@ -143,6 +144,9 @@ class Queue[O: Mapping[str, object]](RichQueueMixin):
 
     queue_type: ClassVar[str]
     version: ClassVar[tuple[int, int]] = (0, 0)
+
+    #: Original creation time in UTC, or None for older files without a timestamp
+    created_at: datetime | None = field(factory=lambda: datetime.now(UTC), init=False)
 
     _is_processing: bool = field(default=False, init=False, repr=False)
 
@@ -330,6 +334,30 @@ class Queue[O: Mapping[str, object]](RichQueueMixin):
         if not isinstance(data, dict):
             raise TypeError('Expected a queue JSON object')
         return cls.from_json(cast(dict[str, Any], data))
+
+    @staticmethod
+    def _read_created_at(data: Mapping[str, Any]) -> datetime | None:
+        """Parse the original creation time, preserving unknown dates in older files.
+
+        Args:
+            data: Serialized queue document with an optional ISO 8601 timestamp.
+
+        Returns:
+            The creation time normalized to UTC, or None when it was not recorded.
+
+        Raises:
+            TypeError: The timestamp is not a string or null.
+            ValueError: The timestamp is invalid or has no timezone.
+        """
+        value = data.get('created_at')
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError('Queue created_at must be an ISO 8601 string or null')
+        created_at = datetime.fromisoformat(value)
+        if created_at.tzinfo is None:
+            raise ValueError('Queue created_at must include a timezone')
+        return created_at.astimezone(UTC)
 
     @classmethod
     def _validate_json(cls, data: Mapping[str, Any]) -> None:

@@ -420,6 +420,7 @@ class GroupedQueue(Queue[GroupedQueueOptions]):
         return {
             'queue_type': self.queue_type,
             'version': '.'.join(map(str, self.version)),
+            'created_at': self.created_at.isoformat() if self.created_at is not None else None,
             'worker_ratio': self.worker_ratio,
             'allow_overlapping_edits': self.allow_overlapping_edits,
             'groups': [
@@ -459,6 +460,7 @@ class GroupedQueue(Queue[GroupedQueueOptions]):
         if not isinstance(overlaps, bool):
             raise TypeError('allow_overlapping_edits must be a boolean')
         result = cls(worker_ratio=data.get('worker_ratio'), allow_overlapping_edits=overlaps)
+        result.created_at = cls._read_created_at(data)
         for group in groups:
             if not isinstance(group, dict):
                 raise TypeError('Grouped queue groups must be an array of objects')

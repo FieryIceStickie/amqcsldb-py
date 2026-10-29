@@ -149,3 +149,10 @@ execution errors, or an execution error together with a save error, are raised a
 Cancellation drains workers before saving and propagates ``CancelledError``. If saving also fails,
 that failure is logged without replacing cancellation. A retained edit may already have affected
 the server before an error or cancellation reached the client; inspect uncertain edits before retrying.
+
+Creation time
+-------------
+
+Queues record their creation time in ``queue.created_at`` as a UTC datetime. Saving,
+loading, and processing preserve that time in the JSON ``created_at`` field. Older
+queue files without a timestamp load with ``created_at=None``.
