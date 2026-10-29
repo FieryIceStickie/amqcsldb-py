@@ -301,8 +301,8 @@ def _edits(
                 for meta in (*artists, *extras):
                     name, row = _metadata_row(meta, added=True)
                     sections[name].append(row)
-                if isinstance(bundle, TrackAddMetadataBundle) and bundle._override is not None:  # pyright: ignore[reportPrivateUsage]
-                    value = 'Enabled' if bundle._override else 'Disabled'  # pyright: ignore[reportPrivateUsage]
+                if isinstance(bundle, TrackAddMetadataBundle) and bundle.metadata_override is not None:
+                    value = 'Enabled' if bundle.metadata_override else 'Disabled'
                     fields.append(DisplayRow('Metadata override', Text(value, style='yellow')))
             case TrackDeleteMetadataBundle() | SongDeleteMetadataBundle():
                 name, row = _metadata_row(bundle.meta, added=False)

@@ -65,7 +65,7 @@ def _with_additions(
 
 def _has_additions(bundle: MetadataAdd) -> bool:
     """Check whether a normalized metadata bundle would change metadata or override."""
-    return bool(bundle.metas) or isinstance(bundle, TrackAddMetadataBundle) and bundle._override is not None  # pyright: ignore[reportPrivateUsage]
+    return bool(bundle.metas) or isinstance(bundle, TrackAddMetadataBundle) and bundle.metadata_override is not None
 
 
 def _merge_metadata_add(
@@ -93,7 +93,11 @@ def _merge_metadata_add(
                 entries = old_entries
                 match old, incoming:
                     case TrackAddMetadataBundle(), TrackAddMetadataBundle():
-                        override = incoming._override if incoming._override is not None else old._override  # pyright: ignore[reportPrivateUsage]
+                        override = (
+                            incoming.metadata_override
+                            if incoming.metadata_override is not None
+                            else old.metadata_override
+                        )
                         combined = evolve(old, override=override)
                     case _:
                         combined = old
@@ -166,11 +170,11 @@ def merge_bundle(
     Returns:
         A new list of the requests needed for the final proposal.
     """
-    if isinstance(incoming, SongDeleteBundle):
-        return [incoming]
-    if any(isinstance(old, SongDeleteBundle) for old in pending):
-        return [*pending]
     match incoming:
+        case SongDeleteBundle():
+            return [incoming]
+        case _ if any(isinstance(old, SongDeleteBundle) for old in pending):
+            return [*pending]
         case TrackAddMetadataBundle() | SongAddMetadataBundle():
             return _merge_metadata_add(pending, incoming)
         case TrackDeleteMetadataBundle() | SongDeleteMetadataBundle():

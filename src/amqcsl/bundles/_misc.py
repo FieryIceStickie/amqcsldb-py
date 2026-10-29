@@ -591,6 +591,11 @@ class TrackAddMetadataBundle(Bundle[None]):
     _override: bool | None = None
     existing_meta: CSLMetadata | None = None
 
+    @property
+    def metadata_override(self) -> bool | None:
+        """Explicit metadata override setting, or None to leave it unchanged"""
+        return self._override
+
     @cached_property
     def filtered_metas(self) -> tuple[Sequence[ArtistCredit], Sequence[ExtraMetadata]]:
         current_metas: set[Metadata]
