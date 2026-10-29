@@ -105,8 +105,8 @@ It prepares the character metadata changes and yields edits for you to enqueue, 
     artist_to_meta = await cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
     tracks = client.iter_tracks('My album')
     async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:
-        async for bundle in edits:
-            queue.enqueue(bundle)
+        async for edit in edits:
+            queue.enqueue(edit)
 
     if cm.prompt(queue.display()):
         await client.process_queue(queue)
@@ -137,8 +137,8 @@ If you're using ``DBClient`` instead, use
 
     queue = StandardQueue()
     artist_to_meta = cm.make_artist_to_meta(client, artists, ['Hoshimi Production'])
-    for bundle in artist_to_meta.iter_edits(client.iter_tracks('My album')):
-        queue.enqueue(bundle)
+    for edit in artist_to_meta.iter_edits(client.iter_tracks('My album')):
+        queue.enqueue(edit)
 
     if cm.prompt(queue.display()):
         client.process_queue(queue)
@@ -198,8 +198,8 @@ You can also pass a ``should_exclude`` function to ``iter_edits`` to make the de
         return cm.ExcludeDecision.EXCLUDE
 
     async with aclosing(artist_to_meta.iter_edits(tracks, should_exclude)) as edits:
-        async for bundle in edits:
-            queue.enqueue(bundle)
+        async for edit in edits:
+            queue.enqueue(edit)
 
 The callback takes ``(track, reasons, existing_metadata)``. The third argument contains the track's
 current metadata, or ``None`` if it has none. Existing character metadata is also shown in the default
@@ -226,9 +226,9 @@ It returns an edit for you to enqueue, or ``None`` if the track doesn't need cha
 
 .. code-block:: python
 
-    bundle = await artist_to_meta.apply(track)
-    if bundle is not None:
-        queue.enqueue(bundle)
+    edit = await artist_to_meta.apply(track)
+    if edit is not None:
+        queue.enqueue(edit)
 
 With ``DBClient``, call :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.apply` without ``await``.
 You can pass the same ``should_exclude`` callback as with ``iter_edits``. Neither method enqueues or

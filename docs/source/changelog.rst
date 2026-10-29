@@ -38,14 +38,14 @@ Version 1.1.2
    Opt in to replacing overlapping proposals with ``GroupedQueue(allow_overlapping_edits=True)``;
    see :doc:`advanced/queues`.
 
-#. Add edit entry reporting and :py:func:`~amqcsl.bundles.has_overlap` for comparing bundle changes.
+#. Add :py:func:`~amqcsl.bundles.has_overlap` for checking whether two edits change the same entries.
 
 #. Add :py:class:`~amqcsl.queues.GroupedQueue` for track and song edits grouped by target, with configurable
    async workers and JSON recovery. See :doc:`advanced/queues`.
 
 #. Reject known read-only operations when queueing edits.
 
-#. Consolidate object and bundle serialization in ``objects/_serialization.py``.
+#. Add ``bundle_to_json()`` and ``bundle_from_json()`` to ``amqcsl.objects``.
 
 #. Move bundles from ``amqcsl.clients.bundles`` to ``amqcsl.bundles``.
 

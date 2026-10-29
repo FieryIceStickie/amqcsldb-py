@@ -31,8 +31,8 @@ async def main(logger: logging.Logger) -> None:
         my_group = client.groups['INSERT GROUP NAME HERE']
         tracks = client.iter_tracks(groups=[my_group], batch_size=100)
         async with aclosing(artist_to_meta.iter_edits(tracks)) as edits:
-            async for bundle in edits:
-                queue.enqueue(bundle)
+            async for edit in edits:
+                queue.enqueue(edit)
 
         if cm.prompt(queue.display()):
             await client.process_queue(queue)

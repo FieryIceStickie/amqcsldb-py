@@ -1,30 +1,88 @@
 Queues
 ======
 
-Build a :py:class:`~amqcsl.queues.StandardQueue` independently of a client. Its editing methods
-match the client methods, but only stage work. They never require ``await``. Client edit methods
-always send immediately; the old client queue, ``commit()``, and ``queue=True`` are removed.
+Queues let you stage a bunch of edits, look over them, and then send them all at once.
+They're separate from the client, so you can build one without being logged in, and nothing
+is sent until you process it.
 
-Review edits with ``console.print(queue)`` or ``console.print(queue.display())``. Standard queues
-use the existing Rich representations. ``len(queue)`` counts pending operations after merging.
+The simplest one is :py:class:`~amqcsl.queues.StandardQueue`. Its editing methods are the same as
+the client's, but they only add the edit to the queue (and never need ``await``, even with the async client).
 
-Both queues provide ``enqueue_batch(bundles)``. Standard queues call ``enqueue()`` for each
-bundle and retain earlier additions if a later bundle or iteration fails. Grouped queues
-validate the whole batch before adding any edits, as described below.
+.. code-block:: python
+
+    from rich.console import Console
+    from amqcsl.queues import StandardQueue
+
+    queue = StandardQueue()
+    queue.track_edit(track, name='Corrected name')
+    queue.track_add_metadata(track, metadata)
+
+    Console().print(queue)
+    print(len(queue))  # number of pending edits
+
+Client edit methods always send immediately. The old client queue, ``commit()``, and ``queue=True`` are gone;
+use a queue instead.
+
+If you already have edits from somewhere else, like :py:meth:`~amqcsl.workflows.character.AsyncArtistToMeta.iter_edits`,
+add them with ``queue.enqueue(edit)``, or ``queue.enqueue_batch(edits)`` for several at once.
+Read-only operations like searches can't be queued.
+
+Processing
+----------
+
+Pass the queue to :py:meth:`~amqcsl.DBClient.process_queue`:
+
+.. code-block:: python
+
+    with open('remaining-queue.json', 'w') as recovery:
+        client.process_queue(queue, save_to=recovery)
+
+or ``await client.process_queue(queue, save_to=recovery)`` with the async client.
+
+Successful edits are removed from the queue as they go through. Whatever's left (failed edits, plus anything that
+didn't get to run) is always written to ``save_to`` as JSON once processing ends, even if everything succeeded.
+If you leave out ``save_to``, it goes to stdout.
+
+By default, processing stops at the first failed request and raises the error. Pass ``stop_if_err=False``
+to log request errors and keep going instead; the failed edits stay in the queue. Errors in your own
+code always get raised.
+
+The sync client sends edits one at a time. The async client runs several at once, but still sticks to
+the client's request limit.
+
+.. note::
+
+    If something fails partway through, or you cancel the script, an edit left in the queue might have
+    already reached the server. Check those before retrying.
+
+Saving and loading
+------------------
+
+You can save a queue to any text stream with ``queue.to_file(stream)`` and load it back with ``StandardQueue.from_file(stream)``
+(or ``GroupedQueue.from_file(stream)``).
+This is the same format ``process_queue`` writes, so you can retry a recovery file by loading it and processing it again.
+
+.. code-block:: python
+
+    with open('queue.json', 'w') as file:
+        queue.to_file(file)
+
+    with open('queue.json') as file:
+        queue = StandardQueue.from_file(file)
+
+Audio uploads save the file path, not the audio itself, so the file needs to still be there when you load the queue.
+
+You can also look at or run a saved queue from the terminal with ``amqcsl queue display`` and ``amqcsl queue run``;
+see :doc:`cli`.
+
+Each queue records when it was created in ``queue.created_at`` (UTC), and keeps it through saving, loading, and processing.
+Queue files saved before this was added load with ``created_at=None``.
 
 Grouped queues
 --------------
 
-Use :py:class:`~amqcsl.queues.GroupedQueue` to collect track and song edits by target ID.
-Artist grouping is reserved for future artist edit operations; there are no artist edit
-bundles yet. Each group keeps its edits in insertion order, and groups run in the order their
-targets first appeared. Parallel batches are flattened recursively and their edits are
-regrouped by target.
-
-Use ``queue.enqueue_batch(bundles)`` when edits must be added all together or not at all.
-It consumes and validates the entire iterable before adding any work. If any edit is
-unsupported or iteration fails, the queue stays unchanged. Repeated ``enqueue()`` calls
-instead retain earlier additions if a later call fails.
+:py:class:`~amqcsl.queues.GroupedQueue` sorts track and song edits by what they're editing, so all the edits to one
+track end up together. This makes them much easier to review, and lets compatible edits be combined:
 
 .. code-block:: python
 
@@ -32,127 +90,41 @@ instead retain earlier additions if a later call fails.
 
     queue = GroupedQueue()
     queue.track_edit(track, name='Corrected name')
+    queue.track_edit(track, original_name='元の名前')
     queue.track_add_metadata(track, metadata)
     queue.track_remove_metadata(track, old_metadata)
+
+    Console().print(queue)
     await client.process_queue(queue, save_to=recovery)
 
-The async client runs concurrent edits within each group. Insertion order determines task
-creation order; it does not guarantee request completion order. Every request still uses the
-client's request limit. A group failure skips its unsent requests while active requests finish.
+The two ``track_edit`` calls above become a single edit, and multiple metadata additions to the same track become a
+single request. Tracks and songs are processed in the order they were first added.
 
-Compatible edits share requests: changes to different track fields become one update, and
-metadata additions become one addition request per target. Distinct metadata removals still
-require separate requests. Merging preserves the first occurrence's position in the group.
+Only track and song edits can go in a grouped queue. Lists, groups, and albums raise ``TypeError``;
+use a :py:class:`~amqcsl.queues.StandardQueue` for those.
 
-Overlapping entries raise ``ValueError`` by default, whether the conflict is with existing
-pending work or within an incoming batch. Adding and removing the same metadata entry counts
-as an overlap; artist links use artist ID and role, ignoring credited names. Two audio
-operations conflict, as do two explicit metadata override settings. Song updates send both
-name and disambiguation, so two song update calls overlap even when different arguments are supplied.
+Printing a grouped queue shows one panel per track or song, with its current name, ID, and artists,
+and the pending changes underneath. Removals are red and additions are green. To change the panel width (100 by default),
+use ``Console().print(queue.display({'width': 80}))``.
 
-Set ``GroupedQueue(allow_overlapping_edits=True)`` to merge overlapping edits. The last explicit
-field value, artist credit, or audio operation wins. For each metadata entry, only the last
-addition or removal remains; repeated removals send one request. Deleting a song supersedes
-all other pending work for that song. Empty lists and strings are explicit proposals; ``None``
-leaves an earlier field proposal intact. Edits already excluded by metadata filtering remain excluded.
+Overlapping edits
+~~~~~~~~~~~~~~~~~
 
-Validation and merging operate on staged copies. A rejected batch leaves existing requests
-untouched. Completed operations stop participating in overlap checks. Once merged, an operation
-is removed from the queue as a unit when its request succeeds; inspect the current queue when
-reviewing or manually completing pending operations.
+By default, a grouped queue refuses edits that would clash with something already queued, raising ``ValueError``. For example:
 
-By default, the worker count is the request limit divided by the average number of pending
-edits per group, rounded down. Set ``GroupedQueue(worker_ratio=2)`` to choose that ratio yourself.
-Nonempty queues always get at least one worker, and workers never outnumber pending groups.
+- setting the same field twice (song edits always count, since they send both name and disambiguation)
+- adding and removing the same metadata
+- two audio uploads or imports for the same track
 
-Lists, groups, albums, and unrecognized bundles raise ``TypeError`` in a grouped queue.
-If any child of a parallel bundle is unsupported, none of its edits are added. Use
-:py:class:`~amqcsl.queues.StandardQueue` for other edits. Streaming and known read-only
-operations cannot be queued in either queue type.
+If you'd rather the latest edit win, use ``GroupedQueue(allow_overlapping_edits=True)``. Deleting a song replaces
+everything else queued for it. ``None`` leaves a field alone, but empty strings and lists are treated as real values.
 
-Restore with ``GroupedQueue.from_file(stream)``. The JSON saves group order, remaining edits,
-the worker ratio, and the overlap option.
+``enqueue_batch`` on a grouped queue is all-or-nothing: if any edit is rejected, none of the batch is added.
+(On a standard queue, edits before the bad one are kept.)
 
-``console.print(queue)`` shows one panel per pending target, in appearance order. Track panels
-always show the current name, ID, and artist credits with their join phrases. Pending name,
-original name, original artist, and type changes appear underneath without another heading.
-Groups, artist credits, linked song, metadata, and audio each get
-a section only when affected. Song panels use the same style, including a prominent deletion
-message when applicable.
+Workers
+~~~~~~~
 
-Removals appear before additions, in red and green respectively. Proposed field values are
-yellow, referenced objects are cyan, and IDs are gray. Artist diffs include disambiguation,
-credited names when different, and join phrase changes. Long values wrap instead of losing
-their endings. Only merged pending proposals are displayed; display options are not saved.
-
-Use ``console.print(queue.display({'width': 80}))`` to set a maximum panel width; the default
-is 100 columns, constrained further by the terminal. Displaying a queue neither sends requests
-nor changes its pending edits.
-
-Saving and loading
-------------------
-
-Queues use text streams. You can save manually with ``queue.to_file(stream)`` and restore with
-``StandardQueue.from_file(stream)``. Streams stay open, and writing uses their current position;
-rewinding and truncating reused streams is up to you.
-
-.. code-block:: python
-
-    from io import StringIO
-    from amqcsl.queues import StandardQueue
-
-    queue = StandardQueue()
-    queue.track_edit(track, name='Corrected name')
-    saved = StringIO()
-    queue.to_file(saved)
-    saved.seek(0)
-    restored = StandardQueue.from_file(saved)
-
-Each queue type owns its JSON layout and schema version, initially ``0.0``. Loading checks the
-queue type and version and restores every entry before returning. Audio uploads save the path,
-not the audio; their normal constructor checks apply when loading.
-
-Unsupported bundles are saved as tagged Rich representation strings for manual recovery.
-Loading those entries raises an error explaining that serialization support is required.
-Custom serialization hooks aren't available yet.
-
-Processing
-----------
-
-.. code-block:: python
-
-    with open('remaining-queue.json', 'w') as recovery:
-        client.process_queue(queue, save_to=recovery)
-
-Use ``await client.process_queue(queue, save_to=recovery)`` with the async client. The remaining
-queue is always written, even after success or when the queue was empty. If ``save_to`` is omitted,
-JSON goes to the current stdout. The destination is logged before writing.
-
-Successful edits are removed immediately. Failed, skipped, and interrupted edits remain.
-Bundle return values are discarded. Queueing new work or processing the same queue again while
-it is running raises an error. Access from multiple threads is unsupported, and enqueueing the
-same bundle twice is undefined behavior.
-
-Standard queues retain insertion order. Parallel batches are flattened recursively into one
-group. The sync client runs children sequentially; the async client starts concurrent child tasks
-in insertion order and uses its shared request semaphore for every HTTP request. When a child
-fails, unsent requests in that group are skipped, including later requests in a multi-step edit.
-Requests already in flight finish. List and group caches are refreshed or invalidated only when
-queued operations can change them.
-
-With ``stop_if_err=True`` (the default), workers stop taking new groups, active groups finish,
-and execution errors propagate. With ``False``, request errors are logged and workers continue
-with other groups; failed edits remain queued. Programming errors always propagate. Multiple
-execution errors, or an execution error together with a save error, are raised as an
-``ExceptionGroup``.
-
-Cancellation drains workers before saving and propagates ``CancelledError``. If saving also fails,
-that failure is logged without replacing cancellation. A retained edit may already have affected
-the server before an error or cancellation reached the client; inspect uncertain edits before retrying.
-
-Creation time
--------------
-
-Queues record their creation time in ``queue.created_at`` as a UTC datetime. Saving,
-loading, and processing preserve that time in the JSON ``created_at`` field. Older
-queue files without a timestamp load with ``created_at=None``.
+With the async client, each track or song gets worked on by one worker at a time. The number of workers is picked
+automatically by dividing the client's request limit by the average number of edits per target. To pick the divisor
+yourself, pass something like ``GroupedQueue(worker_ratio=2)``. ``worker_ratio`` is also saved with the queue.
