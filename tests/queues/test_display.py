@@ -174,8 +174,14 @@ def test_song_panel_shows_edits_and_deletion_without_bundle_reprs() -> None:
     assert 'Delete song' in text and 'New song' not in text and 'Metadata' not in text
 
 
-def test_upload_and_override_display_the_actual_merged_proposals(track: CSLTrack, tmp_path: Path) -> None:
-    audio = tmp_path / 'audio.flac'
+def test_upload_and_override_display_the_actual_merged_proposals(
+    track: CSLTrack,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Relative path so long temp directories don't wrap the filename
+    monkeypatch.chdir(tmp_path)
+    audio = Path('audio.flac')
     audio.write_bytes(b'audio')
     queue = GroupedQueue(allow_overlapping_edits=True)
     queue.add_audio(track, audio)
