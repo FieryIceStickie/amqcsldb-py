@@ -146,6 +146,26 @@ def test_standard_batch_uses_default_enqueue_loop() -> None:
     assert leaves(queue) == [first, second, third]
 
 
+@pytest.mark.parametrize('queue_type', [StandardQueue, GroupedQueue])
+def test_manual_processing_claims_queue_until_released(
+    queue_type: type[StandardQueue] | type[GroupedQueue],
+    track: CSLTrack,
+) -> None:
+    queue = queue_type()
+    queue.track_edit(track, name='Pending')
+    with pytest.raises(ValueError, match='released'), queue.processing() as groups:
+        assert [len(group.bundles) for group in groups] == [1]
+        with pytest.raises(RuntimeError, match='Cannot enqueue'):
+            queue.track_edit(track, name='Blocked')
+        with pytest.raises(RuntimeError, match='already processing'), queue.processing():
+            pass
+        queue.complete(groups[0].bundles[0])
+        raise ValueError('released')
+    assert not queue
+    queue.track_edit(track, name='After')
+    assert len(queue) == 1
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('queue_type', [StandardQueue, GroupedQueue])
 @pytest.mark.parametrize('execution_fails', [False, True])

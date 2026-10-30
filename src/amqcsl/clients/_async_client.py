@@ -408,7 +408,7 @@ class AsyncDBClient:
             RuntimeError: The queue is already processing.
             ExceptionGroup: Multiple execution, cache refresh, or save errors occur.
         """
-        with queue._processing() as groups:  # pyright: ignore[reportPrivateUsage]
+        with queue.processing() as groups:
             changes_lists, changes_groups = queue.changes_lists(), queue.changes_groups()
             logger.info('Processing %s queued edits', len(queue))
             error: BaseException | None = None

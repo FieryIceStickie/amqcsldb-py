@@ -156,8 +156,12 @@ class Queue[O: Mapping[str, object]](RichQueueMixin):
             raise RuntimeError('Cannot enqueue while the queue is processing')
 
     @contextmanager
-    def _processing(self) -> Generator[tuple[QueueGroup, ...]]:
+    def processing(self) -> Generator[tuple[QueueGroup, ...]]:
         """Claim this queue until execution, recovery output, and cleanup finish.
+
+        Clients use this in process_queue. Use it directly when running a queue
+        yourself; enqueueing or processing the queue again raises while it's held.
+        Call complete() for each bundle that succeeds.
 
         Yields:
             An ordered execution snapshot.
