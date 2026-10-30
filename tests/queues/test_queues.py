@@ -42,6 +42,8 @@ from amqcsl.objects import (
     ExtraMetadata,
     NewSong,
     TrackPutArtistCredit,
+    bundle_from_json,
+    bundle_to_json,
 )
 from amqcsl.queues import GroupedQueue, Queue, QueueGroup, StandardQueue
 from amqcsl.queues._core import is_queueable
@@ -367,12 +369,60 @@ def test_custom_bundle_fallback_and_complete_load_failure() -> None:
     assert len(queue) == 2
 
 
-@pytest.mark.parametrize('version', ['1.0', '0.1', '0', 'x.y', '-1.0', '0.0.0'])
-def test_rejects_unknown_or_invalid_version(version: str) -> None:
+@pytest.mark.parametrize('version', ['1.0', '0.1', '0', 'x.y', '-1.0', '0.0.0', 0.0, None])
+def test_rejects_unknown_or_invalid_version(version: object) -> None:
     data = StandardQueue().to_json()
     data['version'] = version
-    with pytest.raises(ValueError, match='version'):
+    with pytest.raises((TypeError, ValueError), match='version'):
         StandardQueue.from_json(data)
+
+
+@pytest.mark.parametrize('queue_type', [StandardQueue, GroupedQueue])
+def test_from_file_requires_a_json_object(queue_type: type[StandardQueue] | type[GroupedQueue]) -> None:
+    with pytest.raises(TypeError, match='Expected a queue JSON object'):
+        queue_type.from_file(StringIO('[]'))
+
+
+def test_grouped_overlap_setting_must_be_boolean() -> None:
+    data = GroupedQueue().to_json()
+    data['allow_overlapping_edits'] = 'yes'
+    with pytest.raises(TypeError, match='allow_overlapping_edits'):
+        GroupedQueue.from_json(data)
+
+
+def test_worker_count_needs_a_positive_request_limit() -> None:
+    with pytest.raises(ValueError, match='max_request_count must be positive'):
+        StandardQueue().num_workers(0)
+
+
+@pytest.mark.parametrize(
+    ('case', 'error', 'message'),
+    [
+        ('not an object', TypeError, 'Expected a serialized bundle object'),
+        ('unknown type', ValueError, 'Unknown bundle type'),
+        ('object type', ValueError, 'Unknown bundle type'),
+        ('unknown field object', ValueError, 'Unknown serialized object type: Mystery'),
+        ('untagged field object', ValueError, 'Invalid bundle object encoding'),
+    ],
+)
+def test_malformed_bundles_are_rejected(case: str, error: type[Exception], message: str) -> None:
+    encoded = bundle_to_json(GroupEditBundle(CSLGroup('group', 'Group'), 'New name'))
+    data = encoded['data']
+    match case:
+        case 'not an object':
+            bad: object = []
+        case 'unknown type':
+            bad = {**encoded, 'type': 'NotABundle'}
+        case 'object type':
+            bad = {**encoded, 'type': 'CSLGroup'}
+        case 'unknown field object':
+            bad = {**encoded, 'data': {**data, 'group': {'type': 'Mystery', 'data': {}}}}
+        case 'untagged field object':
+            bad = {**encoded, 'data': {**data, 'name': {'untagged': 'object'}}}
+        case _:
+            pytest.fail(f'Unknown case: {case}')
+    with pytest.raises(error, match=message):
+        bundle_from_json(bad)
 
 
 def test_concrete_queue_owns_type_and_version() -> None:
@@ -708,12 +758,16 @@ def test_loading_audio_checks_original_file(track: CSLTrack, tmp_path: Path) -> 
         StandardQueue.from_json(data)
 
 
+@pytest.mark.parametrize('queue_type', [StandardQueue, GroupedQueue])
 @pytest.mark.parametrize('bad_groups', [None, {}, 'text', [None], [{}]])
-def test_invalid_groups_are_rejected(bad_groups: object) -> None:
-    data = StandardQueue().to_json()
+def test_invalid_groups_are_rejected(
+    queue_type: type[StandardQueue] | type[GroupedQueue],
+    bad_groups: object,
+) -> None:
+    data = queue_type().to_json()
     data['groups'] = bad_groups
-    with pytest.raises((TypeError, ValueError), match='groups'):
-        StandardQueue.from_json(data)
+    with pytest.raises((TypeError, ValueError), match='group'):
+        queue_type.from_json(data)
 
 
 def test_builtin_constructor_fields_are_checked() -> None:

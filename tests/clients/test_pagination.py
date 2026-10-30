@@ -128,6 +128,31 @@ async def test_async_pagination_can_stop_after_first_item(
 
 
 @pytest.mark.parametrize('client', ['sync'], indirect=True)
+def test_pagination_logs_when_count_changes(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+    query: Query,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert isinstance(client, DBClient)
+    kind, samples = query
+    grown = cast(list[dict[str, JSONType]], load(f'idolypride/{kind}'))[:6]
+
+    def page(req: Request) -> Response:
+        params = json.loads(request_body(req)) if kind == 'tracks' else query_params(req)
+        skip, take = int(params['skip']), int(params['take'])
+        current = grown if skip else samples
+        return mock_response(200, json={'count': len(current), kind: current[skip : skip + take]})
+
+    route = router.post(f'/api/{kind}') if kind == 'tracks' else router.get(path=f'/api/{kind}')
+    route.mock(side_effect=page)
+    with caplog.at_level('ERROR', logger='amqcsl.client'):
+        items = [*getattr(client, f'iter_{kind}')('test', batch_size=2)]
+    assert [item.id for item in items] == [sample['id'] for sample in grown]
+    assert f'Count mutated from {len(samples)} to {len(samples) + 1}' in caplog.messages
+
+
+@pytest.mark.parametrize('client', ['sync'], indirect=True)
 def test_empty_sync_page_finishes(
     client: DBClient | AsyncDBClient,
     router: Router,

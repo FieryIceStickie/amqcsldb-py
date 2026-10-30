@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from pathlib import Path
 from typing import cast
 
 import niquests
@@ -7,23 +8,62 @@ import rich.repr
 from attrs import frozen
 from helpers import finish, mock_response
 from niquests_mock import MockRouter as Router
+from rich.pretty import pretty_repr
 
 from amqcsl import AsyncDBClient, DBClient
 from amqcsl.bundles import (
+    AddAudioBundle,
     AsyncPageStrategy,
+    AuthBundle,
+    CollectBundle,
+    CreateAlbumBundle,
+    CreateGroupBundle,
+    CreateListBundle,
+    GetArtistBundle,
+    GetMetadataBundle,
+    GetSongBundle,
+    GroupBundle,
+    GroupDeleteBundle,
+    GroupEditBundle,
     IterArtistsBundle,
+    IterSongsBundle,
+    IterTracksBundle,
+    ListBundle,
+    ListEditBundle,
+    LogoutBundle,
     MixedVendor,
     PageStrategy,
     ParallelBundle,
+    SongAddMetadataBundle,
+    SongDeleteBundle,
+    SongDeleteMetadataBundle,
+    SongEditBundle,
     SyncPageStrategy,
+    TrackAddMetadataBundle,
+    TrackDeleteMetadataBundle,
+    TrackEditBundle,
+    action_bundle_compose,
 )
 from amqcsl.bundles._core import SingleVendor, httpClient
+from amqcsl.bundles._misc import ImportAudioBundle, ListDeleteBundle
 from amqcsl.clients._http_utils import build_request
 from amqcsl.objects import (
+    AlbumTrack,
+    ArtistCredit,
     CSLArtistSample,
+    CSLExtraMetadata,
+    CSLGroup,
+    CSLList,
+    CSLMetadata,
+    CSLSong,
+    CSLSongSample,
+    CSLTrack,
+    ExtraMetadata,
     from_json,
 )
 from amqcsl.objects._json_types import JSONArtistSample, JSONType
+from amqcsl.workflows.character import ExcludeDecision
+from amqcsl.workflows.character._bundles import ApplyArtistToMetaBundle, MakeArtistToMetaBundle
 
 
 @frozen
@@ -132,3 +172,62 @@ async def test_page_collection_supports_both_scheduling_strategies(
     assert await finish(client.process(query.collect())) == [
         from_json(cast(JSONArtistSample, sample), CSLArtistSample) for sample in samples
     ]
+
+
+def exclude(*_: object) -> ExcludeDecision:
+    return ExcludeDecision.EXCLUDE
+
+
+def test_every_bundle_has_a_readable_rich_repr(track: CSLTrack, tmp_path: Path) -> None:
+    artist = CSLArtistSample('artist', 'Artist', 'Original', None, 1)
+    group = CSLGroup('group', 'Group')
+    csl_list = CSLList('list', 'List', 1)
+    song = CSLSong('song', 'Song', 'Old version', '2026-01-01', [], [])
+    meta = CSLExtraMetadata('meta', 1, 'Character', 'Character name')
+    new_meta = ExtraMetadata(False, 'Character', 'New character')
+    audio = tmp_path / 'audio.flac'
+    audio.write_bytes(b'audio')
+    edits = [
+        TrackEditBundle(track, name='Renamed'),
+        TrackDeleteMetadataBundle(track, meta),
+        TrackAddMetadataBundle(track, [new_meta, ArtistCredit(artist, 'Vocal', 'Credit')], True),
+        SongDeleteMetadataBundle(song, meta),
+        SongAddMetadataBundle(song, [new_meta]),
+    ]
+    bundles: list[object] = [
+        *edits,
+        AuthBundle('user', 'password', tmp_path / 'session.txt'),
+        LogoutBundle(tmp_path / 'session.txt'),
+        ListBundle(),
+        GroupBundle(),
+        GetSongBundle(CSLSongSample('song', 'Song', None, '2026-01-01')),
+        GetArtistBundle(artist),
+        GetMetadataBundle(track),
+        CreateListBundle('New list', [csl_list]),
+        ListEditBundle(csl_list, 'Renamed list', [track], []),
+        ListDeleteBundle(csl_list),
+        CreateGroupBundle('New group'),
+        GroupEditBundle(group, 'Renamed group'),
+        GroupDeleteBundle(group),
+        SongDeleteBundle(song),
+        CreateAlbumBundle('Album', 'Original album', 2026, [group], [[AlbumTrack('Track', 'Original', 'Artist')]]),
+        AddAudioBundle(track, audio),
+        ImportAudioBundle(track, track),
+        IterTracksBundle(1, 10, 1, SyncPageStrategy(), 'term', [group], csl_list, True, True, True),
+        IterSongsBundle(1, 10, 1, SyncPageStrategy(), 'term'),
+        CollectBundle(IterArtistsBundle(1, 10, 1, SyncPageStrategy(), 'term')),
+        ParallelBundle([GetArtistBundle(artist)]),
+        action_bundle_compose(edits[:2]),
+        MakeArtistToMetaBundle({'Artist': 'Character'}),
+        ApplyArtistToMetaBundle(
+            track,
+            {artist: [new_meta]},
+            set(),
+            exclude,
+            CSLMetadata(False, [], [meta], 1, []),
+        ),
+    ]
+    for bundle in bundles:
+        assert pretty_repr(bundle).startswith(f'{type(bundle).__name__}(')
+    song_edit = pretty_repr(SongEditBundle(song, 'New song', 'New version'))
+    assert "new_name='New song'" in song_edit and "new_disambiguation='New version'" in song_edit

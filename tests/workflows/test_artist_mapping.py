@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 import pytest
 from attrs import evolve
-from helpers import load, mock_response, query_params, request_body, request_url
+from helpers import load, mock_response, query_params, request_body, request_url, settle
 from niquests import HTTPError, Response
 from niquests import PreparedRequest as Request
 from niquests_mock import Call
@@ -1264,6 +1264,35 @@ async def test_iter_edits_closing_cancels_pending_decisions(
     await asyncio.wait_for(anext(edits), timeout=2)
     await asyncio.wait_for(edits.aclose(), timeout=2)
     assert cancelled.is_set() and not pending and not mapping.excluded_artists
+
+
+@pytest.mark.parametrize('client', ['async'], indirect=True)
+async def test_iter_edits_closing_discards_unread_edits(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    assert isinstance(client, AsyncDBClient)
+    client.max_request_count = 2
+    a = artist('Alice')
+    mock_search(router, [a])
+    mock_metadata(router)
+    mapping = await cm.make_artist_to_meta(client, {'Alice': 'A'})
+    produced = 0
+
+    async def source() -> AsyncIterator[CSLTrack]:
+        nonlocal produced
+        for idx in range(20):
+            produced += 1
+            yield track(a, track_id=f'track-{idx}')
+
+    async def never_asked(*_: object) -> cm.ExcludeDecision:
+        pytest.fail('Known artists should not prompt')
+
+    edits = mapping.iter_edits(source(), never_asked)
+    await asyncio.wait_for(anext(edits), timeout=2)
+    await settle()
+    await asyncio.wait_for(edits.aclose(), timeout=2)
+    assert produced < 20
 
 
 @pytest.mark.parametrize('client', ['async'], indirect=True)

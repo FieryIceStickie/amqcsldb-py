@@ -76,6 +76,25 @@ def test_invalid_queue_is_rejected_before_execution(tmp_path: Path, command: str
     assert path.read_text() == document
 
 
+def test_run_requires_a_session_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    router: Router,
+    track: CSLTrack,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv('SESSION_PATH', raising=False)
+    queue = StandardQueue()
+    queue.track_edit(track, name='Proposed name')
+    path = tmp_path / 'queue.json'
+    with path.open('w') as stream:
+        queue.to_file(stream)
+    result = CliRunner().invoke(app, ['queue', 'run', str(path)])
+    assert result.exit_code == 2
+    assert 'SESSION_PATH is required' in result.output
+    assert not router['login_you'].called and not router['auth_you'].called
+
+
 @pytest.mark.parametrize('command', ['run', 'display'])
 def test_queue_command_requires_an_existing_file(tmp_path: Path, command: str) -> None:
     for path in (tmp_path, tmp_path / 'missing.json'):

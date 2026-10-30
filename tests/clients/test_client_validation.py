@@ -118,6 +118,32 @@ async def test_auth_failure_closes_client(
 
 
 @pytest.mark.asyncio
+async def test_login_without_session_cookie_is_logged_and_closes_client(
+    client_class: type[DBClient] | type[AsyncDBClient],
+    router: Router,
+    tmp_path: Path,
+    username: str,
+    password: str,
+    caplog: pytest.LogCaptureFixture,
+    closed_sessions: list[niquests.Session | niquests.AsyncSession],
+) -> None:
+    path = tmp_path / 'session.txt'
+    router['login_you'].mock(return_value=mock_response(200))
+    client = client_class(username=username, password=password, session_path=path)
+    with caplog.at_level('ERROR', logger='amqcsl.client'), pytest.raises(KeyError, match='session-id'):
+        match client:
+            case DBClient():
+                with client:
+                    pass
+            case AsyncDBClient():
+                async with client:
+                    pass
+    assert 'Unexpected error during auth' in caplog.messages
+    assert client.client in closed_sessions
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
 async def test_async_login_fallback_and_logout(
     router: Router,
     tmp_path: Path,
@@ -161,6 +187,30 @@ async def test_http_error_closes_client_with_or_without_json(
     assert error.value.response is not None
     assert error.value.response.status_code == 500
     assert route.call_count == 1
+    assert client.client in closed_sessions
+
+
+@pytest.mark.asyncio
+async def test_connection_error_during_auth_closes_client(
+    client_class: type[DBClient] | type[AsyncDBClient],
+    router: Router,
+    tmp_path: Path,
+    mock_id: str,
+    closed_sessions: list[niquests.Session | niquests.AsyncSession],
+) -> None:
+    path = tmp_path / 'session.txt'
+    path.write_text(mock_id)
+    router['auth_you'].mock(side_effect=niquests.ConnectionError('Database unreachable'))
+    client = client_class(session_path=path)
+    with pytest.raises(niquests.ConnectionError, match='Database unreachable'):
+        match client:
+            case DBClient():
+                with client:
+                    pass
+            case AsyncDBClient():
+                async with client:
+                    pass
+    assert router['auth_you'].call_count == 1
     assert client.client in closed_sessions
 
 

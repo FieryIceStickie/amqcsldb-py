@@ -943,6 +943,18 @@ async def test_song_edit_distinguishes_empty_disambiguation_from_omission(
     assert route.call_count == 1
 
 
+async def test_song_metadata_deletion_uses_song_endpoint(
+    client: DBClient | AsyncDBClient,
+    router: Router,
+) -> None:
+    song = from_json(cast(JSONSong, load('idolypride/songs/blueskysummer')), CSLSong)
+    meta = CSLExtraMetadata('meta-id', 1, 'Language', 'Japanese')
+    correct = router.delete(f'/api/song/{song.id}/metadata/{meta.id}').respond()
+    incorrect = router.delete(f'/api/track/{song.id}/metadata/{meta.id}').respond()
+    await finish(client.song_delete_metadata(song, meta))
+    assert correct.call_count == 1 and not incorrect.called
+
+
 @pytest.mark.parametrize('status', [300, 301, 302, 303, 304, 307, 308])
 async def test_redirects_are_rejected_without_following(
     client: DBClient | AsyncDBClient,
