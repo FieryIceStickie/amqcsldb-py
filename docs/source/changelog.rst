@@ -151,3 +151,7 @@ Changes
 #. Updated :doc:`character workflow documentation <workflows/character>`.
 #. Removed runtime type validators from :py:class:`~amqcsl.DBClient` and
    :py:class:`~amqcsl.AsyncDBClient` operations.
+
+
+Version 1.3.0
+--------------

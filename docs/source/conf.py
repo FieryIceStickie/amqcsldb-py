@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.abspath('../src'))
 project = 'AMQCSLdb'
 copyright = '2025, FieryIceStickie'
 author = 'FieryIceStickie'
-version = '1.2'
-release = '1.2.0'
+version = '1.3'
+release = '1.3.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
