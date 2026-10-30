@@ -2,6 +2,10 @@
    :target: https://github.com/FieryIceStickie/amqcsldb-py/actions/workflows/ci.yml
    :alt: Test Status
 
+.. image:: https://codecov.io/gh/FieryIceStickie/amqcsldb-py/graph/badge.svg
+   :target: https://codecov.io/gh/FieryIceStickie/amqcsldb-py
+   :alt: Coverage
+
 .. image:: https://readthedocs.org/projects/amqcsldb-py/badge/?version=latest
    :target: https://amqcsldb-py.readthedocs.io/en/latest/
    :alt: Documentation Status

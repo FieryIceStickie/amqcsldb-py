@@ -32,6 +32,7 @@ dev = [
     "pre-commit>=4.2.0",
     "pytest>=8.3.5",
     "pytest-asyncio>=1.1.0",
+    "pytest-cov>=7.1.0",
     "ruff==0.16.10",
 ]
 
@@ -60,3 +61,11 @@ reportUnnecessaryComparison = false
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ['amqcsl']
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

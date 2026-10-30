@@ -10,3 +10,9 @@ wheels/
 .venv
 
 **/.DS_Store
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

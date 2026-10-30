@@ -31,4 +31,10 @@ jobs:
         uses: astral-sh/ruff-action@v4.0.0
 
       - name: pytest
-        run: uv run pytest -q
+        run: uv run pytest -q --cov --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.13'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
