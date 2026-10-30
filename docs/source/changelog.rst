@@ -18,8 +18,31 @@ Version 1.1.1
 #. Renamed add_album to :py:meth:`add_album <amqcsl.DBClient.create_album>` 
 
 
-Version 1.1.2
+Version 1.2.0
 --------------
+
+Breaking changes
+~~~~~~~~~~~~~~~~
+
+Old scripts need updating for these:
+
+#. :py:class:`~amqcsl.DBClient` and :py:class:`~amqcsl.AsyncDBClient` require ``session_path``
+   instead of defaulting to ``amq_session.txt``.
+#. The client queue, ``enqueue()``, ``commit()``, and ``queue=True`` are gone; use a
+   :py:class:`~amqcsl.queues.StandardQueue` and :py:meth:`~amqcsl.DBClient.process_queue`.
+   See :doc:`advanced/queues`.
+#. ``queue_character_metadata`` and unknown artist handlers are replaced by
+   :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.apply`,
+   :py:meth:`~amqcsl.workflows.character.SyncArtistToMeta.iter_edits`, and exclusion callbacks.
+   See :doc:`workflows/character`.
+#. ``compact_make_artist_to_meta``, ``CharacterDict``, and the ``character_compact`` template are removed;
+   use :py:func:`~amqcsl.workflows.character.make_artist_to_meta` and the ``character`` template.
+#. Object ``from_json``/``to_json`` methods are replaced by :py:func:`~amqcsl.objects.from_json` and
+   :py:func:`~amqcsl.objects.to_json`.
+#. HTTP errors are niquests exceptions instead of HTTPX ones.
+
+Changes
+~~~~~~~
 
 #. Add ``amqcsl queue display`` and ``amqcsl queue run`` for saved queues. See :doc:`advanced/cli`.
 
