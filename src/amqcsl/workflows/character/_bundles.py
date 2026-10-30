@@ -19,7 +19,7 @@ from amqcsl.bundles._pages import AsyncPageStrategy, IterArtistsBundle
 from amqcsl.exceptions import AMQCSLError
 from amqcsl.objects._db_types import CSLArtist, CSLArtistSample, CSLMetadata, CSLTrack, ExtraMetadata
 
-from .types import (
+from ._types import (
     INCOMPLETE_GROUP,
     UNKNOWN_ARTIST,
     ArtistDict,

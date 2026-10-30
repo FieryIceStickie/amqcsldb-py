@@ -12,9 +12,9 @@ from amqcsl.bundles._core import Bundle
 from amqcsl.bundles._misc import GetMetadataBundle
 from amqcsl.objects._db_types import CSLArtist, CSLArtistSample, CSLTrack, ExtraMetadata
 
-from .bundles import ApplyArtistToMetaBundle, MakeArtistToMetaBundle
-from .prompts import async_prompt_should_exclude, prompt_should_exclude
-from .types import ArtistDict, ArtistKey, ArtistName, ArtistToMeta, AsyncShouldExclude, ExcludeDecision, ShouldExclude
+from ._bundles import ApplyArtistToMetaBundle, MakeArtistToMetaBundle
+from ._prompts import async_prompt_should_exclude, prompt_should_exclude
+from ._types import ArtistDict, ArtistKey, ArtistName, ArtistToMeta, AsyncShouldExclude, ExcludeDecision, ShouldExclude
 
 type _ExclusionRequest = tuple[
     ApplyArtistToMetaBundle,

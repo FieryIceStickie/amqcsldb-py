@@ -12,7 +12,7 @@ from rich.text import Text
 from amqcsl.exceptions import QuitError
 from amqcsl.objects._db_types import CSLMetadata, CSLTrack
 
-from .types import INCOMPLETE_GROUP, ExcludeDecision, Reason
+from ._types import INCOMPLETE_GROUP, ExcludeDecision, Reason
 
 _EXCLUSION_QUESTION = '[Y] Exclude  [N] Error  [I] Ignore track  [Q] Quit › '
 

@@ -7,8 +7,9 @@ from typing import Annotated
 
 import typer
 
-from ._cli_queue import app as queue_app
-from .clients._client_consts import DEFAULT_SESSION_PATH
+from amqcsl.clients._client_consts import DEFAULT_SESSION_PATH
+
+from ._queue import app as queue_app
 
 app = typer.Typer(no_args_is_help=True)
 app.add_typer(queue_app, name='queue')
