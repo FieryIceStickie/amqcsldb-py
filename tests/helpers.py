@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from pathlib import Path
@@ -32,6 +33,12 @@ async def first[T](items: Iterator[T] | AsyncIterator[T]) -> T:
     if isinstance(items, AsyncIterator):
         return await anext(items)
     return next(items)
+
+
+async def settle(ticks: int = 20) -> None:
+    """Let runnable tasks reach their next real wait before asserting that nothing happened."""
+    for _ in range(ticks):
+        await asyncio.sleep(0)
 
 
 def mock_response(status_code: int = 200, **kwargs: Any) -> Response:

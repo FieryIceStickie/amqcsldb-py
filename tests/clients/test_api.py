@@ -11,7 +11,7 @@ from typing import Any, cast
 import niquests
 import pytest
 from attrs import evolve
-from helpers import collect, finish, first, json_fields, load, mock_response, request_body
+from helpers import collect, finish, first, json_fields, load, mock_response, request_body, settle
 from niquests import HTTPError, Response
 from niquests import PreparedRequest as Request
 from niquests_mock import MockRouter as Router
@@ -1033,7 +1033,7 @@ async def test_parallel_uploads_preserve_limit_and_do_not_retry(
     task = asyncio.create_task(client.process_queue(pending))
     try:
         await asyncio.wait_for(both_started.wait(), timeout=1)
-        await asyncio.sleep(0)
+        await settle()
         assert active == 2
         assert upload.call_count == 2
     finally:
@@ -1214,7 +1214,7 @@ async def test_cancelled_upload_waits_for_pending_file_read(
     task = asyncio.create_task(consume())
     await asyncio.wait_for(reading.wait(), timeout=1)
     task.cancel()
-    await asyncio.sleep(0)
+    await settle()
     assert not task.done()
     assert not body.closed
     release.set()
@@ -1240,7 +1240,7 @@ async def test_queued_upload_does_not_open_file_before_transport_slot(
         for _ in range(client.max_request_count):
             await stack.enter_async_context(client._request_semaphore)  # type: ignore[reportPrivateUsage]
         task = asyncio.create_task(client._send_request(request))  # type: ignore[reportPrivateUsage]
-        await asyncio.sleep(0)
+        await settle()
         assert not task.done()
         assert body.closed
     await task
@@ -1252,6 +1252,7 @@ async def test_queued_upload_does_not_open_file_before_transport_slot(
 async def test_request_limit_changes_with_active_and_waiting_requests(
     client: DBClient | AsyncDBClient,
     router: Router,
+    track: CSLTrack,
     initial_limit: int,
     new_limit: int,
 ) -> None:
@@ -1274,19 +1275,13 @@ async def test_request_limit_changes_with_active_and_waiting_requests(
 
         return response
 
-    for idx in range(5):
-        router.get(f'/api/limit-test/{idx}').mock(side_effect=response_for(idx))
-    tasks = [
-        asyncio.create_task(
-            client._send_request(  # type: ignore[reportPrivateUsage]
-                build_request(client.client, 'GET', f'/api/limit-test/{idx}')
-            )
-        )
-        for idx in range(5)
-    ]
+    tracks = [evolve(track, id=f'limit-test-{idx}') for idx in range(5)]
+    for idx, target in enumerate(tracks):
+        router.put(f'/api/track/{target.id}').mock(side_effect=response_for(idx))
+    tasks = [asyncio.create_task(client.track_edit(target, name='Limited')) for target in tracks]
     try:
         await asyncio.wait_for(started[initial_limit - 1].wait(), timeout=1)
-        await asyncio.sleep(0)
+        await settle()
         assert active == initial_limit
         assert not started[initial_limit].is_set()
         client.max_request_count = new_limit
@@ -1303,7 +1298,7 @@ async def test_request_limit_changes_with_active_and_waiting_requests(
             for idx in range(initial_limit - 1):
                 release[idx].set()
                 await tasks[idx]
-                await asyncio.sleep(0)
+                await settle()
                 assert active == initial_limit - idx - 1
                 assert not started[initial_limit].is_set()
             release[initial_limit - 1].set()
@@ -1323,6 +1318,7 @@ async def test_request_limit_changes_with_active_and_waiting_requests(
 async def test_cancelling_waiting_requests_does_not_lose_capacity(
     client: DBClient | AsyncDBClient,
     router: Router,
+    track: CSLTrack,
 ) -> None:
     assert isinstance(client, AsyncDBClient)
     client.max_request_count = 1
@@ -1334,21 +1330,19 @@ async def test_cancelling_waiting_requests_does_not_lose_capacity(
         await release.wait()
         return mock_response()
 
-    router.get('/api/limit-test/active').mock(side_effect=response)
-    waiting = router.get('/api/limit-test/waiting').respond()
-    after = router.get('/api/limit-test/after').respond()
+    router.put('/api/track/active').mock(side_effect=response)
+    waiting = router.put('/api/track/waiting').respond()
+    after = router.put('/api/track/after').respond()
 
-    async def send(path: str) -> niquests.Response:
-        return await client._send_request(  # type: ignore[reportPrivateUsage]
-            build_request(client.client, 'GET', path)
-        )
+    def send(track_id: str) -> asyncio.Task[None]:
+        return asyncio.create_task(client.track_edit(evolve(track, id=track_id), name='Limited'))
 
-    active = asyncio.create_task(send('/api/limit-test/active'))
+    active = send('active')
     await asyncio.wait_for(started.wait(), timeout=1)
-    cancelled = asyncio.create_task(send('/api/limit-test/waiting'))
-    next_request = asyncio.create_task(send('/api/limit-test/after'))
+    cancelled = send('waiting')
+    next_request = send('after')
     try:
-        await asyncio.sleep(0)
+        await settle()
         assert waiting.call_count == after.call_count == 0
         cancelled.cancel()
         with pytest.raises(asyncio.CancelledError):

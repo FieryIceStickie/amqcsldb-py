@@ -1,6 +1,4 @@
 import re
-
-# pyright: reportUnusedExpression=false
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import cast

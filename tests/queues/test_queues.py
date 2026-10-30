@@ -576,7 +576,11 @@ async def test_cancellation_drains_workers_and_saves_remaining(
     output.seek(0)
     assert len(queue_type.from_file(output)) == 2
     queue.track_edit(track, name='Guard released')
-    assert client._request_semaphore._active == 0  # pyright: ignore[reportPrivateUsage]
+    edit = router.put(f'/api/track/{track.id}').respond(status_code=200)
+    follow_up = StandardQueue()
+    follow_up.track_edit(track, name='Slot released')
+    await asyncio.wait_for(client.process_queue(follow_up, save_to=StringIO()), timeout=1)
+    assert edit.call_count == 1 and not follow_up
 
 
 @pytest.mark.asyncio
