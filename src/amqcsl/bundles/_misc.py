@@ -486,7 +486,7 @@ class SongEditBundle(Bundle[None]):
     def __rich_repr__(self) -> rich.repr.Result:
         yield 'song', self.song
         yield 'new_name', self.name, self.song.name
-        yield 'new_disambiguation', self.name, self.song.disambiguation
+        yield 'new_disambiguation', self.disambiguation, self.song.disambiguation
 
 
 @frozen

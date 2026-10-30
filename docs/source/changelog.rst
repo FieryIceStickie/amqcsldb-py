@@ -75,6 +75,7 @@ Version 1.1.2
 #. Show a compact character exclusion prompt with track details and unresolved artist names.
 
 #. Fixed the endpoint for :py:meth:`~amqcsl.DBClient.song_add_metadata`.
+#. Fixed printed song edits showing the new name as the new disambiguation.
 
 #. Replaced object ``from_json`` methods with :py:func:`~amqcsl.objects.from_json` and
    replaced edit-object ``to_json`` methods with :py:func:`~amqcsl.objects.to_json`.
