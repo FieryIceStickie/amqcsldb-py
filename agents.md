@@ -12,7 +12,7 @@ functionality (not a rewrite).
 
 - **Language:** Python 3.13.3 (repo declares `requires-python = ">=3.12"`)
 - **Package manager:** uv
-- **HTTP client:** httpx (sync and async clients both exist)
+- **HTTP client:** niquests (sync and async clients both exist)
 - **Schemas/data model:** attrs
 - **CLI:** Typer + Rich (entry point: `amqcsl = "amqcsl.cli:app"`)
 - **Build backend:** hatchling
@@ -23,37 +23,49 @@ functionality (not a rewrite).
 
 ```
 src/amqcsl/
-├── cli.py                CLI (Typer app)
+├── __init__.py            Public re-export of DBClient and AsyncDBClient
+├── __main__.py            `python -m amqcsl` entry point
+├── cli/                   CLI (Typer app)
+│   ├── _core.py           `amqcsl init` and `amqcsl make`
+│   └── _queue.py          `amqcsl queue display` and `amqcsl queue run`
 ├── clients/
-│   ├── _sync_client.py   Private sync client implementation
-│   ├── _async_client.py  Private async client implementation
-│   ├── _client_consts.py Private shared client constants
-│   ├── sync_client.py    Public re-export
-│   ├── async_client.py   Public re-export
-│   └── bundles/          Grouped endpoint/request bundles
+│   ├── _sync_client.py    Private sync client implementation
+│   ├── _async_client.py   Private async client implementation
+│   ├── _client_consts.py  Private shared client constants
+│   └── _http_utils.py     Request building, uploads, and the async request limiter
+├── bundles/               Endpoint/request bundles shared by both clients
+│   ├── _core.py
+│   ├── _misc.py
+│   └── _pages.py
+├── queues/                Queues for staging, reviewing, and processing edits
+│   ├── _core.py
+│   ├── _standard_queue.py
+│   └── grouped/           Edits grouped and merged by track or song
 │       ├── _core.py
-│       ├── _misc.py
-│       └── _pages.py
+│       ├── _display.py
+│       └── _merging.py
 ├── objects/               attrs-based DB/JSON object model — see "Object model" below
 │   ├── _db_types.py
 │   ├── _json_types.py
-│   └── _obj_consts.py
-├── workflows/              Higher-level multi-step operations built on the clients
+│   ├── _obj_consts.py
+│   └── _serialization.py
+├── workflows/             Higher-level multi-step operations built on the clients
 │   ├── _workflow_utils.py
-│   └── character.py
+│   └── character/
 ├── exceptions.py
-├── _templates/             Script/log scaffolding used by the CLI's project setup
+├── _templates/            Script/log scaffolding used by the CLI's project setup
 └── py.typed
 
-tests/
-├── conftest.py
-├── helpers.py
-├── resources/              JSON fixtures for mocked API responses
-├── test_api.py
-├── test_async_api.py
-├── test_login.py
+tests/                     Mirrors the package layout
+├── conftest.py            Router, sync/async client, and track fixtures
+├── helpers.py             Shared helpers (finish, collect, settle, mock_response, ...)
+├── resources/             JSON fixtures for mocked API responses
+├── bundles/
+├── cli/
+├── clients/
+├── objects/
+├── queues/
 └── workflows/
-    └── test_character.py
 
 docs/source/                Sphinx docs source — handwritten, editable
 docs/build/                 Generated Sphinx output — off-limits, do not edit
@@ -64,7 +76,8 @@ docs/build/                 Generated Sphinx output — off-limits, do not edit
 Underscore-prefixed modules (`_sync_client.py`, `_db_types.py`, `_core.py`,
 etc.) are **private implementation**. Public, non-underscore modules exist to
 re-export from them, grouped by submodule for organizational purposes (e.g.
-`clients/sync_client.py` re-exports from `clients/_sync_client.py`).
+`queues/__init__.py` re-exports from `queues/_core.py`, and `amqcsl/__init__.py`
+re-exports the clients).
 
 When adding new files, follow this same pattern: put the implementation in an
 underscore-prefixed module and re-export the public surface from the
@@ -132,7 +145,7 @@ database contract as fixed.
   relevant APIs or documentation wherever possible.
 - Add changes to the appropriate release section of the changelog.
 
-**Tests:** pytest + pytest-asyncio + respx (mocks HTTP calls — don't make
+**Tests:** pytest + pytest-asyncio + niquests-mock (mocks HTTP calls — don't make
 real network requests in tests). Fixtures/resources live in
 `tests/resources/`.
 
@@ -143,12 +156,14 @@ real network requests in tests). Fixtures/resources live in
 3. New or changed behavior has a corresponding test.
 4. `objects/_json_types.py` and `objects/_obj_consts.py` are untouched.
 5. No new dependencies were added without asking first.
-6. Changes are on a branch, not committed directly to `main`, and ready for
-   the maintainer to review in the current session.
+6. Changes are on a branch, not committed directly to `main`, and staged
+   for the maintainer to review in the current session.
 
 ## Git and PR conventions
 
 - Always work on a branch, never commit directly to `main`.
+- Stage changes with `git add` for the maintainer to review; don't commit
+  unless asked. The conventions below apply when you're asked to commit.
 - PRs are optional. The maintainer can review changes in the current session;
   only open a PR when explicitly asked.
 - Check `git log` and follow the existing commit conventions: a concise
@@ -166,7 +181,7 @@ real network requests in tests). Fixtures/resources live in
 - Read the existing client/workflow/bundle code before adding to it, and
   match its existing patterns (underscore-private + public re-export, attrs
   for schemas, sync and async client parity).
-- Work on a branch and make changes ready for review in the current session.
+- Work on a branch and stage changes for review in the current session.
 
 **Ask first**
 - Adding any new dependency.
@@ -179,5 +194,5 @@ real network requests in tests). Fixtures/resources live in
 - Commit directly to `main`.
 - Add new dependencies without asking.
 - Edit generated/build output: `docs/build/`, `__pycache__/`, `.pyc` files.
-- Make real network requests in tests — use respx mocking, following the
+- Make real network requests in tests — use niquests-mock, following the
   existing fixtures in `tests/resources/`.

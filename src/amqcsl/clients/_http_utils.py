@@ -139,7 +139,7 @@ def request_options(request: niquests.PreparedRequest) -> RequestOptions:
 
 
 def reject_redirect(response: niquests.Response) -> None:
-    """Preserve HTTPX's rejection of redirect responses without following them."""
+    """Reject redirect responses instead of following them."""
     if response.status_code is not None and 300 <= response.status_code < 400:
         raise niquests.exceptions.HTTPError(
             f'Unexpected redirect: {response.status_code} for {response.url}',
