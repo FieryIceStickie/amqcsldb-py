@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 from ._cli_queue import app as queue_app
+from .clients._client_consts import DEFAULT_SESSION_PATH
 
 app = typer.Typer(no_args_is_help=True)
 app.add_typer(queue_app, name='queue')
@@ -46,9 +47,9 @@ def init(
         print(f'AMQ_PASSWORD="{password}"', file=file)
         session_path = (
             input(
-                'Enter path to file for storing session id (for .env file, defaults to amq_session.txt, press Enter to skip): '
+                f'Enter path to file for storing session id (for .env file, defaults to {DEFAULT_SESSION_PATH}, press Enter to skip): '
             )
-            or 'amq_session.txt'
+            or DEFAULT_SESSION_PATH
         )
         print(f'SESSION_PATH="{session_path}"', file=file)
     with open(dest / '.gitignore', 'a') as file:
