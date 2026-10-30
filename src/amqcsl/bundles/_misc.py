@@ -191,9 +191,6 @@ class AuthBundle(Bundle[None]):
             status = e.response.status_code if e.response is not None else 'unknown'
             logger.exception(f'Bad response during auth: {status}')
             raise
-        except niquests.exceptions.RequestException:
-            logger.exception('Bad request during auth')
-            raise
         except LoginError:
             logger.exception(f'Error during login of user {self.username}')
             raise
